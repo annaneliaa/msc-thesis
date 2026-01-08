@@ -2,8 +2,6 @@ import pandas as pd
 import numpy as np
 from collections import deque, defaultdict
 
-ONE_DAY = pd.Timedelta(days=1)
-
 
 def build_static_features(df):
     df = df.copy()
@@ -85,7 +83,7 @@ def build_static_features(df):
     return X_static
 
 
-def build_dyn_features(df):
+def build_dyn_features(df, window_size):
     df = df.copy()
     df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
     df = df.dropna(subset=["timestamp"])
@@ -113,7 +111,7 @@ def build_dyn_features(df):
         y = row["y"]
 
         # remove old alerts from window
-        cutoff = t - ONE_DAY
+        cutoff = t - window_size
         while window and window[0][0] < cutoff:
             t0, c0, e0, y0 = window.popleft()
             cat_tot[c0] -= 1

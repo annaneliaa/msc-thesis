@@ -4,8 +4,15 @@ from sklearn.model_selection import TimeSeriesSplit
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score, roc_curve
 
+from plots import (
+    plot_roc,
+    plot_alert_reduction,
+    plot_feature_importance,
+    plot_confidence_distribution,
+    plot_top_error_categories,
+)
 
-def train_and_evaluate(X, y, n_splits=3, plot=True):
+def train_and_evaluate(X, y, n_splits=3):
 
     X = X.reset_index(drop=True)
     y = np.asarray(y)
@@ -42,19 +49,7 @@ def train_and_evaluate(X, y, n_splits=3, plot=True):
     mean_auc = float(np.mean(aucs))
     print(f"Mean ROC-AUC: {mean_auc:.3f}")
 
-    # ---------- ROC plot ----------
-    if plot:
-        fpr, tpr, _ = roc_curve(all_y, all_proba)
-
-        plt.figure()
-        plt.plot(fpr, tpr)
-        plt.plot([0, 1], [0, 1], linestyle="--")
-        plt.xlabel("False Positive Rate")
-        plt.ylabel("True Positive Rate")
-        plt.title(f"ROC Curve (Mean AUC = {mean_auc:.3f})")
-        plt.show()
-
-    return {
+    results = {
         "model": model,
         "aucs": aucs,
         "mean_auc": mean_auc,
@@ -62,21 +57,4 @@ def train_and_evaluate(X, y, n_splits=3, plot=True):
         "proba": np.array(all_proba),
     }
 
-def plot_alert_reduction(y_true, proba):
-    thresholds = np.linspace(0, 1, 50)
-    reductions = []
-    fnrs = []
-
-    for th in thresholds:
-        y_pred = (proba >= th).astype(int)
-        reductions.append((y_pred == 0).mean())
-        fnrs.append(
-            ((y_pred == 0) & (y_true == 1)).sum() / max(1, (y_true == 1).sum())
-        )
-
-    plt.figure()
-    plt.plot(reductions, fnrs)
-    plt.xlabel("Alert Reduction")
-    plt.ylabel("False Negative Rate")
-    plt.title("Alert Reduction vs Missed Attacks")
-    plt.show()
+    return results

@@ -58,7 +58,7 @@ def assign_label(row, labels_df):
     return "benign"
 
 
-def add_to_dataframe(df):
+def add_labels_to_df(df):
     df["timestamp"] = pd.to_datetime(
         df["timestamp"], utc=True, format="mixed", errors="coerce"
     )
