@@ -84,3 +84,63 @@ def plot_all(X, results, d):
     plot_alert_reduction(results["y_true"], results["proba"], d)
     plot_feature_importance(results["model"], X, d)
     plot_confidence_distribution(results["proba"], d)
+
+def plot_symbolic_performance_delta(results_dict, metric="auc"):
+    """
+    results_dict: dict like
+      {
+        "base": {"auc": ..., "auc_auth": ...},
+        "is_suspicious_auth_burst": {...},
+        ...
+      }
+    metric: "auc" or "auc_auth"
+    """
+    df = pd.DataFrame(results_dict).T
+
+    base_val = df.loc["base", metric]
+    df = df.drop(index="base")
+
+    delta = df[metric] - base_val
+
+    plt.figure(figsize=(8, 4))
+    delta.sort_values().plot(kind="bar")
+    plt.axhline(0, color="black", linewidth=1)
+    plt.ylabel(f"Δ {metric.upper()} vs baseline")
+    plt.title(f"Impact of symbolic features on {metric.upper()}")
+    plt.xticks(rotation=30, ha="right")
+    plt.tight_layout()
+    plt.show()
+
+def plot_symbolic_coefficients(model, feature_names, symbolic_features):
+    coef = pd.Series(model.coef_[0], index=feature_names)
+    coef_sym = coef[symbolic_features].sort_values()
+
+    plt.figure(figsize=(6, 3))
+    coef_sym.plot(kind="barh")
+    plt.axvline(0, color="black", linewidth=1)
+    plt.xlabel("Logistic regression coefficient")
+    plt.title("Model reliance on symbolic features")
+    plt.tight_layout()
+    plt.show()
+
+def plot_symbolic_score_shift(X_full, res_base, res_sym, feature):
+    split = res_base["test_idx_start"]
+
+    X_test = X_full.iloc[split:].reset_index(drop=True)
+    mask = X_test[feature].fillna(0).astype(int) == 1
+
+    if mask.sum() == 0:
+        print(f"No test samples for feature {feature}")
+        return
+
+    s_base = res_base["proba_test"][mask]
+    s_sym = res_sym["proba_test"][mask]
+
+    plt.figure(figsize=(6, 4))
+    plt.hist(s_base, bins=30, alpha=0.5, label="base")
+    plt.hist(s_sym, bins=30, alpha=0.5, label="base + symbolic")
+    plt.legend()
+    plt.xlabel("Predicted attack probability")
+    plt.title(f"Score shift for {feature}")
+    plt.tight_layout()
+    plt.show()

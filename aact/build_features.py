@@ -2,6 +2,16 @@ import pandas as pd
 import numpy as np
 from collections import deque, defaultdict
 
+def normalize_groups(x):
+    if isinstance(x, list):
+        return [str(g).lower() for g in x]
+    if isinstance(x, str):
+        s = x.strip()
+        if s.startswith("[") and s.endswith("]"):  # list-string case
+            s = s.strip("[]")
+        return [g.strip().strip("'\"").lower() for g in s.split(",") if g.strip()]
+    return []
+
 
 def build_static_features(df):
     df = df.copy()
