@@ -106,8 +106,8 @@ def build_ontology_for_scenario(scenario, hosts_df, services_df, edges_df, alert
                 g.add((h, EX.hasExploitClass, cu))
 
     # AlertType(signature/exploit_class)
-    # We'll treat "ids_signature" as AlertType when available; otherwise fall back to exploit_class.
-    # Then attach to host (observed on that host) and also approximate edgeHasAlertType by linking src host to the type.
+    # We'll treat "ids_signature" as AlertType when available; otherwise fall back to exploit_class
+    # Then attach to host (observed on that host) and also approximate edgeHasAlertType by linking src host to the type
     def _alert_type_row(row):
         sig = row.get("ids_signature")
         if isinstance(sig, str) and sig.strip():

@@ -122,22 +122,6 @@ def edge_df_to_graph(edge_table: pd.DataFrame, scenario: str, directed: bool = F
 
     return G
 
-
-# def remove_top_hubs(G, k: int = 3):
-#     """
-#     Remove top-k highest-degree nodes to reduce graph complexity.
-#     Returns (G2, removed_nodes).
-#     """
-#     if G.number_of_nodes() == 0:
-#         return G.copy(), []
-
-#     deg = dict(G.degree())
-#     removed = sorted(deg, key=deg.get, reverse=True)[:k]
-#     G2 = G.copy()
-#     G2.remove_nodes_from(removed)
-#     return G2, removed
-
-
 def draw_graph(
     G,
     title: str | None = None,

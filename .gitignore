@@ -2,3 +2,6 @@
 data
 *.json
 .DS_Store
+out
+plots
+__pycache__
