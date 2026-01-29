@@ -26,13 +26,13 @@ def build_symbolic_features(df, X_dyn=None):
     # Rule 0 (optional / may be sparse)
     # SuspiciousRemoteAccess
     # ==================================================
-    # df["groups_norm"] = df["groups"].apply(normalize_groups)
-    # dstport = pd.to_numeric(df["dstport"], errors="coerce")
+    df["groups_norm"] = df["groups"].apply(normalize_groups)
+    dstport = pd.to_numeric(df["dstport"], errors="coerce")
 
-    # is_auth_group = df["groups_norm"].apply(
-    #     lambda gs: "authentication" in gs
-    # ).astype(int)
-    # is_auth = (is_auth_group == 1) | (df["is_auth_event"].fillna(0).astype(int) == 1)
+    is_auth_group = df["groups_norm"].apply(
+        lambda gs: "authentication" in gs
+    ).astype(int)
+    is_auth = (is_auth_group == 1) | (df["is_auth_event"].fillna(0).astype(int) == 1)
 
     # X_sym["m_is_suspicious_remote_access"] = dstport.notna().astype(int)
     # X_sym["is_suspicious_remote_access"] = (
@@ -78,14 +78,39 @@ def build_symbolic_features(df, X_dyn=None):
     ).astype(int)
 
     # -------------------------
-    # Rule 3: HighSeverityWazuh (simple expert rule)
+    # Rule 4: HighSeverityWazuh (simple expert rule)
     # "high rule level is more suspicious"
     # -------------------------
+    # High severity Wazuh alert (expert threshold)
     X_sym["m_is_high_severity_wazuh"] = (df["source"] == "wazuh").astype(int)
+
     X_sym["is_high_severity_wazuh"] = (
         (df["source"] == "wazuh") &
-        (df["wazuh_low_level"].fillna(0).astype(int) == 0)
+        (df["wazuh_level"].fillna(0).astype(int) >= 7) # set threshold, add mid, high later
     ).astype(int)
+
+    # Rule 5: Wazuh critical >= 10
+    X_sym["m_is_wazuh_critical"] = (df["source"]=="wazuh").astype(int)
+    X_sym["is_wazuh_critical"] = ((df["source"]=="wazuh") & (df["wazuh_level"].fillna(0).astype(int) >= 10)).astype(int)
+
+    # Rule 6: Mitre mapping
+    m = df["mitre_ids"].fillna("").astype(str)
+    X_sym["m_is_wazuh_mitre_mapped"] = (df["source"]=="wazuh").astype(int)
+    X_sym["is_wazuh_mitre_mapped"] = ((df["source"]=="wazuh") & (m != "") & (m != "null") & (m != "[]")).astype(int)
+
+    # Rule 7: Is IDS alert
+    X_sym["m_is_ids_concept"] = 1
+    X_sym["is_ids_concept"] = (df["is_ids_alert"].fillna(0).astype(int) == 1).astype(int)
+    sev = pd.to_numeric(df["ids_severity"], errors="coerce")
+    X_sym["m_is_ids_high_priority"] = sev.notna().astype(int)
+    X_sym["is_ids_high_priority"] = (sev.notna() & (sev >= 2)).astype(int)  # tune based on distribution
+
+    # Rule 8: High severity and novelty
+    X_sym["is_high_sev_and_novel"] = (
+        (X_sym["is_high_severity_wazuh"] == 1) &
+        (X_sym["is_behavioral_novelty"] == 1)
+    ).astype(int)
+
 
     print(X_sym.sum().sort_values(ascending=False))
     print(X_sym.mean().sort_values(ascending=False))

@@ -7,7 +7,7 @@ from sklearn.metrics import roc_auc_score, roc_curve
 
 from schema import FeatureSchema
 from build_features import build_dyn_features, build_static_features
-from symbolic_rules import build_symbolic_features
+import symbolic_features
 
 from plots import (
     plot_roc,
@@ -52,6 +52,7 @@ def train_eval_holdout(X_full, y, schema, test_frac=0.3):
 
     # select schema columns
     X = X_full[schema.features]
+    feature_names = list(X.columns)
 
     n = len(X)
     split = int((1 - test_frac) * n)
@@ -75,6 +76,7 @@ def train_eval_holdout(X_full, y, schema, test_frac=0.3):
         "y_test": y_test,
         "proba_test": proba_test,
         "test_idx_start": split,
+        "feature_names": feature_names
     }
 
 def train_and_evaluate(X, y, schema, n_splits=3, burst_col="is_suspicious_auth_burst",
@@ -189,9 +191,16 @@ def run_experiment(df, window_size, scenario_name=None):
         )
 
     X_static = build_static_features(df_used)
-    X_symbolic = build_symbolic_features(df_used, X_dyn=X_dyn)
+    X_symbolic = symbolic_features.build_symbolic_features(df_used, X_dyn=X_dyn)
 
-    print("Symbolic features active:", X_symbolic.columns.tolist())
+    print("\nSymbolic features generated:")
+    print(sorted(X_symbolic.columns))
+
+    # derive active features from what the builder emitted
+    sym_feats = [c for c in X_symbolic.columns if c.startswith("is_")]
+    sym_miss = [c for c in X_symbolic.columns if c.startswith("m_")]
+
+    print("Active symbolic:", sym_feats)
 
     X_full = pd.concat([X_dyn, X_static, X_symbolic], axis=1).reset_index(drop=True)
     y = np.asarray(y)
@@ -201,23 +210,18 @@ def run_experiment(df, window_size, scenario_name=None):
     # --- schemas ---
     base_feats = list(X_dyn.columns) + list(X_static.columns)
 
-    symbolic_feats = [
-        "is_suspicious_auth_burst",
-        "is_behavioral_novelty",
-        "is_high_severity_wazuh",
-        "is_root_login_attempt",
-    ]
+    sym_feats = [c for c in X_symbolic.columns if c.startswith("is_")]
 
     schema_base = FeatureSchema("base", base_feats)
     schema_symbolic = FeatureSchema(
         "base+symbolic",
-        base_feats + symbolic_feats
+        base_feats + sym_feats
     )
 
-    print("Burst positives:", X_full["is_suspicious_auth_burst"].sum())
-    print("Behavioral novelty positives:", X_full["is_behavioral_novelty"].sum())
-    print("High-severity Wazuh positives:", X_full["is_high_severity_wazuh"].sum())
-    print("Root login attempt positives:", X_full["is_root_login_attempt"].sum())
+    print("\nSymbolic feature positives (auto):")
+    for f in sorted([c for c in X_full.columns if c.startswith("is_")]):
+        print(f"  {f}: {int(X_full[f].sum())}")
+
 
     print(f"Total features: {X_full.shape[1]} (static: {len(X_static.columns)}, dynamic: {len(X_dyn.columns)}, symbolic: {len(X_symbolic.columns)})")   
 
@@ -225,18 +229,41 @@ def run_experiment(df, window_size, scenario_name=None):
 
     print("\nTraining BASELINE model...")
     res_base = train_eval_holdout(X_full, y, schema_base, test_frac=0.3)
-
-    print("\nTraining baseline+symbolic features model...")
-    res_sym = train_eval_holdout(X_full, y, schema_symbolic, test_frac=0.3)
-
     diag_base = burst_diagnostics(X_full, res_base)
-    diag_sym = burst_diagnostics(X_full, res_sym)
+
+    # store per-feature results
+    ablation_results = {}   # feat -> res
+    ablation_diags = {}     # feat -> diag
+
+    for feat in sym_feats:
+        print(f"\nTraining base + '{feat}' ...")
+        schema_feat = FeatureSchema(f"base+{feat}", base_feats + [feat])
+        res_feat = train_eval_holdout(X_full, y, schema_feat, test_frac=0.3)
+
+        ablation_results[feat] = res_feat
+        ablation_diags[feat] = burst_diagnostics(X_full, res_feat)
+
+    # also train the full bundle once (optional but useful)
+    print("\nTraining BASE + ALL symbolic features...")
+    schema_all = FeatureSchema("base+symbolic_all", base_feats + sym_feats)
+    res_all = train_eval_holdout(X_full, y, schema_all, test_frac=0.3)
+    diag_all = burst_diagnostics(X_full, res_all)
 
     return {
         "base": res_base,
-        "sym": res_sym,
+        "diag_base": diag_base,
+
+        # one-feature-at-a-time ablation
+        "ablation": ablation_results,
+        "diag_ablation": ablation_diags,
+
+        # full symbolic bundle
+        "sym_all": res_all,
+        "diag_sym_all": diag_all,
+
         "X_full": X_full,
         "y": y,
-        "diag_base": diag_base,
-        "diag_sym": diag_sym,
+        "sym_feats": sym_feats,
+        "base_feats": base_feats,
     }
+
