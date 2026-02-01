@@ -13,6 +13,14 @@ def build_symbolic_features(df, X_dyn=None):
     Build symbolic (knowledge-driven) features.
     These features represent high-level SOC concepts,
     not raw alert properties.
+
+    is_X says whether the symbolic concept X holds for an alert (1 = yes, 0 = no)
+    m_is_X says whether this concept was computable for the alert (1 = yes, 0 = no)
+
+    State	    Meaning
+    m=0, is=0	concept not applicable
+    m=1, is=0	applicable but false
+    m=1, is=1	applicable and true
     """
     df = df.copy()
     X_sym = pd.DataFrame(index=df.index)

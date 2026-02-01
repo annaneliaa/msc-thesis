@@ -188,12 +188,69 @@ def plot_symbolic_score_shift(
     plt.legend()
     plt.xlabel("Predicted attack probability")
     plt.ylabel("Number of alerts")
-    plt.title(f"Score shift for {feature}")
+    plt.title(f"Score shift ({feature}) on all test-set alerts with feature active.")
     plt.tight_layout()
 
     fname = f"{_safe_name(prefix)}score_shift_{_safe_name(feature)}.png"
     plt.savefig(os.path.join(out_dir, fname))
     plt.show()
+
+
+# function that plots score-shifts separately for true attacks (y=1) and benign (y=0)
+# within the same symbolic subset (feature=1) on the test split
+
+
+def plot_symbolic_score_shift_by_label(
+    X_full, y, res_base, res_sym, feature, out_dir="../plots", prefix="", bins=30
+):
+    out_dir = _ensure_dir(out_dir)
+
+    split = res_base["test_idx_start"]
+
+    X_test = X_full.iloc[split:].reset_index(drop=True)
+    y_test = np.asarray(y)[split:]
+    y_test = y_test.reshape(-1)
+
+    # symbolic subset
+    feat_mask = X_test[feature].fillna(0).astype(int).values == 1
+
+    if feat_mask.sum() == 0:
+        print(f"No test samples where {feature}=1")
+        return
+
+    # scores
+    s_base = np.asarray(res_base["proba_test"])
+    s_sym = np.asarray(res_sym["proba_test"])
+
+    # labels within subset
+    attack_mask = feat_mask & (y_test == 1)
+    benign_mask = feat_mask & (y_test == 0)
+
+    # helper to plot one panel
+    def _panel(mask, title_suffix, fname_suffix):
+        n = int(mask.sum())
+        if n == 0:
+            print(f"No samples for {feature}=1 with y={title_suffix}")
+            return
+
+        plt.figure(figsize=(6, 4))
+        plt.hist(s_base[mask], bins=bins, alpha=0.5, label="base")
+        plt.hist(s_sym[mask], bins=bins, alpha=0.5, label="base + symbolic")
+        plt.legend()
+        plt.xlabel("Predicted attack probability")
+        plt.ylabel("Number of alerts")
+        plt.title(f"{feature} = 1, y = {title_suffix} (n={n})")
+        plt.tight_layout()
+
+        fname = (
+            f"{_safe_name(prefix)}score_shift_{_safe_name(feature)}_{fname_suffix}.png"
+        )
+        plt.savefig(os.path.join(out_dir, fname))
+        plt.show()
+
+    # y=1 (true attacks) and y=0 (benign)
+    _panel(attack_mask, "1 (attack)", "y1_attack")
+    _panel(benign_mask, "0 (benign)", "y0_benign")
 
 
 def plot_all(X, results, d, run_name="default"):
