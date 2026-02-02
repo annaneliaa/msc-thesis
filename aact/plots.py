@@ -198,8 +198,6 @@ def plot_symbolic_score_shift(
 
 # function that plots score-shifts separately for true attacks (y=1) and benign (y=0)
 # within the same symbolic subset (feature=1) on the test split
-
-
 def plot_symbolic_score_shift_by_label(
     X_full, y, res_base, res_sym, feature, out_dir="../plots", prefix="", bins=30
 ):
@@ -251,6 +249,73 @@ def plot_symbolic_score_shift_by_label(
     # y=1 (true attacks) and y=0 (benign)
     _panel(attack_mask, "1 (attack)", "y1_attack")
     _panel(benign_mask, "0 (benign)", "y0_benign")
+
+
+def plot_fp_to_tn(
+    X_full,
+    y,
+    res_base,
+    res_sym,
+    feature,
+    threshold=0.5,
+):
+    """
+    Compare base vs base+symbolic on test alerts where feature == 1.
+
+    Returns:
+        dict with:
+        #   - fn_to_tp
+          - fp_to_tn
+        #   - delta_fn
+          - delta_fp
+          - net_alert_change
+          - n_subset
+    """
+
+    split = res_base["test_idx_start"]
+
+    X_test = X_full.iloc[split:].reset_index(drop=True)
+    y_test = np.asarray(y)[split:]
+
+    mask = X_test[feature].fillna(0).astype(int).values == 1
+    if mask.sum() == 0:
+        return None
+
+    p_base = np.asarray(res_base["proba_test"])
+    p_sym = np.asarray(res_sym["proba_test"])
+
+    yb = y_test[mask]
+    pb = p_base[mask]
+    ps = p_sym[mask]
+
+    pred_base = (pb >= threshold).astype(int)
+    pred_sym = (ps >= threshold).astype(int)
+
+    # error flips
+    # fn_to_tp = int(((yb == 1) & (pred_base == 0) & (pred_sym == 1)).sum())
+    fp_to_tn = int(((yb == 0) & (pred_base == 1) & (pred_sym == 0)).sum())
+
+    # net changes
+    # delta_fn = int(((yb == 1) & (pred_sym == 0)).sum() -
+    #                ((yb == 1) & (pred_base == 0)).sum())
+
+    delta_fp = int(
+        ((yb == 0) & (pred_sym == 1)).sum() - ((yb == 0) & (pred_base == 1)).sum()
+    )
+
+    net_alert_change = int(pred_sym.sum() - pred_base.sum())
+
+    stats = {
+        "feature": feature,
+        "n_subset": int(mask.sum()),
+        # "fn_to_tp": fn_to_tp,
+        "fp_to_tn": fp_to_tn,
+        # "delta_fn": delta_fn,
+        "delta_fp": delta_fp,
+        "net_alert_change": net_alert_change,
+    }
+
+    return stats
 
 
 def plot_all(X, results, d, run_name="default"):

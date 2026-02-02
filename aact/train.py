@@ -17,7 +17,10 @@ from plots import (
     plot_top_error_categories,
 )
 
-def burst_diagnostics(X_full, res, burst_col="is_suspicious_auth_burst", auth_col="is_auth_event"):
+
+def burst_diagnostics(
+    X_full, res, burst_col="is_suspicious_auth_burst", auth_col="is_auth_event"
+):
     split = res["test_idx_start"]
     X_test_full = X_full.iloc[split:].reset_index(drop=True)
     y_test = res["y_test"]
@@ -45,6 +48,7 @@ def burst_diagnostics(X_full, res, burst_col="is_suspicious_auth_burst", auth_co
 
     return out
 
+
 def train_eval_holdout(X_full, y, schema, test_frac=0.3):
     X_full = X_full.reset_index(drop=True)
     y = np.asarray(y)
@@ -61,7 +65,9 @@ def train_eval_holdout(X_full, y, schema, test_frac=0.3):
 
     # guard
     if len(np.unique(y_train)) < 2 or len(np.unique(y_test)) < 2:
-        raise ValueError("Train or test has only one class. Try a different split_frac or use all scenarios.")
+        raise ValueError(
+            "Train or test has only one class. Try a different split_frac or use all scenarios."
+        )
 
     model = LogisticRegression(max_iter=1000, class_weight="balanced", n_jobs=-1)
     model.fit(X_train, y_train)
@@ -76,11 +82,18 @@ def train_eval_holdout(X_full, y, schema, test_frac=0.3):
         "y_test": y_test,
         "proba_test": proba_test,
         "test_idx_start": split,
-        "feature_names": feature_names
+        "feature_names": feature_names,
     }
 
-def train_and_evaluate(X, y, schema, n_splits=3, burst_col="is_suspicious_auth_burst",
-                       auth_col="is_auth_event"):
+
+def train_and_evaluate(
+    X,
+    y,
+    schema,
+    n_splits=3,
+    burst_col="is_suspicious_auth_burst",
+    auth_col="is_auth_event",
+):
 
     # schema: FeatureSchema specifying which columns to use for the model
 
@@ -114,7 +127,6 @@ def train_and_evaluate(X, y, schema, n_splits=3, burst_col="is_suspicious_auth_b
             print(f"[{schema.name}] Fold {fold} skipped (single-class train/test).")
             continue
 
-
         model.fit(X_train, y_train)
         proba = model.predict_proba(X_test)[:, 1]
         oof_proba[test_idx] = proba
@@ -122,9 +134,11 @@ def train_and_evaluate(X, y, schema, n_splits=3, burst_col="is_suspicious_auth_b
         auc = roc_auc_score(y_test, proba)
         aucs.append(auc)
         print(f"[{schema.name}] Fold {fold} ROC-AUC: {auc:.3f}")
-        
+
     if not aucs:
-        raise ValueError(f"[{schema.name}] No valid folds (all single-class). Try fewer splits or a different scenario.")
+        raise ValueError(
+            f"[{schema.name}] No valid folds (all single-class). Try fewer splits or a different scenario."
+        )
 
     mean_auc = float(np.mean(aucs))
     print(f"Mean ROC-AUC: {mean_auc:.3f}")
@@ -137,12 +151,16 @@ def train_and_evaluate(X, y, schema, n_splits=3, burst_col="is_suspicious_auth_b
         nonburst_mask = ~burst_mask
 
         diagnostics["burst_count"] = int(burst_mask.sum())
-        diagnostics["mean_score_burst"] = float(np.nanmean(oof_proba[burst_mask])) if burst_mask.any() else np.nan
+        diagnostics["mean_score_burst"] = (
+            float(np.nanmean(oof_proba[burst_mask])) if burst_mask.any() else np.nan
+        )
         diagnostics["mean_score_nonburst"] = float(np.nanmean(oof_proba[nonburst_mask]))
 
         # burst-only AUC (only if both classes exist in burst subset)
         if burst_mask.any() and len(np.unique(y[burst_mask])) > 1:
-            diagnostics["auc_burst_subset"] = float(roc_auc_score(y[burst_mask], oof_proba[burst_mask]))
+            diagnostics["auc_burst_subset"] = float(
+                roc_auc_score(y[burst_mask], oof_proba[burst_mask])
+            )
         else:
             diagnostics["auc_burst_subset"] = np.nan
 
@@ -150,7 +168,9 @@ def train_and_evaluate(X, y, schema, n_splits=3, burst_col="is_suspicious_auth_b
         auth_mask = X[auth_col].fillna(0).astype(int).values == 1
         diagnostics["auth_count"] = int(auth_mask.sum())
         if auth_mask.any() and len(np.unique(y[auth_mask])) > 1:
-            diagnostics["auc_auth_subset"] = float(roc_auc_score(y[auth_mask], oof_proba[auth_mask]))
+            diagnostics["auc_auth_subset"] = float(
+                roc_auc_score(y[auth_mask], oof_proba[auth_mask])
+            )
         else:
             diagnostics["auc_auth_subset"] = np.nan
 
@@ -165,6 +185,7 @@ def train_and_evaluate(X, y, schema, n_splits=3, burst_col="is_suspicious_auth_b
     }
 
     return results
+
 
 def run_experiment(df, window_size, scenario_name=None):
     """
@@ -183,7 +204,7 @@ def run_experiment(df, window_size, scenario_name=None):
         )
 
     # --- build features ---
-    X_dyn, y, df_used = build_dyn_features(df, window_size)    
+    X_dyn, y, df_used = build_dyn_features(df, window_size)
 
     if len(np.unique(y)) < 2:
         raise ValueError(
@@ -213,17 +234,15 @@ def run_experiment(df, window_size, scenario_name=None):
     sym_feats = [c for c in X_symbolic.columns if c.startswith("is_")]
 
     schema_base = FeatureSchema("base", base_feats)
-    schema_symbolic = FeatureSchema(
-        "base+symbolic",
-        base_feats + sym_feats
-    )
+    schema_symbolic = FeatureSchema("base+symbolic", base_feats + sym_feats)
 
     print("\nSymbolic feature positives (auto):")
     for f in sorted([c for c in X_full.columns if c.startswith("is_")]):
         print(f"  {f}: {int(X_full[f].sum())}")
 
-
-    print(f"Total features: {X_full.shape[1]} (static: {len(X_static.columns)}, dynamic: {len(X_dyn.columns)}, symbolic: {len(X_symbolic.columns)})")   
+    print(
+        f"Total features: {X_full.shape[1]} (static: {len(X_static.columns)}, dynamic: {len(X_dyn.columns)}, symbolic: {len(X_symbolic.columns)})"
+    )
 
     # --- train ---
 
@@ -232,8 +251,8 @@ def run_experiment(df, window_size, scenario_name=None):
     diag_base = burst_diagnostics(X_full, res_base)
 
     # store per-feature results
-    ablation_results = {}   # feat -> res
-    ablation_diags = {}     # feat -> diag
+    ablation_results = {}  # feat -> res
+    ablation_diags = {}  # feat -> diag
 
     for feat in sym_feats:
         print(f"\nTraining base + '{feat}' ...")
@@ -252,18 +271,134 @@ def run_experiment(df, window_size, scenario_name=None):
     return {
         "base": res_base,
         "diag_base": diag_base,
-
         # one-feature-at-a-time ablation
         "ablation": ablation_results,
         "diag_ablation": ablation_diags,
-
         # full symbolic bundle
         "sym_all": res_all,
         "diag_sym_all": diag_all,
-
         "X_full": X_full,
         "y": y,
         "sym_feats": sym_feats,
         "base_feats": base_feats,
     }
 
+
+def eval_subset_metrics(X_full, y, res_model, threshold=0.5):
+    split = res_model["test_idx_start"]
+    y_test = np.asarray(y)[split:]
+    p = np.asarray(res_model["proba_test"])
+
+    pred = (p >= threshold).astype(int)
+
+    fp = int(((pred == 1) & (y_test == 0)).sum())
+    fn = int(((pred == 0) & (y_test == 1)).sum())
+    alerts = int(pred.sum())
+
+    auc = float(roc_auc_score(y_test, p)) if len(np.unique(y_test)) > 1 else np.nan
+
+    return {"auc": auc, "fp": fp, "fn": fn, "alerts": alerts}
+
+
+def make_train_fn(test_frac=0.3):
+    def train_fn(X_full, y, feature_list):
+        schema = FeatureSchema("tmp", feature_list)
+        return train_eval_holdout(X_full, y, schema, test_frac=test_frac)
+
+    return train_fn
+
+
+def greedy_symbolic_search(
+    df,
+    window_size,
+    train_fn,  # function(X_full, y, feature_list) -> res dict with model, proba_test, test_idx_start
+    threshold=0.5,
+    max_k=6,
+    lambda_fp=0.000001,  # penalty per FP (tune)
+    min_subset_size=100,  # require feature fires at least this many times in test (optional)
+):
+    # --- build features ---
+    X_dyn, y, df_used = build_dyn_features(df, window_size)
+
+    X_static = build_static_features(df_used)
+    X_symbolic = symbolic_features.build_symbolic_features(df_used, X_dyn=X_dyn)
+
+    print("\nSymbolic features generated:")
+    print(sorted(X_symbolic.columns))
+
+    # derive active features from what the builder emitted
+    sym_feats = [c for c in X_symbolic.columns if c.startswith("is_")]
+    sym_miss = [c for c in X_symbolic.columns if c.startswith("m_")]
+
+    print("Active symbolic:", sym_feats)
+
+    X_full = pd.concat([X_dyn, X_static, X_symbolic], axis=1).reset_index(drop=True)
+    y = np.asarray(y)
+
+    assert len(X_full) == len(y)
+
+    # --- schemas ---
+    base_feats = list(X_dyn.columns) + list(X_static.columns)
+
+    sym_feats = [c for c in X_symbolic.columns if c.startswith("is_")]
+
+    # train baseline once
+    res_base = train_fn(X_full, y, base_feats)
+    m_base = eval_subset_metrics(X_full, y, res_base, threshold=threshold)
+
+    chosen = []
+    remaining = list(sym_feats)
+    history = []
+
+    def objective(m, m_base):
+        # higher is better
+        fp_reduction = m_base["fp"] - m["fp"]
+        return (
+            (m["auc"] if not np.isnan(m["auc"]) else -1.0)
+            + 0.00001 * fp_reduction
+            - lambda_fp * m["fp"]
+        )
+
+    best_score = objective(m_base, m_base)
+
+    for step in range(max_k):
+        best_candidate = None
+        best_candidate_res = None
+        best_candidate_metrics = None
+        best_candidate_score = best_score
+
+        for f in remaining:
+            feats = base_feats + chosen + [f]
+            res = train_fn(X_full, y, feats)
+            m = eval_subset_metrics(X_full, y, res, threshold=threshold)
+
+            score = objective(m, m_base)
+
+            if score > best_candidate_score:
+                best_candidate = f
+                best_candidate_res = res
+                best_candidate_metrics = m
+                best_candidate_score = score
+
+        if best_candidate is None:
+            break
+
+        chosen.append(best_candidate)
+        remaining.remove(best_candidate)
+        best_score = best_candidate_score
+
+        history.append(
+            {
+                "step": step + 1,
+                "added": best_candidate,
+                "chosen": chosen.copy(),
+                **best_candidate_metrics,
+            }
+        )
+
+    return {
+        "base": res_base,
+        "base_metrics": m_base,
+        "chosen": chosen,
+        "history": history,
+    }
