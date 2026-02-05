@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 from collections import deque, defaultdict
+from symbolic_features import build_symbolic_features
 
 def normalize_groups(x):
     if isinstance(x, list):
@@ -90,6 +91,34 @@ def build_static_features(df):
         (df["source"] == "wazuh") & (df["wazuh_update"].fillna(0).astype(int) == 1)
     ).astype(int)
 
+    # --- identity presence ---
+    X_static["has_username"] = df["username"].notna().astype(int)
+    X_static["has_procname"] = df["procname"].notna().astype(int)
+    X_static["has_rule_id"] = df["rule_id"].notna().astype(int)
+
+    # --- fixed infrastructure hints ---
+    X_static["is_internal_ip"] = (
+        df["srcip"].str.startswith(("10.", "192.168.", "172.16."), na=False).astype(int)
+    )
+
+    X_static["src_eq_dst"] = (df["srcip"] == df["dstip"]).astype(int)
+
+    # decoder / signature semantics
+    X_static["decoder_known"] = df["decoder"].notna().astype(int)
+    X_static["decoder_parent_known"] = df["decoder_parent"].notna().astype(int)
+
+    X_static["ids_low_severity"] = (
+        df["ids_severity"].fillna(0).astype(int) <= 2
+    ).astype(int)
+
+    # MITRE structure
+    X_static["has_mitre"] = df["mitre_ids"].notna().astype(int)
+    X_static["is_mitre_recon"] = (
+        df["mitre_tactic"].str.contains("recon", case=False, na=False)
+    ).astype(int)
+
+
+
     return X_static
 
 
@@ -165,3 +194,6 @@ def build_dyn_features(df, window_size):
     y = df["y"].values
 
     return X, y, df
+
+def build_sym_features(df, X_dyn):
+    return build_symbolic_features(df, X_dyn)

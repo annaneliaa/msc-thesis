@@ -11,32 +11,33 @@ def normalize_groups(x):
 def build_symbolic_features(df, X_dyn=None):
     """
     Build symbolic (knowledge-driven) features.
-    These features represent high-level SOC concepts,
-    not raw alert properties.
-
-    is_X says whether the symbolic concept X holds for an alert (1 = yes, 0 = no)
-    m_is_X says whether this concept was computable for the alert (1 = yes, 0 = no)
-
-    State	    Meaning
-    m=0, is=0	concept not applicable
-    m=1, is=0	applicable but false
-    m=1, is=1	applicable and true
+    is_X: concept holds
+    m_is_X: concept computable
     """
     df = df.copy()
     X_sym = pd.DataFrame(index=df.index)
-    
+
     if X_dyn is not None:
-        # align indices
         X_dyn = X_dyn.reset_index(drop=True)
         df = df.reset_index(drop=True)
     else:
         raise ValueError("build_symbolic_features needs X_dyn for dyn-based rules.")
-        X_dyn = X_dyn.reset_index(drop=True)
 
+    # ---------- helpers / base fields ----------
     src = df["source"].fillna("")
     wazuh = (src == "wazuh")
     aminer = (src == "aminer")
     ids = (df.get("is_ids_alert", 0).fillna(0).astype(int) == 1)
+
+    raw = df.get("raw_log", "").fillna("").astype(str)
+
+    # Make sure these exist as ints (your df already has many of these cols)
+    is_auth_event = df.get("is_auth_event", 0).fillna(0).astype(int)
+    is_success = df.get("is_success", 0).fillna(0).astype(int)
+    is_uid0 = df.get("is_uid0", 0).fillna(0).astype(int)
+
+    username = df.get("username", "").fillna("").astype(str).str.lower()
+    procname = df.get("procname", "").fillna("").astype(str)
 
     wazuh_level = pd.to_numeric(df.get("wazuh_level"), errors="coerce").fillna(0).astype(int)
     wazuh_update = df.get("wazuh_update", 0).fillna(0).astype(int)
@@ -45,50 +46,59 @@ def build_symbolic_features(df, X_dyn=None):
     exploit_class = df.get("exploit_class", "").fillna("").astype(str).str.lower()
     mitre_tactic = df.get("mitre_tactic", "").fillna("").astype(str).str.lower()
 
-    # ==================================================
-    # Rule 0 (optional / may be sparse)
-    # SuspiciousRemoteAccess
-    # ==================================================
-    # df["groups_norm"] = df["groups"].apply(normalize_groups)
-    # dstport = pd.to_numeric(df["dstport"], errors="coerce")
+    # ---------- derived static context (computed locally) ----------
+    # Presence cues
+    has_username = (username != "").astype(int)
+    has_procname = (procname != "").astype(int)
 
-    # is_auth_group = df["groups_norm"].apply(
-    #     lambda gs: "authentication" in gs
-    # ).astype(int)
-    # is_auth = (is_auth_group == 1) | (df["is_auth_event"].fillna(0).astype(int) == 1)
+    # Category scan hint (use category if present; fall back to raw log)
+    cat = df.get("category", "").fillna("").astype(str)
+    cat_scan = cat.str.contains("scan", case=False, na=False).astype(int)
 
-    # X_sym["m_is_suspicious_remote_access"] = dstport.notna().astype(int)
-    # X_sym["is_suspicious_remote_access"] = (
-    #     is_auth & dstport.notna() & (dstport.astype("Int64") != 22)
-    # ).astype(int)
+    # Internal IP heuristic (string prefix; good enough for now)
+    srcip = df.get("srcip", "").fillna("").astype(str)
+    dstip = df.get("dstip", "").fillna("").astype(str)
+    is_internal_ip = srcip.str.startswith(("10.", "192.168.", "172.16."), na=False).astype(int)
+    src_eq_dst = (srcip != "") & (srcip == dstip)
+    src_eq_dst = src_eq_dst.astype(int)
+
+    # Wazuh low level
+    wazuh_low_level = (wazuh & (wazuh_level <= 3)).astype(int)
+
+    # IDS low severity
+    ids_sev = pd.to_numeric(df.get("ids_severity"), errors="coerce")
+    ids_low_severity = (ids_sev.fillna(0) <= 2).astype(int)
+
+    # MITRE presence
+    mitre_ids = df.get("mitre_ids", "").fillna("").astype(str)
+    has_mitre = ((mitre_ids != "") & (mitre_ids != "null") & (mitre_ids != "[]")).astype(int)
+
+    # Cron hint
+    is_cron = raw.str.contains("cron", case=False, na=False).astype(int)
 
     # Rule 1: SuspiciousAuthBurst
-    # IF auth failure AND many alerts from same entity
-    X_sym["m_is_suspicious_auth_burst"] = 1 
+    X_sym["m_is_suspicious_auth_burst"] = 1
     X_sym["is_suspicious_auth_burst"] = (
-        (df["is_auth_event"] == 1) &
-        (df["is_success"] == 0) &
+        (is_auth_event == 1) &
+        (is_success == 0) &
         (X_dyn["ent_count_1d"] >= 3)
     ).astype(int)
 
     # Rule 2: RootLoginAttempt
-    # IF auth event AND username == root AND failure
-    username = df["username"].fillna("").str.lower()
-
-    X_sym["m_is_root_login_attempt"] = (username != "").astype(int)
+    X_sym["m_is_root_login_attempt"] = (has_username == 1).astype(int)
     X_sym["is_root_login_attempt"] = (
-        (df["is_auth_event"] == 1) &
-        (df["is_success"] == 0) &
+        (is_auth_event == 1) &
+        (is_success == 0) &
         (username == "root")
     ).astype(int)
 
     # Rule 3: BehavioralNovelty (AMiner)
-    # IF AMiner flags new behavior
     X_sym["m_is_behavioral_novelty"] = aminer.astype(int)
-    X_sym["is_behavioral_novelty"] = (aminer & (df["aminer_new_event"].fillna(0).astype(int) == 1)).astype(int)
+    X_sym["is_behavioral_novelty"] = (
+        aminer & (df.get("aminer_new_event", 0).fillna(0).astype(int) == 1)
+    ).astype(int)
 
-    # Rule 4: HighSeverityWazuh (expert threshold)
-    # "high rule level is more suspicious"
+    # Rule 4: HighSeverityWazuh
     X_sym["m_is_high_severity_wazuh"] = wazuh.astype(int)
     X_sym["is_high_severity_wazuh"] = (wazuh & (wazuh_level >= 7)).astype(int)
 
@@ -97,30 +107,25 @@ def build_symbolic_features(df, X_dyn=None):
     X_sym["is_wazuh_critical"] = (wazuh & (wazuh_level >= 10)).astype(int)
 
     # Rule 6: Mitre mapping
-    m_mitre = df.get("mitre_ids", "").fillna("").astype(str)
     X_sym["m_is_wazuh_mitre_mapped"] = wazuh.astype(int)
-    X_sym["is_wazuh_mitre_mapped"] = (wazuh & (m_mitre != "") & (m_mitre != "null") & (m_mitre != "[]")).astype(int)
+    X_sym["is_wazuh_mitre_mapped"] = (wazuh & (has_mitre == 1)).astype(int)
 
-    # Rule 7: Is IDS high priority
-    sev = pd.to_numeric(df["ids_severity"], errors="coerce")
-    X_sym["m_is_ids_high_priority"] = sev.notna().astype(int)
-    X_sym["is_ids_high_priority"] = (sev.notna() & (sev >= 2)).astype(int)  # tune based on distribution
+    # Rule 7: IDS high priority (note: your threshold looked low; keep as-is)
+    X_sym["m_is_ids_high_priority"] = ids_sev.notna().astype(int)
+    X_sym["is_ids_high_priority"] = (ids_sev.notna() & (ids_sev >= 2)).astype(int)
 
-    # Rule 8: Is IDS concept
+    # Rule 8: IDS concept
     X_sym["m_is_ids_concept"] = 1
     X_sym["is_ids_concept"] = ids.astype(int)
-    
-    # Rule 8: High severity and novelty
+
+    # Rule 9: High severity and novelty (missing m_ in your original; add it)
+    X_sym["m_is_high_sev_and_novel"] = (wazuh & aminer).astype(int)
     X_sym["is_high_sev_and_novel"] = (
         (X_sym["is_high_severity_wazuh"] == 1) &
         (X_sym["is_behavioral_novelty"] == 1)
     ).astype(int)
 
-
-    # -------------------------------------------------
-    # Combined features
-
-    # (A1) rare entity then burst (temporal)
+    # (A1) rare entity then burst
     X_sym["m_is_rare_entity_then_burst"] = 1
     X_sym["is_rare_entity_then_burst"] = (
         (X_dyn["days_since_ent_seen"] >= 7) &
@@ -130,29 +135,28 @@ def build_symbolic_features(df, X_dyn=None):
     # (A2) auth failure then uid0
     X_sym["m_is_auth_failure_then_uid0"] = 1
     X_sym["is_auth_failure_then_uid0"] = (
-        (df["is_auth_event"].fillna(0).astype(int) == 1) &
-        (df["is_success"].fillna(0).astype(int) == 0) &
-        (df["is_uid0"].fillna(0).astype(int) == 1)
+        (is_auth_event == 1) &
+        (is_success == 0) &
+        (is_uid0 == 1)
     ).astype(int)
 
-    # (A4) high sev but not update / AV (reduce benign noise)
+    # (A4) high sev but not update / AV
     X_sym["m_is_high_sev_non_update_non_av"] = wazuh.astype(int)
     X_sym["is_high_sev_non_update_non_av"] = (
         wazuh & (wazuh_level >= 7) & (wazuh_update == 0) & (wazuh_av == 0)
     ).astype(int)
 
-     # (B6) IDS class malware/c2/tls/dns suspicious
+    # (B6) IDS class malware/c2/tls/dns suspicious
     X_sym["m_is_ids_category_malware_or_c2"] = (exploit_class != "").astype(int)
     X_sym["is_ids_category_malware_or_c2"] = exploit_class.isin(
         ["malware", "c2_activity", "tls_fingerprint", "dns_suspicious"]
     ).astype(int)
-    
-      # (B5) MITRE execution/persistence
+
+    # (B5) MITRE execution/persistence
     X_sym["m_is_mitre_execution_or_persistence"] = (mitre_tactic != "").astype(int)
     X_sym["is_mitre_execution_or_persistence"] = mitre_tactic.str.contains(
         "execution|persistence", regex=True
     ).astype(int)
-
 
     # Combined features
     X_sym["m_is_novel_and_ids"] = 1
@@ -173,8 +177,121 @@ def build_symbolic_features(df, X_dyn=None):
         (X_dyn["ent_rate_1d"] >= 0.2)
     ).astype(int)
 
+    # composite FP-revealing symbolic rules
+    # (C1) Benign auth noise:
+    # successful auth + user known + low-sev wazuh
+    X_sym["m_is_benign_auth_noise"] = wazuh.astype(int)
+    X_sym["is_benign_auth_noise"] = (
+        (is_auth_event == 1) &
+        (is_success == 1) &
+        (has_username == 1) &
+        (wazuh_low_level == 1)
+    ).astype(int)
 
-    # print(X_sym.sum().sort_values(ascending=False))
-    # print(X_sym.mean().sort_values(ascending=False))
+    # (C2) AMiner novelty but stable (likely benign):
+    # aminer new event + process present + internal IP
+    X_sym["m_is_aminer_novel_but_stable"] = aminer.astype(int)
+    X_sym["is_aminer_novel_but_stable"] = (
+        aminer &
+        (df.get("aminer_new_event", 0).fillna(0).astype(int) == 1) &
+        (has_procname == 1) &
+        (is_internal_ip == 1)
+    ).astype(int)
+
+    # (C3) Scanner-looking but internal:
+    X_sym["m_is_internal_scan_like"] = 1
+    X_sym["is_internal_scan_like"] = (
+        (cat_scan == 1) &
+        (is_internal_ip == 1) &
+        (src_eq_dst == 1)
+    ).astype(int)
+
+    # (C4) Low-severity IDS background noise:
+    X_sym["m_is_low_sev_ids_background"] = 1
+    X_sym["is_low_sev_ids_background"] = (
+        (ids.astype(int) == 1) &
+        (ids_low_severity == 1) &
+        (has_mitre == 1)
+    ).astype(int)
+
+    # (C5) Periodic maintenance (cron + high recent recurrence)
+    # Requires you to have something like ent_count_1d; tune threshold as needed.
+    X_sym["m_is_periodic_maintenance"] = 1
+    X_sym["is_periodic_maintenance"] = (
+        (is_cron == 1) &
+        (X_dyn["ent_count_1d"] >= 3)
+    ).astype(int)
+
+    # (D1) Benign-prone entity burst (FP-ish):
+    # entity is very active now, but historically almost never attacks
+    X_sym["m_is_benign_prone_entity_burst"] = 1
+    X_sym["is_benign_prone_entity_burst"] = (
+        (X_dyn["ent_count_1d"] >= 5) &
+        (X_dyn["ent_rate_1d"] <= 0.01)
+    ).astype(int)
+
+    # (D2) Benign-prone category burst:
+    X_sym["m_is_benign_prone_category_burst"] = 1
+    X_sym["is_benign_prone_category_burst"] = (
+        (X_dyn["cat_count_1d"] >= 10) &
+        (X_dyn["cat_rate_1d"] <= 0.01)
+    ).astype(int)
+
+    # (D3) Auth failure on benign-prone entity:
+    X_sym["m_is_auth_fail_on_benign_entity"] = 1
+    X_sym["is_auth_fail_on_benign_entity"] = (
+        (df.get("is_auth_event", 0).fillna(0).astype(int) == 1) &
+        (df.get("is_success", 0).fillna(0).astype(int) == 0) &
+        (X_dyn["ent_rate_1d"] <= 0.01) &
+        (X_dyn["ent_count_1d"] >= 3)
+    ).astype(int)
+
+    # (D4) IDS high-severity but entity historically benign (possible FP):
+    sev = pd.to_numeric(df.get("ids_severity"), errors="coerce").fillna(0)
+    X_sym["m_is_ids_high_sev_on_benign_entity"] = 1
+    X_sym["is_ids_high_sev_on_benign_entity"] = (
+        (df.get("is_ids_alert", 0).fillna(0).astype(int) == 1) &
+        (sev >= 3) &
+        (X_dyn["ent_rate_1d"] <= 0.01)
+    ).astype(int)
+
+    # (D5) Wazuh high severity but category historically benign (possible FP):
+    X_sym["m_is_wazuh_high_sev_on_benign_category"] = wazuh.astype(int)
+    X_sym["is_wazuh_high_sev_on_benign_category"] = (
+        wazuh &
+        (wazuh_level >= 7) &
+        (X_dyn["cat_rate_1d"] <= 0.01)
+    ).astype(int)
+
+    # Attack indicators
+    # (D6) Novel entity spike:
+    # host not seen for a long time, then suddenly active (good attack heuristic)
+    X_sym["m_is_novel_entity_spike"] = 1
+    X_sym["is_novel_entity_spike"] = (
+        (X_dyn["days_since_ent_seen"] >= 7) &
+        (X_dyn["ent_count_1d"] >= 5)
+    ).astype(int)
+
+    # (D7) Novel category burst:
+    X_sym["m_is_novel_category_burst"] = 1
+    X_sym["is_novel_category_burst"] = (
+        (X_dyn["days_since_cat_seen"] >= 7) &
+        (X_dyn["cat_count_1d"] >= 10)
+    ).astype(int)
+
+    # (D8) "Chronic attacker" entity (good attack indicator; sanity check rule)
+    X_sym["m_is_chronic_attacker_entity"] = 1
+    X_sym["is_chronic_attacker_entity"] = (
+        (X_dyn["ent_rate_1d"] >= 0.2) &
+        (X_dyn["ent_count_1d"] >= 5)
+    ).astype(int)
+
+    # (D9) "Chronic attacker" category (good attack indicator)
+    X_sym["m_is_chronic_attacker_category"] = 1
+    X_sym["is_chronic_attacker_category"] = (
+        (X_dyn["cat_rate_1d"] >= 0.2) &
+        (X_dyn["cat_count_1d"] >= 10)
+    ).astype(int)
+
 
     return X_sym
