@@ -27,3 +27,11 @@ class SymbolicMemory:
     # A feature is considered memory-active if score_f ≥ min_score
     def active(self) -> List[str]:
         return [f for f, s in self.scores.items() if s >= self.min_score]
+
+
+@dataclass(frozen=True)
+class FeatureSchema:
+    name: str
+    features: List[str]
+
+

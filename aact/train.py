@@ -15,7 +15,7 @@ def train_lr_l1(X_train, y_train):
         max_iter=2000,
         class_weight="balanced",
         solver="liblinear",
-        # penalty="l1",
+        penalty="l1",
         C=1.0,
     )
     model.fit(X_train, y_train)
