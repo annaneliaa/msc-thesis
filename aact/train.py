@@ -3,14 +3,13 @@ import pandas as pd
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
-from schema import FeatureSchema
-from memory import SymbolicMemory
-from build_features import build_dyn_features, build_static_features
-import symbolic_features
-from metrics import eval_subset_metrics
+from classes import FeatureSchema
 
 
 def train_lr_l1(X_train, y_train):
+    """
+    Fit a sparse logistic regression model (L1-regularized) for feature selection
+    """
     model = LogisticRegression(
         max_iter=2000,
         class_weight="balanced",
@@ -23,6 +22,25 @@ def train_lr_l1(X_train, y_train):
 
 
 def train_eval_holdout(X_full, y, schema, test_frac=0.3):
+    """
+    Train + evaluate one model on a single holdout split (NOT time-series CV, so it has higher variance)
+
+    - Select columns from X_full according to `schema.features`
+    - Split data by index order:
+        - train = first (1-test_frac) fraction
+        - test  = last test_frac fraction
+       (important: this is NOT shuffled)
+    - Train logistic regression (L2 default)
+    - Compute ROC-AUC on the test split
+    - Return a result dict that downstream functions can reuse (metrics + predictions + split point):
+        - schema: schema name (string)
+        - model: fitted model
+        - auc: ROC-AUC on test split
+        - y_test: labels for test split
+        - proba_test: predicted probabilities for test split
+        - test_idx_start: integer index where test split begins (used later for support checks etc.)
+        - feature_names: list of actual columns used (after schema selection)
+    """
     X_full = X_full.reset_index(drop=True)
     y = np.asarray(y)
     assert len(X_full) == len(y)
@@ -36,7 +54,7 @@ def train_eval_holdout(X_full, y, schema, test_frac=0.3):
     X_train, X_test = X.iloc[:split], X.iloc[split:]
     y_train, y_test = y[:split], y[split:]
 
-    # guard
+    # guard: need both classes in both splits for AUC
     if len(np.unique(y_train)) < 2 or len(np.unique(y_test)) < 2:
         raise ValueError(
             "Train or test has only one class. Try a different split_frac or use all scenarios."
@@ -59,7 +77,7 @@ def train_eval_holdout(X_full, y, schema, test_frac=0.3):
     }
 
 
-def train_and_evaluate(
+def train_and_eval(
     X,
     y,
     schema,
@@ -67,6 +85,28 @@ def train_and_evaluate(
     burst_col="is_suspicious_auth_burst",
     auth_col="is_auth_event",
 ):
+    """
+    Time-series cross-validation training + evaluation with optional subgroup diagnostics
+    Trains logistic regression per fold and computes ROC-AUC per fold.
+    Stores out-of-fold probabilities (oof_proba) for every row that was evaluated.
+
+    Inputs
+    - X: DataFrame of candidate features (may contain more columns than schema uses)
+    - y: labels aligned with X
+    - schema: FeatureSchema object; determines which columns are used
+    - n_splits: number of time-series folds
+    - burst_col/auth_col: optional columns used only for diagnostics (if present)
+
+    Returns dict with
+    - schema: the schema object (not just name)
+    - model: last fitted model (from last valid fold)
+    - aucs: list of fold AUCs
+    - mean_auc: mean of fold AUCs
+    - y_true: full y array
+    - proba_oof: out-of-fold probabilities aligned to rows (NaN where never evaluated)
+    - diagnostics: burst/auth counts + mean scores + subset AUCs (when computable)
+    """
+
 
     # schema: FeatureSchema specifying which columns to use for the model
     X = X.reset_index(drop=True)
@@ -160,120 +200,11 @@ def train_and_evaluate(
 
 
 def make_train_fn(test_frac=0.3):
+    """
+    Returns train_fn(X_full, y, feature_list) -> result dict from train_eval_holdout with fixed holdout split fraction
+    """
     def train_fn(X_full, y, feature_list):
         schema = FeatureSchema("tmp", feature_list)
         return train_eval_holdout(X_full, y, schema, test_frac=test_frac)
 
     return train_fn
-
-
-def greedy_symbolic_search(
-    df,
-    window_size,
-    train_fn,  # function(X_full, y, feature_list) -> res dict with model, proba_test, test_idx_start
-    threshold=0.5,
-    max_k=6,
-    lambda_fp=0.000001,  # penalty per FP (tune)
-    min_subset_size=100,  # require feature fires at least this many times in test (optional)
-):
-    """Greedy forward feature-selection loop that tries to pick up max_k symbolic (is_X) features
-    to add on top of a baseline (dynamic + static features), keeping only additions that improve
-    the objective (currently, AUC and FP).
-    """
-    # --- build features ---
-    X_dyn, y, df_used = build_dyn_features(df, window_size)
-    X_static = build_static_features(df_used)
-    X_symbolic = symbolic_features.build_symbolic_features(df_used, X_dyn=X_dyn)
-
-    print("\nSymbolic features generated:")
-    print(sorted(X_symbolic.columns))
-
-    # derive active features from what the builder emitted
-    sym_feats = [c for c in X_symbolic.columns if c.startswith("is_")]
-    sym_miss = [c for c in X_symbolic.columns if c.startswith("m_")]
-
-    print("Active symbolic:", sym_feats)
-
-    # concatenate features
-    X_full = pd.concat([X_dyn, X_static, X_symbolic], axis=1).reset_index(drop=True)
-    y = np.asarray(y)
-
-    assert len(X_full) == len(y)
-
-    # --- schemas ---
-    base_feats = list(X_dyn.columns) + list(X_static.columns)
-
-    # only columns starting with is_ are treated as symbolic features now
-    sym_feats = [c for c in X_symbolic.columns if c.startswith("is_")]
-
-    # train baseline feature set (dyn + static)
-    res_base = train_fn(X_full, y, base_feats)
-    # ccompute metrics
-    m_base = eval_subset_metrics(X_full, y, res_base, threshold=threshold)
-
-    # Greedy subset selection
-    chosen = []
-    remaining = list(sym_feats)
-    history = []
-
-    def objective(m, m_base):
-        if m["subset_size"] is not None and m["subset_size"] < min_subset_size:
-            return -np.inf
-
-        fp_reduction = m_base["fp"] - m["fp"]
-
-        return (
-            (m["auc"] if not np.isnan(m["auc"]) else -1.0)
-            + 0.00001 * fp_reduction
-            - lambda_fp * m["fp"]
-        )
-
-
-    best_score = objective(m_base, m_base)
-
-    for step in range(max_k):
-
-        best_candidate = None
-        best_candidate_res = None
-        best_candidate_metrics = None
-        best_candidate_score = best_score
-
-        # For each remaining symbolic feature f
-        # train a model on base_feats + chosen + [f]
-        for f in remaining:
-            feats = base_feats + chosen + [f]
-            res = train_fn(X_full, y, feats)
-            m = eval_subset_metrics(X_full, y, res, threshold=threshold, subset_col=f)
-
-            # compute score based on objective
-            score = objective(m, m_base)
-
-            # stops when no candidate improves the objective
-            if score > best_candidate_score:
-                best_candidate = f
-                best_candidate_res = res
-                best_candidate_metrics = m
-                best_candidate_score = score
-
-        if best_candidate is None:
-            break
-
-        chosen.append(best_candidate)
-        remaining.remove(best_candidate)
-        best_score = best_candidate_score
-
-        history.append(
-            {
-                "step": step + 1,
-                "added": best_candidate,
-                "chosen": chosen.copy(),
-                **best_candidate_metrics,
-            }
-        )
-
-    return {
-        "base": res_base,
-        "base_metrics": m_base,
-        "chosen": chosen,
-        "history": history,
-    }

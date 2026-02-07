@@ -10,6 +10,16 @@ import os
 import json
 
 
+def log_row(history, out_path, row: dict):
+    """
+    Appends row to history and writes to output file.
+    """
+    history.append(row)
+    if out_path:
+        with open(out_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(row, default=float) + "\n")
+
+
 def ensure_single_scenario(df_k: pd.DataFrame, k: int) -> str:
     """
     A check to make sure each time window contains alerts from exactly one scenario.
@@ -185,7 +195,10 @@ def suppression_mask_from_active_syms(
         X_sym_all_next[active_syms].fillna(0).astype(int).sum(axis=1) > 0
     ).to_numpy()
 
-def loo_ablation_fp_onlyX_sym_all_next: pd.DataFrame, y_test: np.ndarray, active_syms: list[str]):
+
+def loo_ablation_fp_only(
+    X_sym_all_next: pd.DataFrame, y_test: np.ndarray, active_syms: list[str]
+):
     """
     Returns:
       base_stats: suppression stats with full active set
@@ -208,31 +221,54 @@ def loo_ablation_fp_onlyX_sym_all_next: pd.DataFrame, y_test: np.ndarray, active
         wo_stats = compute_suppression_stats_from_mask(y_test, mask_wo)
 
         deltas[f] = {
-            "delta_suppressed_benign": base_stats["suppressed_next_benign"] - wo_stats["suppressed_next_benign"],
-            "delta_suppressed_attack": base_stats["suppressed_next_attack"] - wo_stats["suppressed_next_attack"],
-            "delta_suppressed_total":  base_stats["suppressed_next_total"]  - wo_stats["suppressed_next_total"],
+            "delta_suppressed_benign": base_stats["suppressed_next_benign"]
+            - wo_stats["suppressed_next_benign"],
+            "delta_suppressed_attack": base_stats["suppressed_next_attack"]
+            - wo_stats["suppressed_next_attack"],
+            "delta_suppressed_total": base_stats["suppressed_next_total"]
+            - wo_stats["suppressed_next_total"],
         }
 
     return base_stats, deltas
 
-
-def make_time_windows(df, window_days=7, step_days=7, ts_col="timestamp"):
+def make_time_windows(df, window_days=7, step_days=7, ts_col="timestamp", cover_tail=True):
+    """
+    Returns: list of (w_start, w_end, w_df)
+    Optionally covers the tail so the last partial window is included
+    """
     d = df.copy()
     d[ts_col] = pd.to_datetime(d[ts_col], utc=True, errors="coerce")
-    d = d.dropna(subset=[ts_col]).sort_values(ts_col).reset_index(drop=True)
+    d = d.dropna(subset=[ts_col]).sort_values(ts_col)  # <-- no reset_index
 
     start = d[ts_col].min()
     end = d[ts_col].max()
 
+    window = pd.Timedelta(days=float(window_days))
+    step   = pd.Timedelta(days=float(step_days))
+
     windows = []
     cur = start
-    while cur + pd.Timedelta(days=window_days) <= end:
-        w_start = cur
-        w_end = cur + pd.Timedelta(days=window_days)
-        mask = (d[ts_col] >= w_start) & (d[ts_col] < w_end)
-        windows.append((w_start, w_end, d.loc[mask].reset_index(drop=True)))
-        cur = cur + pd.Timedelta(days=step_days)
+
+    if cover_tail:
+        # generate windows until cur passes end; clamp last window end
+        while cur <= end:
+            w_start = cur
+            w_end = min(cur + window, end + pd.Timedelta(microseconds=1))  # include max timestamp
+            w = d[(d[ts_col] >= w_start) & (d[ts_col] < w_end)]
+            windows.append((w_start, w_end, w))
+            cur = cur + step
+    else:
+        # old behavior (drops tail)
+        while cur + window <= end:
+            w_start = cur
+            w_end = cur + window
+            w = d[(d[ts_col] >= w_start) & (d[ts_col] < w_end)]
+            windows.append((w_start, w_end, w))
+            cur = cur + step
+
     return windows
+
+
 
 def select_symbolic_features(
     ablation_results,  # dict feat -> res_feat
@@ -253,9 +289,9 @@ def select_symbolic_features(
     """
     Returns selected features to keep active in next window based on 1-feature ablation results from current window.
 
-    In FP-only windows (no attacks in the test split), 
+    In FP-only windows (no attacks in the test split),
     the objective is:  "reduce false positives / alerts" because AUC is undefined and you don't want any FN increase.
-    
+
     In classification windows (both classes in test split), objective becomes:
         "do not hurt discrimination (AUC) and do not explode false positives"
 
@@ -303,7 +339,7 @@ def select_symbolic_features(
         support = int((X_test[f].fillna(0).astype(int) == 1).sum())
         if support < min_support:
             continue
-            
+
         # Compute metrics for base+f
         stats_f = eval_subset_metrics(X_full, y, res_f, threshold=threshold)
 
@@ -340,6 +376,7 @@ def select_symbolic_features(
 
     return chosen
 
+
 def run_ablation_holdout(
     X_full,
     y,
@@ -365,6 +402,7 @@ def run_ablation_holdout(
         ablation_diags[feat] = burst_diagnostics(X_full, res_feat)
 
     return res_base, diag_base, ablation_results, ablation_diags
+
 
 # remove/change this function later
 def burst_diagnostics(
@@ -401,6 +439,7 @@ def burst_diagnostics(
 def simple_ablation_experiment(df, window_size, scenario_name=None):
     """
     One shot, single-scenario ablation experiment (no time windows, no next window eval).
+    For one scenario's full dataset, test whether adding each symbolic feature helps vs baseline
 
     Function filters dataset to one scenario. Then build features once:
     - dynamic features (from window_size lookback)
@@ -488,6 +527,7 @@ def simple_ablation_experiment(df, window_size, scenario_name=None):
         "base_feats": base_feats,
     }
 
+
 def windowed_ablation_experiment(
     df,
     window_days=7,
@@ -497,71 +537,94 @@ def windowed_ablation_experiment(
     threshold=0.5,
     out_dir=None,
     use_memory=True,
-
+    force_fp_only=False,
     # FP-only selection knobs
     fp_min_support=200,
     fp_max_k=6,
-
     # Option 2: thresholded activation
-    fp_activation="topk",         # "topk" | "mem_threshold" | "hybrid"
-    fp_score_threshold=1.5,       # used when fp_activation includes mem_threshold
-    fp_support_gate=True,         # if True, also require support>=fp_min_support
-
+    fp_activation="topk",  # "topk" | "mem_threshold" | "hybrid"
+    fp_score_threshold=1.5,  # used when fp_activation includes mem_threshold
+    fp_support_gate=True,  # if True, also require support>=fp_min_support
     # Option 1: leave-one-out ablation (on NEXT window)
     fp_loo_ablation=False,
-):  
+):
     """
+    For each time window k, make decisions using data in k, then evaluate on the next window k+1.
+
     Hybrid windowed experiment:
     - If current window has both classes -> supervised ablation + ML evaluation
     - If current window is single-class or holdout fails -> FP-only symbolic selection (no training)
-     + evaluate as suppression mask on the next window
+        + evaluate as suppression mask on the next window
+
+    Modes:
+    - supervised: if window k has both classes, train models + pick symbolic features
+    - fp_only: if window k is a single-cass (all benign alerts) or holdout fails
+        - pick symbolic features and measure FP suppression on benign alerts labelled as attack (in window k+1)
     """
+
+    # 1) Make time windows
     windows = make_time_windows(df, window_days=window_days, step_days=step_days)
+    # we need at least two windows to evaluate on "next" window
     if len(windows) < 2:
         return []
 
+    # 2) Setup output directories
     if out_dir is not None:
         os.makedirs(out_dir, exist_ok=True)
         out_path = os.path.join(out_dir, "all_history.jsonl")
     else:
         out_path = None
 
-    mem = (SymbolicMemory(decay=0.85, reward=1.0, min_score=0.9) if use_memory else None)
+    # 3) Initialize memory to track active symbolic feature set (carried across windows)
+    mem = SymbolicMemory(decay=0.85, reward=1.0, min_score=0.9) if use_memory else None
     active_syms = []
     history = []
 
-    def log_row(row: dict):
-        history.append(row)
-        if out_path:
-            with open(out_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(row, default=float) + "\n")
-
+    # 4) Loop over all window pairs (k -> k+1)
     for k in range(len(windows) - 1):
         w_start, w_end, df_k = windows[k]
         _, _, df_next = windows[k + 1]
+
+        # Enforce one scenario per window
         scenario = ensure_single_scenario(df_k, k)
 
+        # Decay memory (if enabled)
         if use_memory:
             mem.step_decay()
 
-        # build features on current window
-        X_full_k, X_sym_all_k, y_k, df_used_k, base_feats, sym_feats = build_all_features(df_k, lookback_days)
+        # Build features on current window
+        X_full_k, X_sym_all_k, y_k, df_used_k, base_feats, sym_feats = (
+            build_all_features(df_k, lookback_days)
+        )
 
-        supervised_possible = (len(np.unique(y_k)) >= 2)
-        mode = "supervised"
+        # Determine if supervisded training is possible
+        # If only one class in y_k, supervised AUC training can’t work reliably -> measure feature effects using FP suppression rates
+        supervised_possible = len(np.unique(y_k)) >= 2
 
+        # FORCE FP-ONLY MODE (for ablation study)
+        force_fp_only = True  # <- add param in signature; set from caller
+        if force_fp_only:
+            supervised_possible = False
         # ----------------------------
         # SUPERVISED MODE
         # ----------------------------
+        mode = "supervised"
+
         if supervised_possible:
             try:
-                res_base, diag_base, ablation_results, ablation_diags = run_ablation_holdout(
-                    X_full_k, y_k, base_feats, sym_feats, test_frac=test_frac
+                # Run ablation on window k
+                # Trains baseline model + one model for each symbolic feature
+                res_base, diag_base, ablation_results, ablation_diags = (
+                    run_ablation_holdout(
+                        X_full_k, y_k, base_feats, sym_feats, test_frac=test_frac
+                    )
                 )
             except ValueError:
+                # Throws if train/test split ends up with a single class
                 supervised_possible = False
 
         if supervised_possible:
+            # Select symbolic features based on ablation deltas
             selected = select_symbolic_features(
                 ablation_results=ablation_results,
                 X_full=X_full_k,
@@ -571,119 +634,257 @@ def windowed_ablation_experiment(
                 threshold=threshold,
             )
 
+            # Update memory + define active symbolic features
             if use_memory:
                 mem.reward_feats(selected)
                 active_syms = union_preserve_order(selected, mem.active())
             else:
                 active_syms = selected
 
+            # Train final model for window k
             final_feats = base_feats + active_syms
             res_final = train_eval_holdout(
                 X_full_k, y_k, FeatureSchema("final", final_feats), test_frac=test_frac
             )
 
-            # evaluate on NEXT window
-            X_full_n, X_sym_all_n, y_n, df_used_n, _, _ = build_all_features(df_next, lookback_days)
+            # Evaluate on next window k+1
+            # Build features on df_next (dataframe of window k+1)
+            X_full_n, X_sym_all_n, y_n, df_used_n, _, _ = build_all_features(
+                df_next, lookback_days
+            )
             X_train = X_full_k[final_feats].fillna(0)
             y_train = y_k
-            X_test  = X_full_n[final_feats].fillna(0)
-            y_test  = np.asarray(y_n)
+            X_test = X_full_n[final_feats].fillna(0)
+            y_test = np.asarray(y_n)
 
+            # Train on window k
             model = train_lr_l1(X_train, y_train)
+
+            # Predict probabilities on next window
             proba = model.predict_proba(X_test)[:, 1]
 
-            auc_next = roc_auc_score(y_test, proba) if len(np.unique(y_test)) > 1 else np.nan
+            # Compute next window metrics: AUC, alerts, FP, FN
+            auc_next = (
+                roc_auc_score(y_test, proba) if len(np.unique(y_test)) > 1 else np.nan
+            )
             alerts_next = int((proba >= threshold).sum())
             fp_next = int(((proba >= threshold) & (y_test == 0)).sum())
             fn_next = int(((proba < threshold) & (y_test == 1)).sum())
 
-            log_row({
+            # Log results
+            log_row(
+                history,
+                out_path,
+                {
+                    "k": k,
+                    "mode": mode,
+                    "scenario": scenario,
+                    "train_window": f"{w_start.date()}→{w_end.date()}",
+                    "active_syms": active_syms,
+                    "mem_scores": dict(mem.scores) if use_memory else None,
+                    "auc_train_base": res_base.get("auc", np.nan),
+                    "auc_train_final": res_final.get("auc", np.nan),
+                    "auc_next": auc_next,
+                    "alerts_next": alerts_next,
+                    "fp_next": fp_next,
+                    "fn_next": fn_next,
+                    # fp-only fields
+                    "suppressed_next_total": np.nan,
+                    "suppressed_next_benign": np.nan,
+                    "suppressed_next_attack": np.nan,
+                },
+            )
+            continue  # Continue to next k
+
+        # ----------------------------
+        # FP-ONLY MODE (no training)
+        # ----------------------------
+        mode = "fp_only"
+
+        # Compute supports on window k
+        # Counts how often each symbolic feature fires in window k
+        counts = count_sym_feat_fires(X_sym_all_k, sym_feats)
+
+        # Pick a candidate symbolic feature set using counts
+        # Filters out features that don't fire enough in the current window
+        topk = fp_only_select_topk_by_support(
+            counts, fp_min_support, fp_max_k
+        )  # list of feature names
+
+        # Update memory if enabled
+        if use_memory:
+            mem.reward_feats(topk)
+
+        # Start with empty candidate set
+        selected = []
+
+        # Build features for next window
+        # X_sym_all_n contains all symbolic features that fired in the next window
+        _, X_sym_all_n, y_n, df_used_n, _, _ = build_all_features(
+            df_next, lookback_days
+        )
+        y_test = np.asarray(y_n)
+
+        # Filter out features that do not exist in the next window
+        sym_feats_eval = [f for f in sym_feats if f in X_sym_all_n.columns]
+
+        # Add here: filter out feats that dont fire enough
+
+        # Baseline: no suppression
+        base_mask = np.zeros(len(y_test), dtype=bool)  # all false, suppress nothing
+        base_stats = compute_suppression_stats_from_mask(
+            y_test, base_mask
+        )  # should be all zeroes
+
+        # Ablation: evaluate FP suppression of each feature alone on next window k+1
+        per_feat = {}
+        for f in sym_feats_eval:
+            # For each feature f, suppress exactly the alerts where f fires
+            mask_f = X_sym_all_n[f].fillna(0).astype(int).to_numpy() == 1
+
+            # Compute stats to see how many benign alerts are supressed + how many attacks are suppressed (FP vs FN)
+            stats_f = compute_suppression_stats_from_mask(y_test, mask_f)
+            per_feat[f] = stats_f
+
+        # Ceiling check: if we used all symbolic features together, how much FP supression can we get?
+
+        # Compute mask as an OR of all candidate rules: if one fires, use all of them
+        all_mask = (
+            (
+                X_sym_all_n[sym_feats_eval].fillna(0).astype(int).sum(axis=1) > 0
+            ).to_numpy()
+            if sym_feats_eval
+            else base_mask
+        )
+        all_stats = compute_suppression_stats_from_mask(y_test, all_mask)
+
+        # Log results to history
+        log_row(
+            history,
+            out_path,
+            {
                 "k": k,
                 "mode": mode,
                 "scenario": scenario,
                 "train_window": f"{w_start.date()}→{w_end.date()}",
-                "active_syms": active_syms,
-                "mem_scores": dict(mem.scores) if use_memory else None,
-                "auc_train_base": res_base.get("auc", np.nan),
-                "auc_train_final": res_final.get("auc", np.nan),
-                "auc_next": auc_next,
-                "alerts_next": alerts_next,
-                "fp_next": fp_next,
-                "fn_next": fn_next,
-                # fp-only fields
-                "suppressed_next_total": np.nan,
-                "suppressed_next_benign": np.nan,
-                "suppressed_next_attack": np.nan,
-            })
-            continue
-
-        # ----------------------------
-        # FP-ONLY MODE (no training)
-        # Adds Option 2 + Option 1
-        # ----------------------------
-        mode = "fp_only"
-
-        supports_k = count_sym_feat_fires(X_sym_all_k, sym_feats)
-        topk = fp_only_select_topk_by_support(supports_k, fp_min_support, fp_max_k)
-
-        # update memory based on something (topk is a reasonable reward signal)
-        if use_memory:
-            mem.reward_feats(topk)
-
-        # Option 2: thresholded activation (and/or hybrid)
-        chosen = []
-        if fp_activation in ("topk", "hybrid"):
-            chosen = union_preserve_order(chosen, topk)
-
-        if fp_activation in ("mem_threshold", "hybrid"):
-            thr = fp_only_select_by_mem_threshold(mem, sym_feats, fp_score_threshold) if use_memory else []
-            chosen = union_preserve_order(chosen, thr)
-
-        # optional support gate to avoid “active but never fires”
-        if fp_support_gate:
-            chosen = [f for f in chosen if supports_k.get(f, 0) >= fp_min_support]
-
-        # optionally mix in mem.active() if you want “sticky” memory
-        if use_memory:
-            active_syms = union_preserve_order(chosen, mem.active())
-        else:
-            active_syms = chosen
-
-        # evaluate on NEXT window
-        _, X_sym_all_n, y_n, df_used_n, _, _ = build_all_features(df_next, lookback_days)
-        y_test = np.asarray(y_n)
-
-        if fp_loo_ablation:
-            base_stats, loo_deltas = loo_ablation_fp_only_on_next(X_sym_all_n, y_test, active_syms)
-            stats = base_stats
-        else:
-            suppressed_mask = suppression_mask_from_active_syms(X_sym_all_n, active_syms)
-            stats = compute_suppression_stats_from_mask(y_test, suppressed_mask)
-            loo_deltas = None
-
-        log_row({
-            "k": k,
-            "mode": mode,
-            "scenario": scenario,
-            "train_window": f"{w_start.date()}→{w_end.date()}",
-            "active_syms": active_syms,
-            "mem_scores": dict(mem.scores) if use_memory else None,
-            "supports_k": supports_k,
-
-            # supervised fields not available
-            "auc_train_base": np.nan,
-            "auc_next": np.nan,
-            "alerts_next": np.nan,
-            "fp_next": np.nan,
-            "fn_next": np.nan,
-
-            # FP-only evaluation
-            **stats,
-
-            # Option 1 output (per-feature marginal suppression on NEXT window)
-            "loo_deltas_next": loo_deltas,  # dict(feature -> delta_suppressed_*)
-            "fp_activation": fp_activation,
-            "fp_score_threshold": fp_score_threshold,
-        })
+                "supports_k": counts,
+                "suppression_base": base_stats,  # baseline suppression
+                "suppression_per_feat": per_feat,  # per festure ablation suppression stats
+                "suppression_all_or": all_stats,  # all OR suppression stats
+            },
+        )
+        continue
 
     return history
+
+
+def greedy_symbolic_search(
+    df,
+    window_size,
+    train_fn,  # function(X_full, y, feature_list) -> res dict with model, proba_test, test_idx_start
+    threshold=0.5,
+    max_k=6,
+    lambda_fp=0.000001,  # penalty per FP (tune)
+    min_subset_size=100,  # require feature fires at least this many times in test (optional)
+):
+    """Greedy forward feature-selection loop that tries to pick up max_k symbolic (is_X) features
+    to add on top of a baseline (dynamic + static features), keeping only additions that improve
+    the objective (currently, AUC and FP).
+    """
+    # --- build features ---
+    X_dyn, y, df_used = build_dyn_features(df, window_size)
+    X_static = build_static_features(df_used)
+    X_symbolic = symbolic_features.build_symbolic_features(df_used, X_dyn=X_dyn)
+
+    print("\nSymbolic features generated:")
+    print(sorted(X_symbolic.columns))
+
+    # derive active features from what the builder emitted
+    sym_feats = [c for c in X_symbolic.columns if c.startswith("is_")]
+    sym_miss = [c for c in X_symbolic.columns if c.startswith("m_")]
+
+    print("Active symbolic:", sym_feats)
+
+    # concatenate features
+    X_full = pd.concat([X_dyn, X_static, X_symbolic], axis=1).reset_index(drop=True)
+    y = np.asarray(y)
+
+    assert len(X_full) == len(y)
+
+    # --- schemas ---
+    base_feats = list(X_dyn.columns) + list(X_static.columns)
+
+    # only columns starting with is_ are treated as symbolic features now
+    sym_feats = [c for c in X_symbolic.columns if c.startswith("is_")]
+
+    # train baseline feature set (dyn + static)
+    res_base = train_fn(X_full, y, base_feats)
+    # ccompute metrics
+    m_base = eval_subset_metrics(X_full, y, res_base, threshold=threshold)
+
+    # Greedy subset selection
+    chosen = []
+    remaining = list(sym_feats)
+    history = []
+
+    def objective(m, m_base):
+        if m["subset_size"] is not None and m["subset_size"] < min_subset_size:
+            return -np.inf
+
+        fp_reduction = m_base["fp"] - m["fp"]
+
+        return (
+            (m["auc"] if not np.isnan(m["auc"]) else -1.0)
+            + 0.00001 * fp_reduction
+            - lambda_fp * m["fp"]
+        )
+
+
+    best_score = objective(m_base, m_base)
+
+    for step in range(max_k):
+
+        best_candidate = None
+        best_candidate_res = None
+        best_candidate_metrics = None
+        best_candidate_score = best_score
+
+        # For each remaining symbolic feature f
+        # train a model on base_feats + chosen + [f]
+        for f in remaining:
+            feats = base_feats + chosen + [f]
+            res = train_fn(X_full, y, feats)
+            m = eval_subset_metrics(X_full, y, res, threshold=threshold, subset_col=f)
+
+            # compute score based on objective
+            score = objective(m, m_base)
+
+            # stops when no candidate improves the objective
+            if score > best_candidate_score:
+                best_candidate = f
+                best_candidate_res = res
+                best_candidate_metrics = m
+                best_candidate_score = score
+
+        if best_candidate is None:
+            break
+
+        chosen.append(best_candidate)
+        remaining.remove(best_candidate)
+        best_score = best_candidate_score
+
+        history.append(
+            {
+                "step": step + 1,
+                "added": best_candidate,
+                "chosen": chosen.copy(),
+                **best_candidate_metrics,
+            }
+        )
+
+    return {
+        "base": res_base,
+        "base_metrics": m_base,
+        "chosen": chosen,
+        "history": history,
+    }

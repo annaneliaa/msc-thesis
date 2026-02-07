@@ -119,10 +119,12 @@ def plot_symbolic_performance_delta(
     delta = df[metric] - base_val
 
     plt.figure(figsize=(8, 4))
+    plt.yscale("log")
     delta.sort_values().plot(kind="bar")
     plt.axhline(0, color="black", linewidth=1)
     plt.ylabel(f"Δ {metric.upper()} vs baseline")
     plt.title(f"Impact of symbolic features on {metric.upper()}")
+    plt.xticks(fontsize=6)
     plt.xticks(rotation=30, ha="right")
     plt.tight_layout()
 
@@ -193,7 +195,6 @@ def plot_symbolic_score_shift(
 
     fname = f"{_safe_name(prefix)}score_shift_{_safe_name(feature)}.png"
     plt.savefig(os.path.join(out_dir, fname))
-    plt.show()
 
 
 # function that plots score-shifts separately for true attacks (y=1) and benign (y=0)
@@ -244,7 +245,6 @@ def plot_symbolic_score_shift_by_label(
             f"{_safe_name(prefix)}score_shift_{_safe_name(feature)}_{fname_suffix}.png"
         )
         plt.savefig(os.path.join(out_dir, fname))
-        plt.show()
 
     # y=1 (true attacks) and y=0 (benign)
     _panel(attack_mask, "1 (attack)", "y1_attack")
