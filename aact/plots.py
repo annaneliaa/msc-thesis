@@ -133,19 +133,6 @@ def plot_symbolic_performance_delta(
     plt.show()
 
 
-# def plot_symbolic_coefficients(model, feature_names, symbolic_features, out_dir="../plots", prefix=""):
-#     coef = pd.Series(model.coef_[0], index=feature_names)
-#     coef_sym = coef[symbolic_features].sort_values()
-
-#     plt.figure(figsize=(6, 3))
-#     coef_sym.plot(kind="barh")
-#     plt.axvline(0, color="black", linewidth=1)
-#     plt.xlabel("Logistic regression coefficient")
-#     plt.title("Model reliance on symbolic features")
-#     plt.tight_layout()
-
-#     plt.savefig(os.path.join(out_dir, f"sym_coefficients.png"))
-#     plt.show()
 
 
 def plot_symbolic_coefficients(
