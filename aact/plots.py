@@ -4,17 +4,76 @@ import matplotlib.pyplot as plt
 import os
 from sklearn.metrics import roc_curve, roc_auc_score
 import re
+import json
 
+# -------------------------
+# Loading + preprocessing helpers
+# -------------------------
 
 def _ensure_dir(path: str):
     os.makedirs(path, exist_ok=True)
     return path
 
-
 def _safe_name(s: str) -> str:
     # keep letters, numbers, underscore, dash
     return re.sub(r"[^a-zA-Z0-9_\-]+", "_", str(s)).strip("_")
 
+def _as_dict(x):
+    if isinstance(x, dict):
+        return x
+    if x is None:
+        return {}
+    if isinstance(x, str):
+        try:
+            return json.loads(x)
+        except Exception:
+            return {}
+    return {}
+
+
+def load_fp_only_history_jsonl(jsonl_path: str) -> pd.DataFrame:
+    """Load all_history.jsonl and keep only fp_only rows (if present)."""
+    rows = []
+    with open(jsonl_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                rows.append(json.loads(line))
+    df = pd.DataFrame(rows)
+    if "mode" in df.columns:
+        df = df[df["mode"] == "fp_only"].copy()
+    return df
+
+def prepare_fp_only_window_metrics(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Parses train_window -> train_start/train_end and flattens suppression_all_or into numeric columns.
+    Returns a sorted dataframe ready for plotting.
+    """
+    d = df.copy()
+
+    arrow = "→"
+    d["train_start"] = pd.to_datetime(d["train_window"].str.split(arrow).str[0], errors="coerce")
+    d["train_end"]   = pd.to_datetime(d["train_window"].str.split(arrow).str[1], errors="coerce")
+    d = d.sort_values(["scenario", "train_start", "k"]).reset_index(drop=True)
+
+    d["suppression_all_or"] = d["suppression_all_or"].apply(_as_dict)
+
+    cols = [
+        "supp_rate_total","supp_rate_benign","supp_rate_attack",
+        "suppressed_next_total","suppressed_next_benign","suppressed_next_attack",
+        "total_next","total_benign_next","total_attack_next"
+    ]
+    for col in cols:
+        d[col] = d["suppression_all_or"].apply(lambda dd: dd.get(col, np.nan))
+
+    for col in cols:
+        d[col] = pd.to_numeric(d[col], errors="coerce")
+
+    return d
+
+# -------------------------
+# Plot functions
+# -------------------------
 
 # ROC curve
 def plot_roc(y_true, proba, d, title_suffix="", out_dir="../plots"):
@@ -312,3 +371,136 @@ def plot_all(X, results, d, run_name="default"):
     plot_alert_reduction(results["y_true"], results["proba"], d, out_dir=out_dir)
     plot_feature_importance(results["model"], X, d, out_dir=out_dir)
     plot_confidence_distribution(results["proba"], d, out_dir=out_dir)
+
+def plot_per_feature_fp_suppression_timeseries(
+    jsonl_path,
+    scenario_name,
+    out_dir,
+    topk=12,
+    value_key="suppressed_next_benign",   # or "suppressed_next_total"
+    min_windows_on=1,                     # filter features that appear in >= this many windows
+):
+    
+    out_path = os.path.join(out_dir, scenario_name)
+    os.makedirs(out_path, exist_ok=True)
+    print(f"Saving plot to {out_path}...")
+    
+    # -------- load jsonl --------
+    rows = []
+    with open(jsonl_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                rows.append(json.loads(line))
+    df = pd.DataFrame(rows)
+
+    # keep fp_only + scenario
+    df = df[(df["mode"] == "fp_only") & (df["scenario"] == scenario_name)].copy()
+    if df.empty:
+        print(f"No fp_only rows found for scenario='{scenario_name}'.")
+        return
+
+    # parse train_start for x-axis
+    arrow = "→"
+    df["train_start"] = pd.to_datetime(df["train_window"].str.split(arrow).str[0], errors="coerce")
+    df = df.sort_values(["train_start", "k"]).reset_index(drop=True)
+
+    # -------- flatten suppression_per_feat into long format --------
+    df["suppression_per_feat"] = df["suppression_per_feat"].apply(_as_dict)
+
+    long_rows = []
+    for _, r in df.iterrows():
+        per_feat = r["suppression_per_feat"] or {}
+        for feat, stats in per_feat.items():
+            stats = _as_dict(stats)
+            long_rows.append({
+                "train_start": r["train_start"],
+                "k": r["k"],
+                "feature": feat,
+                "value": stats.get(value_key, np.nan),
+            })
+
+    long = pd.DataFrame(long_rows)
+    if long.empty:
+        print(f"No per-feature stats found in suppression_per_feat for scenario='{scenario_name}'.")
+        return
+
+    long["value"] = pd.to_numeric(long["value"], errors="coerce")
+
+    # pick top-k features by total suppression over time (so plot isn't unreadable)
+    feat_totals = (
+        long.groupby("feature")["value"]
+        .sum(min_count=1)
+        .sort_values(ascending=False)
+    )
+
+    # optional: require feature to show up in enough windows
+    feat_counts = long.groupby("feature")["value"].apply(lambda s: s.notna().sum())
+    keep = feat_counts[feat_counts >= min_windows_on].index
+    feat_totals = feat_totals.loc[feat_totals.index.intersection(keep)]
+
+    feats = feat_totals.head(topk).index.tolist()
+    plot_df = long[long["feature"].isin(feats)].copy()
+
+    # -------- plot --------
+    plt.figure(figsize=(12, 6))
+    for feat, g in plot_df.groupby("feature"):
+        g = g.sort_values("train_start")
+        plt.plot(g["train_start"], g["value"], marker="o", linewidth=1.5, label=feat)
+
+    plt.xlabel("Train window start date")
+    plt.ylabel(f"{value_key} (single feature on NEXT window)")
+    plt.title(f"{scenario_name}: per-feature FP suppression over time (ablation)")
+    plt.grid(True, alpha=0.3)
+    plt.legend(fontsize=5, ncol=1)
+    plt.tight_layout()
+
+    plt.savefig(out_path)
+
+def plot_suppression_rates(df_prepped: pd.DataFrame, figsize=(12, 6), legend_ncol=2):
+    """Plot benign vs attack suppression rate over time per scenario (from suppression_all_or)."""
+    plt.figure(figsize=figsize)
+    for scenario, g in df_prepped.groupby("scenario"):
+        plt.plot(g["train_start"], g["supp_rate_benign"], marker="o", linestyle="-", label=f"{scenario} benign")
+        plt.plot(g["train_start"], g["supp_rate_attack"], marker="x", linestyle="--", label=f"{scenario} attack")
+
+    plt.ylim(-0.02, 1.02)
+    plt.xlabel("Train window start date")
+    plt.ylabel("Suppression rate on NEXT window (OR of all candidate rules)")
+    plt.title("FP-only symbolic filter performance over time (next window)")
+    plt.grid(True, alpha=0.3)
+    plt.legend(ncol=legend_ncol, fontsize=9)
+    plt.tight_layout()
+    plt.show()
+
+def plot_suppressed_counts(df_prepped: pd.DataFrame, figsize=(12, 6), legend_ncol=2):
+    """Plot benign vs attack suppressed counts over time per scenario (from suppression_all_or)."""
+    plt.figure(figsize=figsize)
+    for scenario, g in df_prepped.groupby("scenario"):
+        plt.plot(g["train_start"], g["suppressed_next_benign"], marker="o", linestyle="-", label=f"{scenario} suppressed benign")
+        plt.plot(g["train_start"], g["suppressed_next_attack"], marker="x", linestyle="--", label=f"{scenario} suppressed attack")
+
+    plt.xlabel("Train window start date")
+    plt.ylabel("# suppressed in NEXT window (OR of all candidate rules)")
+    plt.title("How many alerts are suppressed by the FP-only symbolic filter (next window)")
+    plt.grid(True, alpha=0.3)
+    plt.legend(ncol=legend_ncol, fontsize=9)
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_tradeoff_scatter(df_prepped: pd.DataFrame, figsize=(7.5, 6)):
+    """Scatter of attack suppression rate vs benign suppression rate (each point = one window)."""
+    plt.figure(figsize=figsize)
+    for scenario, g in df_prepped.groupby("scenario"):
+        plt.scatter(g["supp_rate_attack"], g["supp_rate_benign"], label=scenario, alpha=0.8)
+
+    plt.xlim(-0.02, 1.02)
+    plt.ylim(-0.02, 1.02)
+    plt.xlabel("Attack suppression rate (lower is better)")
+    plt.ylabel("Benign suppression rate (higher is better)")
+    plt.title("Filter trade-off per window (next window, OR of all candidate rules)")
+    plt.grid(True, alpha=0.3)
+    plt.legend(fontsize=9)
+    plt.tight_layout()
+    plt.show()

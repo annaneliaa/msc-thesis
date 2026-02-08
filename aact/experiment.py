@@ -9,7 +9,6 @@ from metrics import eval_subset_metrics
 import os
 import json
 
-
 def log_row(history, out_path, row: dict):
     """
     Appends row to history and writes to output file.
@@ -794,7 +793,7 @@ def greedy_symbolic_search(
     # --- build features ---
     X_dyn, y, df_used = build_dyn_features(df, window_size)
     X_static = build_static_features(df_used)
-    X_symbolic = symbolic_features.build_symbolic_features(df_used, X_dyn=X_dyn)
+    X_symbolic = build_sym_features(df_used, X_dyn=X_dyn)
 
     print("\nSymbolic features generated:")
     print(sorted(X_symbolic.columns))
