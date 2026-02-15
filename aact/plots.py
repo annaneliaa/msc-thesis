@@ -9,6 +9,15 @@ import json
 # -------------------------
 # Loading + preprocessing helpers
 # -------------------------
+def _load_jsonl(path: str) -> pd.DataFrame:
+    rows = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                rows.append(json.loads(line))
+    return pd.DataFrame(rows)
+
 
 def _ensure_dir(path: str):
     os.makedirs(path, exist_ok=True)
@@ -70,6 +79,61 @@ def prepare_fp_only_window_metrics(df: pd.DataFrame) -> pd.DataFrame:
         d[col] = pd.to_numeric(d[col], errors="coerce")
 
     return d
+
+
+def flatten_fp_only_history(df_hist: pd.DataFrame) -> pd.DataFrame:
+    """
+    Convert wide/nested FP-only history into long tidy format:
+
+    Output columns:
+      scenario, k, train_window, feature,
+      suppressed_benign, suppressed_attack, suppressed_total,
+      total_benign, total_attack, total,
+      supp_rate_benign, supp_rate_attack, supp_rate_total
+    """
+    d = df_hist.copy()
+
+    # Keep fp-only rows that actually have per-feature dicts
+    d = d[d["mode"] == "fp_only"].copy()
+    d["suppression_per_feat"] = d["suppression_per_feat"].apply(_as_dict)
+
+    rows = []
+    for _, r in d.iterrows():
+        scen = r.get("scenario")
+        k = r.get("k")
+        tw = r.get("train_window")
+
+        per_feat = r["suppression_per_feat"] or {}
+        for feat, stats in per_feat.items():
+            stats = _as_dict(stats)
+
+            rows.append({
+                "scenario": scen,
+                "k": k,
+                "train_window": tw,
+                "feature": feat,
+
+                "suppressed_benign": stats.get("suppressed_next_benign", np.nan),
+                "suppressed_attack": stats.get("suppressed_next_attack", np.nan),
+                "suppressed_total":  stats.get("suppressed_next_total", np.nan),
+
+                "total_benign": stats.get("total_benign_next", np.nan),
+                "total_attack": stats.get("total_attack_next", np.nan),
+                "total":        stats.get("total_next", np.nan),
+
+                "supp_rate_benign": stats.get("supp_rate_benign", np.nan),
+                "supp_rate_attack": stats.get("supp_rate_attack", np.nan),
+                "supp_rate_total":  stats.get("supp_rate_total", np.nan),
+            })
+
+    out = pd.DataFrame(rows)
+
+    # Ensure numeric
+    num_cols = [c for c in out.columns if c not in ("scenario", "train_window", "feature")]
+    for c in num_cols:
+        out[c] = pd.to_numeric(out[c], errors="coerce")
+
+    return out
 
 # -------------------------
 # Plot functions
@@ -376,6 +440,8 @@ def plot_per_feature_fp_suppression_timeseries(
     jsonl_path,
     scenario_name,
     out_dir,
+    use_memory,
+    tau,
     topk=12,
     value_key="suppressed_next_benign",   # or "suppressed_next_total"
     min_windows_on=1,                     # filter features that appear in >= this many windows
@@ -450,7 +516,7 @@ def plot_per_feature_fp_suppression_timeseries(
 
     plt.xlabel("Train window start date")
     plt.ylabel(f"{value_key} (single feature on NEXT window)")
-    plt.title(f"{scenario_name}: per-feature FP suppression over time (ablation)")
+    plt.title(f"{scenario_name}: per-feature FP suppression timeseries (useMem={use_memory},tau={tau})")
     plt.grid(True, alpha=0.3)
     plt.legend(fontsize=5, ncol=1)
     plt.tight_layout()
@@ -504,3 +570,82 @@ def plot_tradeoff_scatter(df_prepped: pd.DataFrame, figsize=(7.5, 6)):
     plt.legend(fontsize=9)
     plt.tight_layout()
     plt.show()
+
+def plot_fp_only_feature_suppression(
+    df_hist_or_path,
+    out_dir,
+    use_memory,
+    tau,
+    topk: int = 15,
+    metric: str = "suppressed_benign",   # or "supp_rate_benign"
+    agg: str = "sum",                    # "sum" or "mean"
+    show_attack_suppressed: bool = True  # annotate attack suppressed on bars
+):
+    """
+    Plot per scenario: symbolic features ranked by FP suppression.
+
+    metric:
+      - "suppressed_benign" (recommended): absolute # benign suppressed across windows
+      - "supp_rate_benign": average benign suppression rate (less stable across varying totals)
+
+    agg:
+      - "sum": sums metric across windows (good for absolute impact)
+      - "mean": mean across windows (good if windows comparable)
+    """
+    if isinstance(df_hist_or_path, str):
+        df_hist = _load_jsonl(df_hist_or_path)
+    else:
+        df_hist = df_hist_or_path
+
+    out_dir = os.path.join(out_dir, "rankings")
+    os.makedirs(out_dir, exist_ok=True)
+
+    long = flatten_fp_only_history(df_hist)
+    if long.empty:
+        print("No fp_only per-feature rows found. Check that 'suppression_per_feat' is present.")
+        return long
+
+    if metric not in long.columns:
+        raise KeyError(f"Unknown metric '{metric}'. Available: {list(long.columns)}")
+
+    agg_fn = np.sum if agg == "sum" else np.mean
+    group_cols = ["scenario", "feature"]
+
+    summary = (
+        long.groupby(group_cols, as_index=False)
+            .agg({
+                metric: agg_fn,
+                "suppressed_attack": np.sum,   # useful safety signal
+                "suppressed_total": np.sum,
+                "total_benign": np.sum,
+                "total_attack": np.sum,
+                "total": np.sum,
+            })
+    )
+
+    for scen in sorted(summary["scenario"].dropna().unique()):
+        fname = scen
+        sub = summary[summary["scenario"] == scen].copy()
+        sub = sub.sort_values(metric, ascending=False).head(topk)
+        sub = sub.iloc[::-1]  # nicer barh order
+
+        plt.figure(figsize=(10, 6))
+        plt.barh(sub["feature"], sub[metric])
+        plt.title(f"{scen} — top {topk} sym feats by {agg}({metric}), (useMem={use_memory},tau={tau})")
+        plt.xlabel(f"{agg}({metric})")
+        plt.xscale("log")
+        plt.grid(axis="x", alpha=0.3)
+
+        if show_attack_suppressed and "suppressed_attack" in sub.columns:
+            # annotate attacks suppressed (safety) on the bars
+            for i, (_, row) in enumerate(sub.iterrows()):
+                val = row[metric]
+                atk = int(row["suppressed_attack"]) if np.isfinite(row["suppressed_attack"]) else 0
+                plt.text(val if np.isfinite(val) else 0, i, f"  attack_supp={atk}", va="center")
+
+        plt.tight_layout()
+
+
+        plt.savefig(os.path.join(out_dir, scen))
+
+    return long, summary

@@ -536,16 +536,17 @@ def windowed_ablation_experiment(
     threshold=0.5,
     out_dir=None,
     use_memory=True,
+    tau=0.9,
     force_fp_only=False,
     # FP-only selection knobs
     fp_min_support=200,
     fp_max_k=6,
-    # Option 2: thresholded activation
-    fp_activation="topk",  # "topk" | "mem_threshold" | "hybrid"
-    fp_score_threshold=1.5,  # used when fp_activation includes mem_threshold
-    fp_support_gate=True,  # if True, also require support>=fp_min_support
-    # Option 1: leave-one-out ablation (on NEXT window)
-    fp_loo_ablation=False,
+    # # Option 2: thresholded activation
+    # fp_activation="topk",  # "topk" | "mem_threshold" | "hybrid"
+    # fp_score_threshold=1.5,  # used when fp_activation includes mem_threshold
+    # fp_support_gate=True,  # if True, also require support>=fp_min_support
+    # # Option 1: leave-one-out ablation (on NEXT window)
+    # fp_loo_ablation=False,
 ):
     """
     For each time window k, make decisions using data in k, then evaluate on the next window k+1.
@@ -575,7 +576,7 @@ def windowed_ablation_experiment(
         out_path = None
 
     # 3) Initialize memory to track active symbolic feature set (carried across windows)
-    mem = SymbolicMemory(decay=0.85, reward=1.0, min_score=0.9) if use_memory else None
+    mem = SymbolicMemory(decay=0.85, reward=1.0, min_score=tau) if use_memory else None
     active_syms = []
     history = []
 
@@ -596,12 +597,11 @@ def windowed_ablation_experiment(
             build_all_features(df_k, lookback_days)
         )
 
-        # Determine if supervisded training is possible
+        # Determine if supervised training is possible
         # If only one class in y_k, supervised AUC training can’t work reliably -> measure feature effects using FP suppression rates
         supervised_possible = len(np.unique(y_k)) >= 2
 
         # FORCE FP-ONLY MODE (for ablation study)
-        force_fp_only = True  # <- add param in signature; set from caller
         if force_fp_only:
             supervised_possible = False
         # ----------------------------
@@ -622,8 +622,7 @@ def windowed_ablation_experiment(
                 # Throws if train/test split ends up with a single class
                 supervised_possible = False
 
-        if supervised_possible:
-            # Select symbolic features based on ablation deltas
+            # Select symbolic features important NOW based on ablation deltas
             selected = select_symbolic_features(
                 ablation_results=ablation_results,
                 X_full=X_full_k,
@@ -633,7 +632,8 @@ def windowed_ablation_experiment(
                 threshold=threshold,
             )
 
-            # Update memory + define active symbolic features
+            # Update memory + define active symbolic features by merging what was
+            # important BEFORE (mem.active) with what is important NOW (selected)
             if use_memory:
                 mem.reward_feats(selected)
                 active_syms = union_preserve_order(selected, mem.active())
@@ -714,6 +714,14 @@ def windowed_ablation_experiment(
         if use_memory:
             mem.reward_feats(topk)
 
+    
+        selected_syms_k = topk  # treat topk as "selected in window k"
+
+        mem_scores_selected = (
+            {f: float(mem.scores.get(f, 0.0)) for f in selected_syms_k}
+            if use_memory else None
+        )
+
         # Start with empty candidate set
         selected = []
 
@@ -766,6 +774,9 @@ def windowed_ablation_experiment(
                 "mode": mode,
                 "scenario": scenario,
                 "train_window": f"{w_start.date()}→{w_end.date()}",
+                "selected_syms": selected_syms_k,
+                "tau": tau,
+                "mem_scores_selected": mem_scores_selected,
                 "supports_k": counts,
                 "suppression_base": base_stats,  # baseline suppression
                 "suppression_per_feat": per_feat,  # per festure ablation suppression stats

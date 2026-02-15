@@ -28,6 +28,8 @@ class SymbolicMemory:
     def active(self) -> List[str]:
         return [f for f, s in self.scores.items() if s >= self.min_score]
 
+    def active_with_threshold(self, tau: float) -> List[str]:
+        return [f for f, s in self.scores.items() if s >= tau]
 
 @dataclass(frozen=True)
 class FeatureSchema:
