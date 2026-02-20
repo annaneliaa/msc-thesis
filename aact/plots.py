@@ -5,6 +5,9 @@ import os
 from sklearn.metrics import roc_curve, roc_auc_score
 import re
 import json
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.manifold import TSNE
+from sklearn.metrics.pairwise import cosine_distances
 
 # -------------------------
 # Loading + preprocessing helpers
@@ -649,3 +652,142 @@ def plot_fp_only_feature_suppression(
         plt.savefig(os.path.join(out_dir, scen))
 
     return long, summary
+
+def plot_class_histogram(df, label_col="y"):
+    counts = df[label_col].value_counts().sort_index()
+
+    plt.figure()
+    plt.bar(counts.index.astype(str), counts.values)
+    plt.xlabel("Class")
+    plt.ylabel("Count")
+    plt.xticks(rotation=45)
+    plt.title("Class Distribution")
+    plt.tight_layout()
+    plt.show()
+
+def plot_token_semantic_scatter(
+    ranking: pd.DataFrame,
+    min_support,
+    token_col: str = "token",
+    p_col: str = "p_benign_given_token",
+    benign_thresh: float = 0.60,
+    attack_thresh: float = 0.40,
+    max_points: int = 5000,
+    random_state: int = 0,
+):
+    """
+    Semantic layout: TF-IDF (char ngrams) -> cosine distances -> t-SNE 2D
+    Coloring: 3 categories based on p_benign_given_token
+      - benign: p >= benign_thresh
+      - attack: p <= attack_thresh
+      - neutral: otherwise
+    """
+
+    df = ranking[[token_col, p_col]].dropna().copy()
+
+    # Optional: cap points for speed (keeps most supported ones if present)
+    if "support_total" in ranking.columns:
+        df = ranking[[token_col, p_col, "support_total"]].dropna().sort_values(
+            "support_total", ascending=False
+        )
+        df = df.head(max_points).copy()
+    else:
+        df = df.head(max_points).copy()
+
+    tokens = df[token_col].astype(str).tolist()
+    p = df[p_col].astype(float).to_numpy()
+
+    # 1) "Semantic" representation (works well for short strings like tokens)
+    vec = TfidfVectorizer(analyzer="char", ngram_range=(3, 5), min_df=1)
+    X = vec.fit_transform(tokens)
+
+    # 2) Pairwise cosine distance (t-SNE can use precomputed distances)
+    D = cosine_distances(X)
+
+    # 3) 2D embedding
+    perplexity = min(30, max(5, (len(tokens) - 1) // 3))
+    tsne = TSNE(
+        n_components=2,
+        metric="precomputed",
+        perplexity=perplexity,
+        init="random",
+        learning_rate="auto",
+        random_state=random_state,
+    )
+    Z = tsne.fit_transform(D)
+
+    # 4) 3 categories from p_benign_given_token
+    labels = np.full(len(p), "neutral", dtype=object)
+    labels[p >= benign_thresh] = "benign"
+    labels[p <= attack_thresh] = "attack"
+
+    # 5) Plot (no manual colors; matplotlib picks defaults)
+    plt.figure()
+    for lab in ["benign", "neutral", "attack"]:
+        m = labels == lab
+        plt.scatter(Z[m, 0], Z[m, 1], s=12, alpha=0.7, label=lab)
+
+    plt.title(f"Semantic scatter of tokens (min_support={min_support})")
+    plt.xlabel("dim 1")
+    plt.ylabel("dim 2")
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+    return df.assign(tsne_x=Z[:, 0], tsne_y=Z[:, 1], category=labels)
+
+def plot_scenario_heatmap(
+    rankings,
+    attack_flags,
+    output_dir,
+    scenario,
+    min_total_support,
+    top_n=25,
+    score_col="score_fp_contrast",
+    support_col="support_total",):
+    """
+    rankings: list of ranking_k DataFrames (one per window)
+    top_n: number of tokens to display
+    """
+
+    # Collect all tokens across windows
+    all_tokens = set()
+    for ranking_k in rankings:
+        all_tokens.update(ranking_k["token"].unique())
+
+    # Build token x window score matrix
+    token_scores = {token: [] for token in all_tokens}
+
+    for ranking_k in rankings:
+        score_map = dict(zip(ranking_k["token"], ranking_k[score_col]))
+        for token in all_tokens:
+            token_scores[token].append(score_map.get(token, 0.0))  # 0 if absent
+
+    score_df = pd.DataFrame(token_scores).T  # rows=tokens, cols=windows
+
+    # Select top tokens (by mean absolute score)
+    score_df["importance"] = score_df.abs().mean(axis=1)
+    score_df = score_df.sort_values("importance", ascending=False)
+
+    top_tokens = score_df.head(top_n).index
+    heatmap_df = score_df.loc[top_tokens].drop(columns="importance")
+
+    # Plot heatmap
+    plt.figure(figsize=(12, 6))
+    im = plt.imshow(heatmap_df.values, aspect="auto", cmap="berlin")
+
+    plt.colorbar(im, label="FP contrast score")
+    plt.yticks(range(len(heatmap_df.index)), heatmap_df.index)
+    plt.xticks(range(len(heatmap_df.columns)), heatmap_df.columns)
+
+
+    ax = plt.gca()
+    for i, label in enumerate(ax.get_xticklabels()):
+        if i < len(attack_flags) and attack_flags[i]:
+            label.set_fontweight("bold")
+
+    plt.xlabel("Window index")
+    plt.ylabel("Token")
+    plt.title(f"Token FP Contrast score across windows. (scenario={scenario},min_support={min_total_support})")
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, f"token_heatmap_{scenario}"))
