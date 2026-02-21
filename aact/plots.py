@@ -10,7 +10,7 @@ from sklearn.manifold import TSNE
 from sklearn.metrics.pairwise import cosine_distances
 
 # -------------------------
-# Loading + preprocessing helpers
+# Loading + preprocessing + formatting helpers
 # -------------------------
 def _load_jsonl(path: str) -> pd.DataFrame:
     rows = []
@@ -82,7 +82,6 @@ def prepare_fp_only_window_metrics(df: pd.DataFrame) -> pd.DataFrame:
         d[col] = pd.to_numeric(d[col], errors="coerce")
 
     return d
-
 
 def flatten_fp_only_history(df_hist: pd.DataFrame) -> pd.DataFrame:
     """
@@ -259,8 +258,6 @@ def plot_symbolic_performance_delta(
     plt.show()
 
 
-
-
 def plot_symbolic_coefficients(
     model, feature_names, symbolic_features, out_dir="../plots", prefix=""
 ):
@@ -429,15 +426,6 @@ def plot_fp_to_tn(
     }
 
     return stats
-
-
-def plot_all(X, results, d, run_name="default"):
-    out_dir = _ensure_dir(os.path.join("../plots", _safe_name(run_name)))
-
-    plot_roc(results["y_true"], results["proba"], d, out_dir=out_dir)
-    plot_alert_reduction(results["y_true"], results["proba"], d, out_dir=out_dir)
-    plot_feature_importance(results["model"], X, d, out_dir=out_dir)
-    plot_confidence_distribution(results["proba"], d, out_dir=out_dir)
 
 def plot_per_feature_fp_suppression_timeseries(
     jsonl_path,
@@ -741,14 +729,16 @@ def plot_scenario_heatmap(
     attack_flags,
     output_dir,
     scenario,
+    miner_name,
+    scorer_name,
     min_total_support,
     top_n=25,
-    score_col="score_fp_contrast",
+    score_col="score",
     support_col="support_total",
     vmin=None,
     vmax=None):
     """
-    Plot a token x window heatmap, where each cell denotes the FP contrast score for that token in that window, for a given scenario.
+    Plot a candidate x window heatmap, where each cell denotes the FP contrast score for that candiate (=token or token itemset) in that window, for a given scenario.
 
     Each row represents a mined token, each column a time window.
     Cell values correspond to the selected score (e.g., FP contrast score)
@@ -777,16 +767,21 @@ def plot_scenario_heatmap(
         from the current heatmap data.
     """
 
-    # Collect all tokens across windows
+    label_map = {}
+    for ranking_k in rankings:
+        if "candidate_str" in ranking_k.columns:
+            label_map.update(dict(zip(ranking_k["candidate"], ranking_k["candidate_str"])))
+            
+        # Collect all tokens across windows
     all_tokens = set()
     for ranking_k in rankings:
-        all_tokens.update(ranking_k["token"].unique())
+        all_tokens.update(ranking_k["candidate"].unique())
 
     # Build token x window score matrix
     token_scores = {token: [] for token in all_tokens}
 
     for ranking_k in rankings:
-        score_map = dict(zip(ranking_k["token"], ranking_k[score_col]))
+        score_map = dict(zip(ranking_k["candidate"], ranking_k[score_col]))
         for token in all_tokens:
             token_scores[token].append(score_map.get(token, 0.0))  # 0 if absent
 
@@ -810,7 +805,8 @@ def plot_scenario_heatmap(
     im = plt.imshow(heatmap_df.values, aspect="auto", cmap="berlin", vmin=vmin, vmax=vmax)
 
     plt.colorbar(im, label="FP contrast score")
-    plt.yticks(range(len(heatmap_df.index)), heatmap_df.index)
+    yticklabels = [label_map.get(c, str(c)) for c in heatmap_df.index]
+    plt.yticks(range(len(heatmap_df.index)), yticklabels, fontsize=8)
     plt.xticks(range(len(heatmap_df.columns)), heatmap_df.columns)
 
 
@@ -820,7 +816,16 @@ def plot_scenario_heatmap(
             label.set_fontweight("bold")
 
     plt.xlabel("Window index")
-    plt.ylabel("Token")
-    plt.title(f"Token FP Contrast score across windows. (scenario={scenario},min_support={min_total_support})")
+    plt.ylabel("Candidate")
+    plt.title(f"Benign token importance across windows (scenario={scenario}, miner={miner_name}, scorer={scorer_name}, min_support={min_total_support})")
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, f"token_heatmap_{scenario}"))
+
+
+def plot_all(X, results, d, run_name="default"):
+    out_dir = _ensure_dir(os.path.join("../plots", _safe_name(run_name)))
+
+    plot_roc(results["y_true"], results["proba"], d, out_dir=out_dir)
+    plot_alert_reduction(results["y_true"], results["proba"], d, out_dir=out_dir)
+    plot_feature_importance(results["model"], X, d, out_dir=out_dir)
+    plot_confidence_distribution(results["proba"], d, out_dir=out_dir)

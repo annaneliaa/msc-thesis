@@ -40,9 +40,28 @@ base_fields = [
     "aminer_new_event",
 ]
 
+# Helpers
+def format_candidate(c) -> str:
+    """
+    Helper for printing a candidate for plots/logs.
+    Nice when candidate is a set of tokens.
+
+    - token (str) -> "token"
+    - itemset (tuple/list) -> "a & b & c"
+    - fallback -> str(c)
+    """
+    if isinstance(c, str):
+        return c
+    if isinstance(c, (tuple, list)):
+        return " & ".join(map(str, c))
+    return str(c)
+
+
+
 # -----------------------------------
 # Tokenization
 # -----------------------------------
+
 
 def tokenize_alerts(
     df: pd.DataFrame,
@@ -71,7 +90,11 @@ def tokenize_alerts(
     tokens_per_row = []
     for _, row in df.iterrows():
         src_prefix = ""
-        if add_source_prefix and source_col in df.columns and not pd.isna(row[source_col]):
+        if (
+            add_source_prefix
+            and source_col in df.columns
+            and not pd.isna(row[source_col])
+        ):
             src_prefix = f"{row[source_col]}:"
 
         row_tokens: list[str] = []
@@ -88,9 +111,11 @@ def tokenize_alerts(
 
     return pd.Series(tokens_per_row, index=df.index)
 
+
 # -----------------------------------
 # Scorers
 # -----------------------------------
+
 
 def log_odds_contrast_score(
     c0: pd.Series, c1: pd.Series, n0: int, n1: int, alpha: float = 0.5
@@ -98,27 +123,32 @@ def log_odds_contrast_score(
     """
     Smoothed log-odds contrast (transactional counts):
       log((c0+α)/(n0-c0+α)) - log((c1+α)/(n1-c1+α))
-    Higher => candidate is more benign-associated.
+    Higher => candidate (token or token set) is more benign-associated.
     """
     return np.log((c0 + alpha) / ((n0 - c0) + alpha)) - np.log(
         (c1 + alpha) / ((n1 - c1) + alpha)
     )
 
+
 def fp_contrast_scorer(alpha: float = 0.5):
     return lambda c0, c1, n0, n1: log_odds_contrast_score(c0, c1, n0, n1, alpha=alpha)
+
 
 def coverage_risk_score(
     c0: pd.Series, c1: pd.Series, n0: int, n1: int, alpha: float = 0.5
 ) -> pd.Series:
-    # placeholder for your mechanism-1 scorer (utility etc.)
+    # TODO: implement this scorer
     return pd.Series(0.0, index=c0.index)
+
 
 def split_metric_scorer(alpha: float = 0.5):
     return lambda c0, c1, n0, n1: coverage_risk_score(c0, c1, n0, n1, alpha=alpha)
 
+
 # -----------------------------------
 # Behavioral features
 # -----------------------------------
+
 
 def add_behavioral_features(df, time_col="timestamp", src_col="srcip", dst_col="dstip"):
     """
@@ -156,8 +186,9 @@ def add_behavioral_features(df, time_col="timestamp", src_col="srcip", dst_col="
     return df
 
 # -----------------------------------
-# Counters (ALL transactional now)
+# Counters
 # -----------------------------------
+
 
 def mine_token_counts(
     tokens: pd.Series,
@@ -196,7 +227,10 @@ def mine_token_counts(
 
     return c0, c1, n0, n1
 
-def mine_itemset_counts(tokens: pd.Series, y: pd.Series, k: int = 2, min_support: int = 50):
+
+def mine_itemset_counts(
+    tokens: pd.Series, y: pd.Series, k: int = 2, min_support: int = 50
+):
     """
     Frequent fixed-size k-itemset mining with transactional support.
     Returns (c0, c1, n0, n1) where c0/c1 count alerts containing the itemset.
@@ -232,11 +266,156 @@ def mine_itemset_counts(tokens: pd.Series, y: pd.Series, k: int = 2, min_support
 
     return c0.loc[keep], c1.loc[keep], n0, n1
 
-# (your apriori miner unchanged)
+
+def mine_itemset_counts_apriori(
+    tokens: pd.Series,
+    y: pd.Series,
+    k: int = 2,
+    min_support: int = 50,
+):
+    """
+    Apriori-style frequent itemset mining (up to fixed size k), with transaction-level support.
+
+    - Each row is a transaction (set of tokens).
+    - Finds frequent 1-itemsets, then iteratively builds candidates of size 2..k.
+    - Uses Apriori pruning: a candidate is kept only if all its (m-1)-subsets are frequent.
+    - Counts support as: number of transactions containing the itemset (not total occurrences).
+    - Also returns per-class transaction counts (benign vs attack) for size-k itemsets only.
+
+    Returns:
+        c0, c1: pd.Series indexed by itemset tuples (length k) with class-specific supports
+        n0, n1: number of benign / attack transactions
+    """
+    if k < 1:
+        raise ValueError("k must be >= 1")
+
+    # Align labels to the same rows as tokens
+    y = y.loc[tokens.index]
+
+    # Count benign and true alerts
+    n0 = int((y == 0).sum())
+    n1 = int((y == 1).sum())
+
+    # Preprocess transactions
+    # remove duplicate tokens, sort for stable ordering, and store as tuple
+    transactions = {
+        idx: tuple(sorted(set(row_tokens))) if row_tokens else tuple()
+        for idx, row_tokens in tokens.items()
+    }
+
+    # Build frequent 1-item sets
+    # Counts in how many alerts each single token appears
+    counts_1 = {}
+    for t in transactions.values():
+        for item in t:
+            counts_1[(item,)] = counts_1.get((item,), 0) + 1
+
+    # Create the set of frequent item sets of the previous size
+    previous_set = {itemset for itemset, cnt in counts_1.items() if cnt >= min_support}
+
+    if k == 1:
+        # Easiest case, stop early and compute class counts
+        # also compute per-class supports for size-1
+        c0 = {}
+        c1 = {}
+        for idx, t in transactions.items():
+            present = set((i,) for i in t)
+            present &= previous_set
+            target = c0 if y.loc[idx] == 0 else c1
+            for it in present:
+                target[it] = target.get(it, 0) + 1
+        c0 = pd.Series(c0, dtype=int).reindex(sorted(previous_set), fill_value=0)
+        c1 = pd.Series(c1, dtype=int).reindex(sorted(previous_set), fill_value=0)
+        return c0, c1, n0, n1
+
+    # Build frequent item set up untill size k
+    for m in range(2, k + 1):
+        # Generate candidates
+        previous_set_sorted = sorted(previous_set)
+        C_m = set()
+
+        # Combine two (m-1)-itemsets if they share the same prefix of sixe m-2
+        # Ex: for m=3, join (a,b) and (a,c) to (a,b,c)
+        for i in range(len(previous_set_sorted)):
+            for j in range(i + 1, len(previous_set_sorted)):
+                a = previous_set_sorted[i]
+                b = previous_set_sorted[j]
+                if a[:-1] != b[:-1]:
+                    break  # because sorted => prefixes stop matching
+                cand = tuple(sorted(set(a) | set(b)))
+
+                # ensure candidate size is equal to m
+                if len(cand) != m:
+                    continue
+
+                # Apriori pruning: if the m-subset is frequent, then all (m-1)-subsets must be frequent
+                ok = True
+                for sub in combinations(cand, m - 1):
+                    if sub not in previous_set:
+                        ok = False
+                        break
+                if ok:
+                    C_m.add(cand)
+
+        if not C_m:
+            # no candidates survive -> stop early
+            return (
+                pd.Series(dtype=int),
+                pd.Series(dtype=int),
+                n0,
+                n1,
+            )
+
+        # Count candidate suports
+        # For each alert check which candidates it contains, then increment supprt once per alert
+        counts_m = {c: 0 for c in C_m}
+        for t in transactions.values():
+            if len(t) < m:
+                continue
+            tset = set(t)
+            for c in C_m:
+                # subset test
+                if set(c).issubset(tset):
+                    counts_m[c] += 1
+
+        previous_set = {it for it, cnt in counts_m.items() if cnt >= min_support}
+        if not previous_set:
+            return (
+                pd.Series(dtype=int),
+                pd.Series(dtype=int),
+                n0,
+                n1,
+            )
+
+        # If we've reached size k, compute per-class supports for previous set (size-k)
+        if m == k:
+            # Count for each frequent k-itemset how many benign and true alerts contain it
+            c0 = {it: 0 for it in previous_set}
+            c1 = {it: 0 for it in previous_set}
+
+            for idx, t in transactions.items():
+                if len(t) < k:
+                    continue
+                tset = set(t)
+                present = [it for it in previous_set if set(it).issubset(tset)]
+                if not present:
+                    continue
+                target = c0 if y.loc[idx] == 0 else c1
+                for it in present:
+                    target[it] += 1
+
+            c0 = pd.Series(c0, dtype=int).reindex(sorted(previous_set), fill_value=0)
+            c1 = pd.Series(c1, dtype=int).reindex(sorted(previous_set), fill_value=0)
+            return c0, c1, n0, n1
+
+    # Code should never reach this point
+    return pd.Series(dtype=int), pd.Series(dtype=int), n0, n1
+
 
 # -----------------------------------
 # Generic miner
 # -----------------------------------
+
 
 def mine_candidates(
     tokens: pd.Series,
@@ -253,7 +432,7 @@ def mine_candidates(
 
     1) counter(...) -> (c0, c1, n0, n1) using TRANSACTIONAL semantics
     2) optional min_support filtering (if not already handled in counter)
-    3) scorer(c0, c1, n0, n1) -> score per candidate
+    3) scorer(c0, c1, n0, n1) -> score per candidate (token/token set)
     4) returns ranked dataframe
     """
     if counter_kwargs is None:
@@ -268,25 +447,38 @@ def mine_candidates(
 
     score = scorer(c0, c1, n0, n1)
 
-    out = pd.DataFrame({
-        "candidate": c0.index,
-        "count_benign": c0.values,
-        "count_attack": c1.values,
-        "support_total": total.values,
-        score_name: score.values,
-        "p_benign_given_candidate": (c0 / (c0 + c1)).values,
-    }).sort_values(score_name, ascending=False)
+    out = pd.DataFrame(
+        {
+            "candidate": c0.index,
+            "candidate_str": [format_candidate(c) for c in c0.index],
+            "count_benign": c0.values,
+            "count_attack": c1.values,
+            "support_total": total.values,
+            score_name: score.values,
+            "p_benign_given_candidate": (c0 / (c0 + c1)).values,
+        }
+    ).sort_values(score_name, ascending=False)
 
     if top_k is not None:
         out = out.head(top_k)
 
     return out.reset_index(drop=True)
 
+
 # -----------------------------------
 # Window-based mining
 # -----------------------------------
 
-def window_based_mining(df):
+
+def window_based_mining(
+    df,
+    scorer: ScoreFunction,
+    counter: CountFunction,
+    counter_kwargs: Optional[Dict[str, Any]] = None,
+):  
+    if counter_kwargs is None:
+        counter_kwargs = {}
+
     scenario_rankings = dict()
     scenario_attack_flags = dict()
 
@@ -320,7 +512,8 @@ def window_based_mining(df):
 
             tokens_k = tokenize_alerts(
                 df_k,
-                base_fields + [
+                base_fields
+                + [
                     "src_freq_bin",
                     "dst_fanin_bin",
                     "src_fanout_bin",
@@ -330,9 +523,10 @@ def window_based_mining(df):
             ranking_k = mine_candidates(
                 tokens=tokens_k,
                 y=df_k["y"],
-                scorer=fp_contrast_scorer(alpha=0.5),
-                counter=mine_token_counts,     # <-- explicit counter
-                score_name="score_fp_contrast",
+                scorer=scorer,
+                counter=counter,
+                counter_kwargs=counter_kwargs,
+                score_name="score",
                 min_support=100,
                 top_k=None,
             )
