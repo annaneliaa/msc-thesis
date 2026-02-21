@@ -744,10 +744,37 @@ def plot_scenario_heatmap(
     min_total_support,
     top_n=25,
     score_col="score_fp_contrast",
-    support_col="support_total",):
+    support_col="support_total",
+    vmin=None,
+    vmax=None):
     """
+    Plot a token x window heatmap, where each cell denotes the FP contrast score for that token in that window, for a given scenario.
+
+    Each row represents a mined token, each column a time window.
+    Cell values correspond to the selected score (e.g., FP contrast score)
+    computed for that token in that window.
+
+    Tokens are ranked by mean absolute score across windows, and the top_n
+    most important tokens are displayed.
+
+    Windows containing attack alerts are highlighted via bold x-axis labels.
+
     rankings: list of ranking_k DataFrames (one per window)
-    top_n: number of tokens to display
+    attack_flags : list of bool
+        Boolean list indicating whether each window contains attack alerts.
+    output_dir : str
+        Directory where the figure will be saved.
+    scenario : str
+        Scenario name (used for title and filename).
+    min_total_support : int
+        Minimum support threshold used during mining (for annotation only).
+    top_n : int, default=25
+        Number of top tokens (by mean absolute score) to display.
+    score_col : str, default="score_fp_contrast"
+        Column name of the score used for visualization.
+    vmin, vmax : float, optional
+        Fixed color scale limits. If None, symmetric limits are computed
+        from the current heatmap data.
     """
 
     # Collect all tokens across windows
@@ -772,9 +799,15 @@ def plot_scenario_heatmap(
     top_tokens = score_df.head(top_n).index
     heatmap_df = score_df.loc[top_tokens].drop(columns="importance")
 
+    # Set fixed color scale so heatmaps are comparable across scenarios
+    if vmin is None or vmax is None:
+        max_abs = np.abs(heatmap_df.values).max()
+        vmin = -max_abs
+        vmax = max_abs
+        
     # Plot heatmap
     plt.figure(figsize=(12, 6))
-    im = plt.imshow(heatmap_df.values, aspect="auto", cmap="berlin")
+    im = plt.imshow(heatmap_df.values, aspect="auto", cmap="berlin", vmin=vmin, vmax=vmax)
 
     plt.colorbar(im, label="FP contrast score")
     plt.yticks(range(len(heatmap_df.index)), heatmap_df.index)

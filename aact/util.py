@@ -1,4 +1,5 @@
 import pandas as pd
+from typing import List, Tuple, Optional
 
 def attacks_per_period_report(
     df,
@@ -81,3 +82,44 @@ def attacks_per_period_report(
     }
 
     return overall, by_scenario, summary
+
+
+def make_time_windows(
+    t: pd.Series,
+    window_size: str = "3D",  # "3D", "12H", "6H"
+    step_size: str = "3D",  # "1D", "6H"
+    start: Optional[pd.Timestamp] = None,
+    end: Optional[pd.Timestamp] = None,
+    align_to: Optional[
+        str
+    ] = "D",  # "D" for day, "H" for hour, or None. Rounds start and end times to clean boundaries before generating windows
+    tz: str = "UTC",
+) -> List[Tuple[pd.Timestamp, pd.Timestamp]]:
+    """
+    Returns list of (start_k, end_k) timestamps for half-open windows [start, end).
+    """
+
+    if start is None:
+        start = t.min()
+    if end is None:
+        end = t.max()
+
+    start = pd.Timestamp(start).tz_convert(tz)
+    end = pd.Timestamp(end).tz_convert(tz)
+
+    # Optional alignment
+    if align_to is not None:
+        start = start.floor(align_to)
+        end = end.ceil(align_to)
+
+    win = pd.Timedelta(window_size)
+    step = pd.Timedelta(step_size)
+
+    windows = []
+    cur = start
+
+    while cur < end:
+        windows.append((cur, cur + win))
+        cur += step
+
+    return windows

@@ -153,6 +153,7 @@ def assign_labels(df, labels_path="../data/ait_ads/labels.csv", min_score=1,
             - y (int, 0/1)
             - attack_type (str or NaN)
     """
+    print("Labeling dataset...")
 
     df = df.copy()
     df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True, format="mixed", errors="coerce")
@@ -180,8 +181,5 @@ def assign_labels(df, labels_path="../data/ait_ads/labels.csv", min_score=1,
     # attack type is one of the values from the attack column in labels.csv (network scans, reverse shell, etc.)
     df["attack_type"] = df["event_label"].where(df["y"].eq(1)).str.split(":", n=1).str[-1]
 
-    print(df["event_label"].value_counts())
-    print(df.groupby("scenario")["event_label"].value_counts())
-
     df.to_csv(out_path, index=False)
-    print(f"Done. Wrote: {out_path}")
+    print(f"Done. Wrote labeled dataset to: {out_path}")
