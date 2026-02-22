@@ -733,6 +733,7 @@ def plot_scenario_heatmap(
     scorer_name,
     min_total_support,
     top_n=25,
+    order="desc",
     score_col="score",
     support_col="support_total",
     vmin=None,
@@ -791,7 +792,13 @@ def plot_scenario_heatmap(
     score_df["importance"] = score_df.abs().mean(axis=1)
     score_df = score_df.sort_values("importance", ascending=False)
 
-    top_tokens = score_df.head(top_n).index
+    # Either use top k or bottom k (so candidates with lowest scores)
+    # Select top or bottom k tokens based on sort order
+    top_tokens = (
+        score_df.head(top_n).index
+        if order == "desc"
+        else score_df.tail(top_n).index
+    )
     heatmap_df = score_df.loc[top_tokens].drop(columns="importance")
 
     # Set fixed color scale so heatmaps are comparable across scenarios
@@ -817,7 +824,7 @@ def plot_scenario_heatmap(
 
     plt.xlabel("Window index")
     plt.ylabel("Candidate")
-    plt.title(f"Benign token importance across windows (scenario={scenario}, miner={miner_name}, scorer={scorer_name}, min_support={min_total_support})")
+    plt.title(f"Benign token importance across windows (scenario={scenario}, miner={miner_name}, scorer={scorer_name}, min_support={min_total_support}, order={order})")
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, f"token_heatmap_{scenario}"))
 

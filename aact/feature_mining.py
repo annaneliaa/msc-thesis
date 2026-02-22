@@ -40,6 +40,7 @@ base_fields = [
     "aminer_new_event",
 ]
 
+
 # Helpers
 def format_candidate(c) -> str:
     """
@@ -55,7 +56,6 @@ def format_candidate(c) -> str:
     if isinstance(c, (tuple, list)):
         return " & ".join(map(str, c))
     return str(c)
-
 
 
 # -----------------------------------
@@ -115,7 +115,25 @@ def tokenize_alerts(
 # -----------------------------------
 # Scorers
 # -----------------------------------
+def benign_prevalence_score(c0: pd.Series, c1: pd.Series, n0: int, n1: int) -> pd.Series:
+    """
+    Compute the percentage of benign alerts covered by a candidate as a measure of token importance.
+    Benign prevalence is measurable anytime, also in single-class windows.
+    This benign prevalance alone is not a good measure of safety.
 
+    - c0: the number of benign alerts in window k containing an itemset X.
+    - n0: the total number of benign alerts in window k.
+
+    c1 and n1 not used but needed to match the scorer signature
+    """
+    if not n0 > 0:
+        # prevent divsion by zero
+        return pd.Series(0.0, index=c0.index)
+
+    return c0 / n0
+
+def benign_prev_scorer():
+    return lambda c0, c1, n0, n1: benign_prevalence_score(c0,c1,n0,n1)
 
 def log_odds_contrast_score(
     c0: pd.Series, c1: pd.Series, n0: int, n1: int, alpha: float = 0.5
@@ -184,6 +202,7 @@ def add_behavioral_features(df, time_col="timestamp", src_col="srcip", dst_col="
     )
 
     return df
+
 
 # -----------------------------------
 # Counters
@@ -475,7 +494,7 @@ def window_based_mining(
     scorer: ScoreFunction,
     counter: CountFunction,
     counter_kwargs: Optional[Dict[str, Any]] = None,
-):  
+):
     if counter_kwargs is None:
         counter_kwargs = {}
 
