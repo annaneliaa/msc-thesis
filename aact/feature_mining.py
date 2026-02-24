@@ -62,9 +62,11 @@ def format_candidate(c) -> str:
 
 
 def mem_score(cov_mem, risk_mem, cand, l=1.0):
+    # coverage_mem[X] = “how reliably this token explains benign alerts”
+    # risk_mem[X] = “how much this token is associated with attack windows”
     c = cov_mem.scores.get(f"cov::{cand}", 0.0)
     r = risk_mem.scores.get(f"risk::{cand}", 0.0)
-    return c - l * r
+    return c - l * r # minus because risk should limit activation of seeminlgy benign candidates
 
 def get_window_df(df_s, t_s, start_k, end_k):
     df_k = df_s[(t_s >= start_k) & (t_s < end_k)]
@@ -615,20 +617,46 @@ def window_based_mining(
     counter: CountFunction,
     counter_kwargs: Optional[Dict[str, Any]] = None,
     min_support: int = 50,
-    # memory knobs
     use_memory: bool = True,
     mem_lambda: float = 1.0,
     mem_beta: float = 0.1,
-    # reward knobs
     top_cov: int = 50,
     top_risk: int = 50,
-):
+    utility_threshold: float = 0.0,
+    active_top_k: Optional[int] = None,
+):  
+    
+    """
+    Run windowed token/itemset mining per scenario with optional symbolic memory.
+
+    For each scenario:
+    - Split alerts into sliding time windows.
+    - Mine candidates using the provided counter and scorer.
+    - Optionally re-rank candidates using symbolic memory from previous windows.
+    - Update memory based on top coverage/risk candidates in the current window.
+    - Track per-window rankings, attack presence, utility trajectories, and active sets.
+
+    Returns:
+        scenario_rankings: dict
+            scenario -> list of per-window ranking DataFrames.
+
+        scenario_attack_flags: dict
+            scenario -> list of booleans indicating whether each window contains attacks.
+
+        scenario_memory: dict
+            scenario -> {
+                "mem_trace": memory state snapshots per window,
+                "utility_trace": per-window candidate utility values,
+                "active_trace": per-window active candidate sets
+            }
+    """
+        
     if counter_kwargs is None:
         counter_kwargs = {}
 
-    scenario_rankings: dict = {}
-    scenario_attack_flags: dict = {}
-    scenario_memory: dict = {}
+    scenario_rankings = {}
+    scenario_attack_flags = {}
+    scenario_memory = {}
 
     for scenario, df_s in df.groupby("scenario", sort=False):
         print(f"Running mining for scenario {scenario}....")
@@ -636,13 +664,11 @@ def window_based_mining(
         cov_mem = SymbolicMemory() if use_memory else None
         risk_mem = SymbolicMemory() if use_memory else None
 
-        rankings = []
-        attack_flags = []
-        mem_trace = []
+        rankings, attack_flags = [], []
+        mem_trace, utility_trace, active_trace = [], [], []
 
         df_s = df_s.sort_values("timestamp")
         t_s = df_s["timestamp"]
-
         windows = make_time_windows(t_s, window_size="12H", step_size="12H", align_to="H")
 
         for start_k, end_k in windows:
@@ -651,11 +677,6 @@ def window_based_mining(
                 continue
 
             attack_flags.append(window_has_attack)
-
-            print(f"Window [{start_k}, {end_k})")
-            print(f"  Benign alerts : {n_benign}")
-            print(f"  Attack alerts : {n_attack}")
-            print(f"  Total alerts  : {len(df_k)}")
 
             tokens_k = tokenize_window(df_k)
 
@@ -670,7 +691,7 @@ def window_based_mining(
                 top_k=None,
             )
 
-            # memory affects ranking using previous windows only (apply before updating memory)
+            # ---- apply memory rerank (uses previous windows only)
             if use_memory:
                 ranking_k = apply_memory_rerank(
                     ranking_k,
@@ -679,13 +700,43 @@ def window_based_mining(
                     mem_lambda=mem_lambda,
                     mem_beta=mem_beta,
                 )
+                ranking_k["mem_utility"] = ranking_k["mem_score"]
 
-            # optional convenience metric (only for split scorer outputs)
+            # ---- split-metric utility (only if present)
             if {"coverage", "risk"}.issubset(ranking_k.columns):
-                ranking_k["utility"] = ranking_k["coverage"] - ranking_k["risk"].fillna(0.0)
+                ranking_k["split_utility"] = ranking_k["coverage"] - ranking_k["risk"].fillna(0.0)
+
+            # ---- choose activation utility
+            util_col = "mem_utility" if (use_memory and "mem_utility" in ranking_k.columns) else "score"
+
+            # save full utility snapshot for plotting
+            utility_trace.append(
+                {
+                    "start": start_k,
+                    "end": end_k,
+                    "utility_col": util_col,
+                    "values": ranking_k[["candidate", util_col]].rename(columns={util_col: "utility"}),
+                }
+            )
+
+            # compute active set
+            if active_top_k is not None:
+                active_set = ranking_k.nlargest(active_top_k, util_col)["candidate"].tolist()
+            else:
+                active_set = ranking_k.loc[ranking_k[util_col] > utility_threshold, "candidate"].tolist()
+
+            active_trace.append(
+                {
+                    "start": start_k,
+                    "end": end_k,
+                    "utility_col": util_col,
+                    "active_candidates": active_set,
+                }
+            )
 
             rankings.append(ranking_k)
 
+            # ---- update memory after using it
             if use_memory:
                 snap = update_memories_and_snapshot(
                     ranking_k=ranking_k,
@@ -702,6 +753,10 @@ def window_based_mining(
 
         scenario_rankings[scenario] = rankings
         scenario_attack_flags[scenario] = attack_flags
-        scenario_memory[scenario] = mem_trace
+        scenario_memory[scenario] = {
+            "mem_trace": mem_trace,
+            "utility_trace": utility_trace,
+            "active_trace": active_trace,
+        }
 
     return scenario_rankings, scenario_attack_flags, scenario_memory
