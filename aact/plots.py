@@ -773,33 +773,27 @@ def plot_scenario_heatmap(
         if "candidate_str" in ranking_k.columns:
             label_map.update(dict(zip(ranking_k["candidate"], ranking_k["candidate_str"])))
             
-        # Collect all tokens across windows
-    all_tokens = set()
-    for ranking_k in rankings:
-        all_tokens.update(ranking_k["candidate"].unique())
+    # Collect all tokens across windows
 
-    # Build token x window score matrix
-    token_scores = {token: [] for token in all_tokens}
+    # Collect all candidates across windows
+    all_tokens = sorted(set().union(*[set(r["candidate"]) for r in rankings]))
 
-    for ranking_k in rankings:
-        score_map = dict(zip(ranking_k["candidate"], ranking_k[score_col]))
-        for token in all_tokens:
-            token_scores[token].append(score_map.get(token, 0.0))  # 0 if absent
+    # Build token x window score matrix (use NaN for absent)
+    cols = []
+    for w, ranking_k in enumerate(rankings):
+        s = pd.Series(ranking_k[score_col].values, index=ranking_k["candidate"])
+        s = s[~s.index.duplicated(keep="first")]   # safety
+        cols.append(s.reindex(all_tokens))         # NaN if absent
+    score_df = pd.concat(cols, axis=1)
+    score_df.columns = range(len(cols))  # window indices 0..W-1
 
-    score_df = pd.DataFrame(token_scores).T  # rows=tokens, cols=windows
+    # Pick tokens to show
+    # For split metrics, "risk" is undefined in benign-only windows -> keep NaNs, and compute importance with skipna
+    importance = score_df.abs().mean(axis=1, skipna=True)
 
-    # Select top tokens (by mean absolute score)
-    score_df["importance"] = score_df.abs().mean(axis=1)
-    score_df = score_df.sort_values("importance", ascending=False)
-
-    # Either use top k or bottom k (so candidates with lowest scores)
-    # Select top or bottom k tokens based on sort order
-    top_tokens = (
-        score_df.head(top_n).index
-        if order == "desc"
-        else score_df.tail(top_n).index
-    )
-    heatmap_df = score_df.loc[top_tokens].drop(columns="importance")
+    score_df = score_df.loc[importance.sort_values(ascending=False).index]
+    top_tokens = score_df.head(top_n).index if order == "desc" else score_df.tail(top_n).index
+    heatmap_df = score_df.loc[top_tokens]
 
     # Set fixed color scale so heatmaps are comparable across scenarios
     if vmin is None or vmax is None:
@@ -811,7 +805,7 @@ def plot_scenario_heatmap(
     plt.figure(figsize=(12, 6))
     im = plt.imshow(heatmap_df.values, aspect="auto", cmap="berlin", vmin=vmin, vmax=vmax)
 
-    plt.colorbar(im, label="FP contrast score")
+    plt.colorbar(im, label=score_col)
     yticklabels = [label_map.get(c, str(c)) for c in heatmap_df.index]
     plt.yticks(range(len(heatmap_df.index)), yticklabels, fontsize=8)
     plt.xticks(range(len(heatmap_df.columns)), heatmap_df.columns)

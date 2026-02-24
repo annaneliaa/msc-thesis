@@ -1,9 +1,10 @@
 import pandas as pd
 import numpy as np
-from typing import List, Callable, Optional, Any, Dict
+from typing import List, Callable, Optional, Any, Dict, Union
 from itertools import combinations
 
 from util import make_time_windows
+from classes import *
 
 # -----------------------------------
 # Interfaces
@@ -15,7 +16,9 @@ from util import make_time_windows
 CountFunction = Callable[..., tuple[pd.Series, pd.Series, int, int]]
 
 # scorer(c0, c1, n0, n1) -> pd.Series aligned to c0.index
-ScoreFunction = Callable[[pd.Series, pd.Series, int, int], pd.Series]
+ScoreFunction = Callable[
+    [pd.Series, pd.Series, int, int], Union[pd.Series, pd.DataFrame]
+]
 
 # -----------------------------------
 # Base token fields
@@ -56,6 +59,12 @@ def format_candidate(c) -> str:
     if isinstance(c, (tuple, list)):
         return " & ".join(map(str, c))
     return str(c)
+
+
+def mem_score(cov_mem, risk_mem, cand, l=1.0):
+    c = cov_mem.scores.get(f"cov::{cand}", 0.0)
+    r = risk_mem.scores.get(f"risk::{cand}", 0.0)
+    return c - l * r
 
 
 # -----------------------------------
@@ -115,7 +124,9 @@ def tokenize_alerts(
 # -----------------------------------
 # Scorers
 # -----------------------------------
-def benign_prevalence_score(c0: pd.Series, c1: pd.Series, n0: int, n1: int) -> pd.Series:
+def benign_prevalence_score(
+    c0: pd.Series, c1: pd.Series, n0: int, n1: int
+) -> pd.Series:
     """
     Compute the percentage of benign alerts covered by a candidate as a measure of token importance.
     Benign prevalence is measurable anytime, also in single-class windows.
@@ -132,20 +143,23 @@ def benign_prevalence_score(c0: pd.Series, c1: pd.Series, n0: int, n1: int) -> p
 
     return c0 / n0
 
-def benign_prev_scorer():
-    return lambda c0, c1, n0, n1: benign_prevalence_score(c0,c1,n0,n1)
 
-def log_odds_contrast_score(
-    c0: pd.Series, c1: pd.Series, n0: int, n1: int, alpha: float = 0.5
-) -> pd.Series:
-    """
-    Smoothed log-odds contrast (transactional counts):
-      log((c0+α)/(n0-c0+α)) - log((c1+α)/(n1-c1+α))
-    Higher => candidate (token or token set) is more benign-associated.
-    """
-    return np.log((c0 + alpha) / ((n0 - c0) + alpha)) - np.log(
-        (c1 + alpha) / ((n1 - c1) + alpha)
-    )
+def benign_prev_scorer():
+    return lambda c0, c1, n0, n1: benign_prevalence_score(c0, c1, n0, n1)
+
+
+def log_odds_contrast_score(c0, c1, n0, n1, alpha=0.5):
+    if n0 == 0:
+        left = pd.Series(0.0, index=c0.index)
+    else:
+        left = np.log((c0 + alpha) / ((n0 - c0) + alpha))
+
+    if n1 == 0:
+        right = pd.Series(0.0, index=c0.index)  # or np.nan if you prefer
+    else:
+        right = np.log((c1 + alpha) / ((n1 - c1) + alpha))
+
+    return left - right
 
 
 def fp_contrast_scorer(alpha: float = 0.5):
@@ -154,9 +168,24 @@ def fp_contrast_scorer(alpha: float = 0.5):
 
 def coverage_risk_score(
     c0: pd.Series, c1: pd.Series, n0: int, n1: int, alpha: float = 0.5
-) -> pd.Series:
-    # TODO: implement this scorer
-    return pd.Series(0.0, index=c0.index)
+) -> pd.DataFrame:
+    idx = c0.index.union(c1.index)
+    c0 = c0.reindex(idx, fill_value=0)
+    c1 = c1.reindex(idx, fill_value=0)
+
+    # coverage always meaningful when n0>0
+    if n0 > 0:
+        coverage = np.log((c0 + alpha) / ((n0 - c0) + alpha))
+    else:
+        coverage = pd.Series(0.0, index=idx, dtype=float)
+
+    # risk only meaningful when n1>0
+    if n1 > 0:
+        risk = np.log((c1 + alpha) / ((n1 - c1) + alpha))
+    else:
+        risk = pd.Series(np.nan, index=idx, dtype=float)
+
+    return pd.DataFrame({"coverage": coverage, "risk": risk})
 
 
 def split_metric_scorer(alpha: float = 0.5):
@@ -175,7 +204,7 @@ def add_behavioral_features(df, time_col="timestamp", src_col="srcip", dst_col="
     - dst_fanin_bin: number of unique sources per destination within the window
     - src_fanout_bin: number of unique destinations per source within the window
     """
-    df = df.sort_values(time_col).copy()
+    df = df.copy()
 
     src_counts = df[src_col].value_counts()
     df["count_src_window"] = df[src_col].map(src_counts)
@@ -248,10 +277,12 @@ def mine_token_counts(
 
 
 def mine_itemset_counts(
-    tokens: pd.Series, y: pd.Series, k: int = 2, min_support: int = 50
+    tokens: pd.Series,
+    y: pd.Series,
+    k: int = 2,
 ):
     """
-    Frequent fixed-size k-itemset mining with transactional support.
+    Fixed-size k-itemset mining with transactional support.
     Returns (c0, c1, n0, n1) where c0/c1 count alerts containing the itemset.
     """
     y = y.loc[tokens.index]
@@ -267,11 +298,11 @@ def mine_itemset_counts(
             continue
 
         unique_tokens = sorted(set(row_tokens))
-        itemsets = combinations(unique_tokens, k)
-
-        target_dict = itemset_counts_0 if y.loc[idx] == 0 else itemset_counts_1
-        for itemset in itemsets:
-            target_dict[itemset] = target_dict.get(itemset, 0) + 1
+        for itemset in combinations(unique_tokens, k):
+            if y.loc[idx] == 0:
+                itemset_counts_0[itemset] = itemset_counts_0.get(itemset, 0) + 1
+            else:
+                itemset_counts_1[itemset] = itemset_counts_1.get(itemset, 0) + 1
 
     c0 = pd.Series(itemset_counts_0, dtype=int)
     c1 = pd.Series(itemset_counts_1, dtype=int)
@@ -280,10 +311,7 @@ def mine_itemset_counts(
     c0 = c0.reindex(all_itemsets, fill_value=0)
     c1 = c1.reindex(all_itemsets, fill_value=0)
 
-    total_support = c0 + c1
-    keep = total_support[total_support >= min_support].index
-
-    return c0.loc[keep], c1.loc[keep], n0, n1
+    return c0, c1, n0, n1
 
 
 def mine_itemset_counts_apriori(
@@ -434,8 +462,6 @@ def mine_itemset_counts_apriori(
 # -----------------------------------
 # Generic miner
 # -----------------------------------
-
-
 def mine_candidates(
     tokens: pd.Series,
     y: pd.Series,
@@ -445,14 +471,12 @@ def mine_candidates(
     top_k: Optional[int] = None,
     min_support: Optional[int] = None,
     counter_kwargs: Optional[Dict[str, Any]] = None,
-):
+) -> pd.DataFrame:
     """
     Generic miner supporting different candidate generators (single tokens, itemsets, etc.).
+    Handles split metric scorers that return a DataFrame with columns ['coverage','risk'].
 
-    1) counter(...) -> (c0, c1, n0, n1) using TRANSACTIONAL semantics
-    2) optional min_support filtering (if not already handled in counter)
-    3) scorer(c0, c1, n0, n1) -> score per candidate (token/token set)
-    4) returns ranked dataframe
+    Returns a ranked DataFrame with per-candidate counts, support, score, and optional coverage/risk.
     """
     if counter_kwargs is None:
         counter_kwargs = {}
@@ -464,7 +488,43 @@ def mine_candidates(
         keep = total[total >= min_support].index
         c0, c1, total = c0.loc[keep], c1.loc[keep], total.loc[keep]
 
-    score = scorer(c0, c1, n0, n1)
+    # ---- empty guard (prevents shape mismatches downstream)
+    if len(c0) == 0:
+        return pd.DataFrame(
+            columns=[
+                "candidate",
+                "candidate_str",
+                "count_benign",
+                "count_attack",
+                "support_total",
+                score_name,
+                "p_benign_given_candidate",
+                "coverage",
+                "risk",
+            ]
+        )
+
+    score_out = scorer(c0, c1, n0, n1)
+
+    coverage = risk = None
+    if isinstance(score_out, pd.DataFrame):
+        # expected columns
+        if not {"coverage", "risk"}.issubset(score_out.columns):
+            raise ValueError(
+                "Split scorer must return a DataFrame with columns {'coverage','risk'}"
+            )
+        coverage = score_out["coverage"].reindex(c0.index)
+        risk = score_out["risk"].reindex(c0.index)
+        score = coverage - risk.fillna(0.0)  # single ranking scalar
+    else:
+        score = (
+            score_out.reindex(c0.index)
+            if isinstance(score_out, pd.Series)
+            else pd.Series(score_out, index=c0.index)
+        )
+
+    den = (c0 + c1).replace(0, np.nan)
+    p_benign = (c0 / den).fillna(0.0)
 
     out = pd.DataFrame(
         {
@@ -474,10 +534,16 @@ def mine_candidates(
             "count_attack": c1.values,
             "support_total": total.values,
             score_name: score.values,
-            "p_benign_given_candidate": (c0 / (c0 + c1)).values,
+            "p_benign_given_candidate": p_benign.values,
         }
-    ).sort_values(score_name, ascending=False)
+    )
 
+    if coverage is not None:
+        out["coverage"] = coverage.values
+    if risk is not None:
+        out["risk"] = risk.values
+
+    out = out.sort_values(score_name, ascending=False)
     if top_k is not None:
         out = out.head(top_k)
 
@@ -487,26 +553,40 @@ def mine_candidates(
 # -----------------------------------
 # Window-based mining
 # -----------------------------------
-
-
 def window_based_mining(
     df,
     scorer: ScoreFunction,
     counter: CountFunction,
     counter_kwargs: Optional[Dict[str, Any]] = None,
+    min_support=50,
+    # memory knobs
+    use_memory: bool = True,
+    mem_lambda: float = 1.0,  # risk penalty
+    mem_beta: float = 0.1,  # how much memory influences score
+    # how many items to reward per window (per cov/risk component)
+    top_cov: int = 50,
+    top_risk: int = 50,
 ):
+
+    # set up
     if counter_kwargs is None:
         counter_kwargs = {}
 
     scenario_rankings = dict()
     scenario_attack_flags = dict()
+    scenario_memory = dict()  # stores a snapshot of memory per window
 
-    df_copy = add_behavioral_features(df)
+    # df_copy = add_behavioral_features(df)
 
-    for scenario, df_s in df_copy.groupby("scenario", sort=False):
-        print(f"running mining for scenario {scenario}....")
+    for scenario, df_s in df.groupby("scenario", sort=False):
+        print(f"Running mining for scenario {scenario}....")
+
+        cov_mem = SymbolicMemory() if use_memory else None
+        risk_mem = SymbolicMemory() if use_memory else None
+
         rankings = []
         attack_flags = []
+        mem_trace = []
 
         df_s = df_s.sort_values("timestamp")
         t_s = df_s["timestamp"]
@@ -520,9 +600,12 @@ def window_based_mining(
             if df_k.empty:
                 continue
 
+            df_k = add_behavioral_features(df_k)
+
             n_benign = (df_k["y"] == 0).sum()
             n_attack = (df_k["y"] == 1).sum()
-            attack_flags.append(n_attack > 0)
+            window_has_attack = n_attack > 0
+            attack_flags.append(window_has_attack)
 
             print(f"Window [{start_k}, {end_k})")
             print(f"  Benign alerts : {n_benign}")
@@ -546,13 +629,68 @@ def window_based_mining(
                 counter=counter,
                 counter_kwargs=counter_kwargs,
                 score_name="score",
-                min_support=100,
+                min_support=min_support,
                 top_k=None,
             )
 
+            # use memory to affect scoring in current window using score in previous window
+            if use_memory:
+                ranking_k["mem_score"] = ranking_k["candidate"].map(
+                    lambda cand: mem_score(cov_mem, risk_mem, cand, l=mem_lambda)
+                )
+                ranking_k["score_raw"] = ranking_k[
+                    "score"
+                ]  # original score without memory
+                ranking_k["score"] = (
+                    ranking_k["score_raw"] + mem_beta * ranking_k["mem_score"]
+                )  # tune how much memory affects score
+                ranking_k = ranking_k.sort_values("score", ascending=False).reset_index(
+                    drop=True
+                )
+
+            if "coverage" in ranking_k.columns and "risk" in ranking_k.columns:
+                ranking_k["utility"] = ranking_k["coverage"] - 1.0 * ranking_k[
+                    "risk"
+                ].fillna(0.0)
+
             rankings.append(ranking_k)
+
+            if use_memory:
+                cov_mem.step_decay()
+                risk_mem.step_decay()
+
+                # coverage
+                if n_benign > 0 and "coverage" in ranking_k.columns:
+                    cov_top_candidates = ranking_k.nlargest(top_cov, "coverage")[
+                        "candidate"
+                    ]
+                    cov_mem.reward_feats([f"cov::{it}" for it in cov_top_candidates])
+
+                # risk
+                if window_has_attack and "risk" in ranking_k.columns:
+                    tmp = ranking_k.dropna(subset=["risk"])
+                    if not tmp.empty:
+                        risk_top_candidates = tmp.nlargest(top_risk, "risk")[
+                            "candidate"
+                        ]
+                        risk_mem.reward_feats(
+                            [f"risk::{it}" for it in risk_top_candidates]
+                        )
+
+                mem_trace.append(
+                    {
+                        "start": start_k,
+                        "end": end_k,
+                        "has_attack": window_has_attack,
+                        "coverage_active": cov_mem.active(),
+                        "risk_active": risk_mem.active(),
+                        "coverage_scores": dict(cov_mem.scores),
+                        "risk_scores": dict(risk_mem.scores),
+                    }
+                )
 
         scenario_rankings[scenario] = rankings
         scenario_attack_flags[scenario] = attack_flags
+        scenario_memory[scenario] = mem_trace
 
-    return scenario_rankings, scenario_attack_flags
+    return scenario_rankings, scenario_attack_flags, scenario_memory
