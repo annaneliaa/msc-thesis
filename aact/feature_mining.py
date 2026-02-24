@@ -66,7 +66,63 @@ def mem_score(cov_mem, risk_mem, cand, l=1.0):
     r = risk_mem.scores.get(f"risk::{cand}", 0.0)
     return c - l * r
 
+def get_window_df(df_s, t_s, start_k, end_k):
+    df_k = df_s[(t_s >= start_k) & (t_s < end_k)]
+    if df_k.empty:
+        return None, 0, 0, False
+    df_k = add_behavioral_features(df_k)
+    n_benign = int((df_k["y"] == 0).sum())
+    n_attack = int((df_k["y"] == 1).sum())
+    return df_k, n_benign, n_attack, (n_attack > 0)
 
+def tokenize_window(df_k):
+    return tokenize_alerts(
+        df_k,
+        base_fields + ["src_freq_bin", "dst_fanin_bin", "src_fanout_bin"],
+    )
+
+def apply_memory_rerank(ranking_k, cov_mem, risk_mem, mem_lambda=1.0, mem_beta=0.1):
+    ranking_k = ranking_k.copy()
+    ranking_k["mem_score"] = ranking_k["candidate"].map(
+        lambda cand: mem_score(cov_mem, risk_mem, cand, l=mem_lambda)
+    )
+    ranking_k["score_raw"] = ranking_k["score"]
+    ranking_k["score"] = ranking_k["score_raw"] + mem_beta * ranking_k["mem_score"]
+    return ranking_k.sort_values("score", ascending=False).reset_index(drop=True)
+
+def update_memories_and_snapshot(
+    ranking_k,
+    cov_mem,
+    risk_mem,
+    n_benign,
+    window_has_attack,
+    start_k,
+    end_k,
+    top_cov=50,
+    top_risk=50,
+):
+    cov_mem.step_decay()
+    risk_mem.step_decay()
+
+    if n_benign > 0 and "coverage" in ranking_k.columns:
+        cov_top = ranking_k.nlargest(top_cov, "coverage")["candidate"]
+        cov_mem.reward_feats([f"cov::{it}" for it in cov_top])
+
+    if window_has_attack and "risk" in ranking_k.columns:
+        tmp = ranking_k.dropna(subset=["risk"])
+        if not tmp.empty:
+            risk_top = tmp.nlargest(top_risk, "risk")["candidate"]
+            risk_mem.reward_feats([f"risk::{it}" for it in risk_top])
+
+    return {
+        "start": start_k,
+        "end": end_k,
+        "has_attack": window_has_attack,
+        "coverage_active": cov_mem.active(),
+        "risk_active": risk_mem.active(),
+        "coverage_scores": dict(cov_mem.scores),
+        "risk_scores": dict(risk_mem.scores),
+    }
 # -----------------------------------
 # Tokenization
 # -----------------------------------
@@ -558,25 +614,21 @@ def window_based_mining(
     scorer: ScoreFunction,
     counter: CountFunction,
     counter_kwargs: Optional[Dict[str, Any]] = None,
-    min_support=50,
+    min_support: int = 50,
     # memory knobs
     use_memory: bool = True,
-    mem_lambda: float = 1.0,  # risk penalty
-    mem_beta: float = 0.1,  # how much memory influences score
-    # how many items to reward per window (per cov/risk component)
+    mem_lambda: float = 1.0,
+    mem_beta: float = 0.1,
+    # reward knobs
     top_cov: int = 50,
     top_risk: int = 50,
 ):
-
-    # set up
     if counter_kwargs is None:
         counter_kwargs = {}
 
-    scenario_rankings = dict()
-    scenario_attack_flags = dict()
-    scenario_memory = dict()  # stores a snapshot of memory per window
-
-    # df_copy = add_behavioral_features(df)
+    scenario_rankings: dict = {}
+    scenario_attack_flags: dict = {}
+    scenario_memory: dict = {}
 
     for scenario, df_s in df.groupby("scenario", sort=False):
         print(f"Running mining for scenario {scenario}....")
@@ -591,20 +643,13 @@ def window_based_mining(
         df_s = df_s.sort_values("timestamp")
         t_s = df_s["timestamp"]
 
-        windows = make_time_windows(
-            t_s, window_size="12H", step_size="12H", align_to="H"
-        )
+        windows = make_time_windows(t_s, window_size="12H", step_size="12H", align_to="H")
 
         for start_k, end_k in windows:
-            df_k = df_s[(t_s >= start_k) & (t_s < end_k)]
-            if df_k.empty:
+            df_k, n_benign, n_attack, window_has_attack = get_window_df(df_s, t_s, start_k, end_k)
+            if df_k is None:
                 continue
 
-            df_k = add_behavioral_features(df_k)
-
-            n_benign = (df_k["y"] == 0).sum()
-            n_attack = (df_k["y"] == 1).sum()
-            window_has_attack = n_attack > 0
             attack_flags.append(window_has_attack)
 
             print(f"Window [{start_k}, {end_k})")
@@ -612,15 +657,7 @@ def window_based_mining(
             print(f"  Attack alerts : {n_attack}")
             print(f"  Total alerts  : {len(df_k)}")
 
-            tokens_k = tokenize_alerts(
-                df_k,
-                base_fields
-                + [
-                    "src_freq_bin",
-                    "dst_fanin_bin",
-                    "src_fanout_bin",
-                ],
-            )
+            tokens_k = tokenize_window(df_k)
 
             ranking_k = mine_candidates(
                 tokens=tokens_k,
@@ -633,61 +670,35 @@ def window_based_mining(
                 top_k=None,
             )
 
-            # use memory to affect scoring in current window using score in previous window
+            # memory affects ranking using previous windows only (apply before updating memory)
             if use_memory:
-                ranking_k["mem_score"] = ranking_k["candidate"].map(
-                    lambda cand: mem_score(cov_mem, risk_mem, cand, l=mem_lambda)
-                )
-                ranking_k["score_raw"] = ranking_k[
-                    "score"
-                ]  # original score without memory
-                ranking_k["score"] = (
-                    ranking_k["score_raw"] + mem_beta * ranking_k["mem_score"]
-                )  # tune how much memory affects score
-                ranking_k = ranking_k.sort_values("score", ascending=False).reset_index(
-                    drop=True
+                ranking_k = apply_memory_rerank(
+                    ranking_k,
+                    cov_mem,
+                    risk_mem,
+                    mem_lambda=mem_lambda,
+                    mem_beta=mem_beta,
                 )
 
-            if "coverage" in ranking_k.columns and "risk" in ranking_k.columns:
-                ranking_k["utility"] = ranking_k["coverage"] - 1.0 * ranking_k[
-                    "risk"
-                ].fillna(0.0)
+            # optional convenience metric (only for split scorer outputs)
+            if {"coverage", "risk"}.issubset(ranking_k.columns):
+                ranking_k["utility"] = ranking_k["coverage"] - ranking_k["risk"].fillna(0.0)
 
             rankings.append(ranking_k)
 
             if use_memory:
-                cov_mem.step_decay()
-                risk_mem.step_decay()
-
-                # coverage
-                if n_benign > 0 and "coverage" in ranking_k.columns:
-                    cov_top_candidates = ranking_k.nlargest(top_cov, "coverage")[
-                        "candidate"
-                    ]
-                    cov_mem.reward_feats([f"cov::{it}" for it in cov_top_candidates])
-
-                # risk
-                if window_has_attack and "risk" in ranking_k.columns:
-                    tmp = ranking_k.dropna(subset=["risk"])
-                    if not tmp.empty:
-                        risk_top_candidates = tmp.nlargest(top_risk, "risk")[
-                            "candidate"
-                        ]
-                        risk_mem.reward_feats(
-                            [f"risk::{it}" for it in risk_top_candidates]
-                        )
-
-                mem_trace.append(
-                    {
-                        "start": start_k,
-                        "end": end_k,
-                        "has_attack": window_has_attack,
-                        "coverage_active": cov_mem.active(),
-                        "risk_active": risk_mem.active(),
-                        "coverage_scores": dict(cov_mem.scores),
-                        "risk_scores": dict(risk_mem.scores),
-                    }
+                snap = update_memories_and_snapshot(
+                    ranking_k=ranking_k,
+                    cov_mem=cov_mem,
+                    risk_mem=risk_mem,
+                    n_benign=n_benign,
+                    window_has_attack=window_has_attack,
+                    start_k=start_k,
+                    end_k=end_k,
+                    top_cov=top_cov,
+                    top_risk=top_risk,
                 )
+                mem_trace.append(snap)
 
         scenario_rankings[scenario] = rankings
         scenario_attack_flags[scenario] = attack_flags
