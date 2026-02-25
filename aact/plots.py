@@ -822,6 +822,116 @@ def plot_scenario_heatmap(
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, f"token_heatmap_{scenario}"))
 
+def plot_utility_heatmap(
+    scenario_memory_entry: dict,
+    scenario: str,
+    output_dir: str,
+    top_n: int = 50,
+    fill_missing: float | None = None,  # None => show NaNs as white
+    vmin=None,
+    vmax=None,
+    cmap="berlin",
+):
+    """
+    Heatmap of utility over windows.
+    Expects scenario_memory_entry["utility_trace"] as created in your updated window_based_mining.
+    """
+    utility_trace = scenario_memory_entry["utility_trace"]
+    if not utility_trace:
+        raise ValueError("utility_trace is empty")
+
+    # windows + build long df
+    win_labels = [f"{u['start']:%Y-%m-%d %H:%M}" for u in utility_trace]
+    frames = []
+    for w_idx, u in enumerate(utility_trace):
+        tmp = u["values"].copy()
+        tmp["window"] = w_idx
+        frames.append(tmp)
+    long = pd.concat(frames, ignore_index=True)  # columns: candidate, utility, window
+
+    # candidate importance: mean abs utility across windows (skip NaNs)
+    imp = long.groupby("candidate")["utility"].apply(lambda s: s.abs().mean())
+    top_cands = imp.sort_values(ascending=False).head(top_n).index
+
+    # pivot to matrix
+    mat = (
+        long[long["candidate"].isin(top_cands)]
+        .pivot(index="candidate", columns="window", values="utility")
+        .reindex(top_cands)
+    )
+
+    if fill_missing is not None:
+        mat = mat.fillna(fill_missing)
+
+    vals = mat.values
+    if vmin is None or vmax is None:
+        max_abs = np.nanmax(np.abs(vals))
+        vmin = -max_abs
+        vmax = max_abs
+
+    plt.figure(figsize=(12, 0.35 * len(mat) + 3))
+    im = plt.imshow(vals, aspect="auto", cmap=cmap, vmin=vmin, vmax=vmax)
+    plt.colorbar(im, label="utility")
+    plt.yticks(range(len(mat.index)), [str(c) for c in mat.index], fontsize=8)
+    plt.xticks(range(len(win_labels)), win_labels, rotation=90, fontsize=8)
+    plt.title(f"Utility heatmap — {scenario} (top {top_n})")
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, f"token_utility_heatmap_{scenario}"))
+
+
+def plot_active_set(
+    scenario_memory_entry: dict,
+    scenario: str,
+    output_dir: str,
+    top_n_rows: int = 50,
+    show_counts: bool = True,
+    cmap="berlin",
+):
+    """
+    Plot active-set evolution.
+    - If show_counts: line plot of |active_set| per window.
+    - Always: binary heatmap (top_n_rows most frequently active tokens).
+    Expects scenario_memory_entry["active_trace"] from your window_based_mining.
+    """
+    active_trace = scenario_memory_entry["active_trace"]
+    if not active_trace:
+        raise ValueError("active_trace is empty")
+
+    win_labels = [f"{a['start']:%Y-%m-%d %H:%M}" for a in active_trace]
+
+    # counts plot
+    if show_counts:
+        counts = [len(a["active_candidates"]) for a in active_trace]
+        plt.figure(figsize=(12, 3))
+        plt.plot(range(len(counts)), counts, marker="o")
+        plt.xticks(range(len(win_labels)), win_labels, rotation=90, fontsize=8)
+        plt.ylabel("|active set|")
+        plt.title(f"Active set size over time — {scenario}")
+        plt.tight_layout()
+        plt.show()
+
+    # binary heatmap
+    active_sets = [set(a["active_candidates"]) for a in active_trace]
+    all_active = sorted(set().union(*active_sets)) if active_sets else []
+
+    if not all_active:
+        print("No active candidates in any window.")
+        return
+
+    # pick top rows by frequency of activation
+    freq = {c: sum(c in s for s in active_sets) for c in all_active}
+    top_cands = [c for c, _ in sorted(freq.items(), key=lambda kv: kv[1], reverse=True)[:top_n_rows]]
+
+    bin_mat = np.array([[1 if c in active_sets[w] else 0 for w in range(len(active_sets))] for c in top_cands])
+
+    plt.figure(figsize=(12, 0.35 * len(top_cands) + 3))
+    im = plt.imshow(bin_mat, aspect="auto", cmap=cmap, vmin=0, vmax=1)
+    plt.colorbar(im, label="active (1/0)")
+    plt.yticks(range(len(top_cands)), [str(c) for c in top_cands], fontsize=8)
+    plt.xticks(range(len(win_labels)), win_labels, rotation=90, fontsize=8)
+    plt.title(f"Active set membership — {scenario} (top {top_n_rows} by activation freq)")
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, f"active_set_{scenario}"))
 
 def plot_all(X, results, d, run_name="default"):
     out_dir = _ensure_dir(os.path.join("../plots", _safe_name(run_name)))
