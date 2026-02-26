@@ -151,24 +151,57 @@ def tokenize_window(df_k):
     """
     return tokenize_alerts(
         df_k,
-        base_fields + ["src_freq_bin", "dst_fanin_bin", "src_fanout_bin"],
+        base_fields
+        + [
+            "src_freq_bin",
+            "dst_fanin_bin",
+            "src_fanout_bin",
+        ],  # With behavioral features
     )
 
 
-# TODO: rewrite this function. extract mem score computation. Rename to utility score calculator or something.
-def apply_memory_rerank(ranking_k, cov_mem, risk_mem, mem_lambda=1.0, mem_beta=0.1):
+def compute_memory_scores(ranking_k, cov_mem, risk_mem, mem_lambda=1.0):
     """
-    Re-rank mined candidates using symbolic memory signals.
+    For each candidate, compute a memory-based score using coverage and risk memories.
+    Returns dataframe with mem_score added.
+
+    Args:
+        ranking_k (pd.DataFrame):
+            Current window ranking with at least columns:
+            ["candidate", "score_raw"].
+        cov_mem:
+            Coverage memory object.
+        risk_mem:
+            Risk memory object.
+        mem_lambda (float):
+            Weighting factor passed to memory scoring function.
+
+    Returns:
+        pd.DataFrame:
+            Same dataframe with computed memory scores added as a column.
+    """
+    ranking_k = ranking_k.copy()
+    ranking_k["mem_score"] = ranking_k["candidate"].map(
+        lambda cand: mem_score(cov_mem, risk_mem, cand, l=mem_lambda)
+    )
+    return ranking_k
+
+
+def apply_utility_rerank(ranking_k, mem_beta=0.1):
+    """
+    Computes utility score for each proposed candidate in window k as
+    score = score_raw + mem_beta * mem_score
+
+    Re-rank mined candidates using this computed utility score.
 
     For each candidate:
-    - Computes a memory-based score using coverage and risk memories.
     - Combines the raw mining score with the memory score.
     - Returns a re-ranked dataframe.
 
     Args:
         ranking_k (pd.DataFrame):
             Current window ranking with at least columns:
-            ["candidate", "score"].
+            ["candidate", "score_raw"].
         cov_mem:
             Coverage memory object.
         risk_mem:
@@ -181,13 +214,9 @@ def apply_memory_rerank(ranking_k, cov_mem, risk_mem, mem_lambda=1.0, mem_beta=0
 
     Returns:
         pd.DataFrame:
-            Re-ranked dataframe sorted by updated score.
+            Re-ranked dataframe sorted by updated score ("score").
     """
     ranking_k = ranking_k.copy()
-    ranking_k["mem_score"] = ranking_k["candidate"].map(
-        lambda cand: mem_score(cov_mem, risk_mem, cand, l=mem_lambda)
-    )
-    ranking_k["score_raw"] = ranking_k["score"]
     ranking_k["score"] = ranking_k["score_raw"] + mem_beta * ranking_k["mem_score"]
     return ranking_k.sort_values("score", ascending=False).reset_index(drop=True)
 
@@ -345,7 +374,7 @@ def benign_prev_scorer():
 
     return _benign_prevalence_score
 
-
+# Don't use, score is computed post hoc. Cannot let the system reason (rank) based on this score bc of single class problem
 def fp_contrast_scorer(alpha: float = 0.5):
     def _log_odds_contrast_score(c0, c1, n0, n1):
         """
@@ -353,7 +382,7 @@ def fp_contrast_scorer(alpha: float = 0.5):
 
             log((c0+α)/(n0-c0+α)) - log((c1+α)/(n1-c1+α))
 
-        Positive values → more benign-associated.
+        Positive values means that a candidate is more benign-associated.
         """
         idx = c0.index.union(c1.index)
         c0 = c0.reindex(idx, fill_value=0)
@@ -374,6 +403,7 @@ def fp_contrast_scorer(alpha: float = 0.5):
     return _log_odds_contrast_score
 
 
+# This scorer is basically a combination of the two above
 def split_metric_scorer(alpha: float = 0.5):
     def _coverage_risk_score(c0, c1, n0, n1):
         """
@@ -675,7 +705,7 @@ def mine_candidates(
     y: pd.Series,
     scorer: ScoreFunction,
     counter: CountFunction,
-    score_name: str = "score",
+    score_name: str = "score_raw",
     top_k: Optional[int] = None,
     min_support: Optional[int] = None,
     counter_kwargs: Optional[Dict[str, Any]] = None,
@@ -684,7 +714,7 @@ def mine_candidates(
     Generic miner supporting different candidate generators (single tokens, itemsets, etc.).
     Handles split metric scorers that return a DataFrame with columns ['coverage','risk'].
 
-    Returns a ranked DataFrame with per-candidate counts, support, score, and optional coverage/risk.
+    Returns a ranked DataFrame with per-candidate counts, support, score_raw, and optional coverage/risk.
     """
     if counter_kwargs is None:
         counter_kwargs = {}
@@ -805,23 +835,28 @@ def window_based_mining(
 
     scenario_rankings = {}
     scenario_attack_flags = {}
+
+    # This dict will store information about the full mining run for scenario S
     scenario_memory = {}
 
     for scenario, df_s in df.groupby("scenario", sort=False):
         print(f"Running mining for scenario {scenario}....")
 
+        # Initialize memories for coverage and risk scores of mined candidates
         cov_mem = SymbolicMemory() if use_memory else None
         risk_mem = SymbolicMemory() if use_memory else None
 
         rankings, attack_flags = [], []
-        mem_trace, utility_trace, active_trace = [], [], []
+        mem_trace, score_trace, active_trace = [], [], []
 
+        # Split up the dataset for scenario S according to time windows
         df_s = df_s.sort_values("timestamp")
         t_s = df_s["timestamp"]
         windows = make_time_windows(
             t_s, window_size="12H", step_size="12H", align_to="h"
         )
 
+        # Loop over all windows to do token mining
         for start_k, end_k in windows:
             df_k, n_benign, n_attack, window_has_attack = get_window_df(
                 df_s, t_s, start_k, end_k
@@ -829,57 +864,66 @@ def window_based_mining(
             if df_k is None:
                 continue
 
+            # Check if we are in a single class window
             attack_flags.append(window_has_attack)
 
+            # Convert all alerts in window to list-of-tokens representation
             tokens_k = tokenize_window(df_k)
 
+            # Mining step on all alerts in window returns a ranking of candidates according to scoring mechanism used
             ranking_k = mine_candidates(
                 tokens=tokens_k,
                 y=df_k["y"],
                 scorer=scorer,
                 counter=counter,
                 counter_kwargs=counter_kwargs,
-                score_name="score",
+                score_name="score_raw",
                 top_k=None,
                 min_support=min_support,
             )
 
-            # ---- apply memory rerank (uses previous windows only)
+            # Apply a reranking of the proposed candidates using coverage and risk scores in memory rerank
+            # Evaluate candidates in window k using windows [0...k-1)]
             if use_memory:
-                ranking_k = apply_memory_rerank(
+                # Compute memory score for each
+                ranking_k = compute_memory_scores(
+                    ranking_k, cov_mem, risk_mem, mem_lambda=mem_lambda
+                )
+
+                ranking_k = apply_utility_rerank(
                     ranking_k,
-                    cov_mem,
-                    risk_mem,
-                    mem_lambda=mem_lambda,
                     mem_beta=mem_beta,
                 )
-                ranking_k["mem_utility"] = ranking_k["mem_score"]
 
-            # ---- split-metric utility (only if present)
+            # Compute contrast score post hoc (contrast = coverage - risk)
+            # Compute contrast post hoc if available
             if {"coverage", "risk"}.issubset(ranking_k.columns):
-                ranking_k["split_utility"] = ranking_k["coverage"] - ranking_k[
-                    "risk"
-                ].fillna(0.0)
+                ranking_k["contrast"] = (
+                    ranking_k["coverage"]
+                    - ranking_k["risk"].fillna(0.0)
+                )
 
-            # ---- choose activation utility
-            util_col = (
-                "mem_utility"
-                if (use_memory and "mem_utility" in ranking_k.columns)
-                else "score"
-            )
+            # Choose metric that we want to base activation of a candidate on
+            # If useMem = False, system will use only the raw scores of candidates in window k
+            util_col = "score" if use_memory else "score_raw"
 
-            # save full utility snapshot for plotting
-            utility_trace.append(
+            # Save full utility scores snapshot for plotting
+            # Option here to store different types of scores (now utility score and contrast score)
+            cols_to_store = ["candidate", util_col]
+
+            if "contrast" in ranking_k.columns:
+                cols_to_store.append("contrast")
+
+            score_trace.append(
                 {
                     "start": start_k,
                     "end": end_k,
-                    "utility_col": util_col,
-                    "values": ranking_k[["candidate", util_col]].rename(
-                        columns={util_col: "utility"}
-                    ),
+                    "score_col": util_col,
+                    "values": ranking_k[cols_to_store].copy(),
                 }
             )
 
+            # TODO: check for adding removal from active set here
             # compute active set
             if active_top_k is not None:
                 active_set = ranking_k.nlargest(active_top_k, util_col)[
@@ -901,7 +945,7 @@ def window_based_mining(
 
             rankings.append(ranking_k)
 
-            # ---- update memory after using it
+            # Update memory with new scores for each candidate
             if use_memory:
                 snap = update_memories_and_snapshot(
                     ranking_k=ranking_k,
@@ -920,7 +964,7 @@ def window_based_mining(
         scenario_attack_flags[scenario] = attack_flags
         scenario_memory[scenario] = {
             "mem_trace": mem_trace,
-            "utility_trace": utility_trace,
+            "score_trace": score_trace,
             "active_trace": active_trace,
         }
 
