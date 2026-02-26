@@ -433,7 +433,27 @@ def split_metric_scorer(alpha: float = 0.5):
 
     return _coverage_risk_score
 
+def split_metric_scorer_bayes(alpha: float = 0.5):
+    def _coverage_risk_score_b(c0, c1, n0, n1):
 
+        idx = c0.index.union(c1.index)
+        c0 = c0.reindex(idx, fill_value=0)
+        c1 = c1.reindex(idx, fill_value=0)
+
+        # Posterior probabilities with symmetric Beta prior
+        p0 = (c0 + alpha) / (n0 + 2 * alpha) if n0 > 0 else pd.Series(0.5, index=idx)
+        p1 = (c1 + alpha) / (n1 + 2 * alpha) if n1 > 0 else pd.Series(0.5, index=idx)
+
+        coverage = np.log(p0 / (1 - p0))
+        risk = np.log(p1 / (1 - p1))
+
+        return pd.DataFrame({
+            "coverage": coverage,
+            "risk": risk,
+            "contrast": np.log(p0 / p1)
+        })
+
+    return _coverage_risk_score_b
 # -----------------------------------
 # Behavioral features
 # -----------------------------------
