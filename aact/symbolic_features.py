@@ -1,5 +1,165 @@
+import os
+import ast
+import json
+from glob import glob
 import pandas as pd
-import numpy as np
+
+
+def _parse_tokens_cell(x):
+    """Parse a tokens cell from CSV (list[str] stored as json or python literal or delimited string)."""
+    if x is None or (isinstance(x, float) and pd.isna(x)):
+        return []
+    if isinstance(x, list):
+        return [str(t) for t in x]
+
+    s = str(x).strip()
+    if not s:
+        return []
+
+    # JSON list
+    if s.startswith("[") and s.endswith("]"):
+        # try JSON then python literal
+        try:
+            v = json.loads(s)
+            if isinstance(v, list):
+                return [str(t) for t in v]
+        except Exception:
+            try:
+                v = ast.literal_eval(s)
+                if isinstance(v, list):
+                    return [str(t) for t in v]
+            except Exception:
+                pass
+
+    # fallback: pipe-separated tokens
+    if "|" in s:
+        return [t for t in s.split("|") if t]
+
+    # single token
+    return [s]
+
+
+def _candidate_to_tokens(candidate_str: str) -> list[str]:
+    """Turn 'tokA&tokB' or 'tokA & tokB' into ['tokA','tokB']."""
+    if candidate_str is None or (isinstance(candidate_str, float) and pd.isna(candidate_str)):
+        return []
+    s = str(candidate_str).strip()
+    if not s:
+        return []
+    # normalize separators
+    s = s.replace(" & ", "&")
+    # if your formatter ever uses commas, OR, etc, extend here
+    toks = [t.strip() for t in s.split("&") if t.strip()]
+    return toks
+
+
+def build_symbolic_features_from_tokens(
+    df_used: pd.DataFrame,
+    scenario: str,
+    run_name: str,
+    tokens_dir: str = "../out/ait_ads/tokens",
+    rankings_dir: str = "../out/ait_ads/rankings",
+    tokens_glob: str = "*.csv",  # your saved token files
+    stable_filename: str | None = None,
+    top_n: int | None = None,
+    min_fires: int = 1,  # drop features that never fire
+    id_col: str = "alert_id",
+) -> pd.DataFrame:
+    """
+    Build mined symbolic features for ONE scenario from:
+      1) saved token files containing columns: alert_id, tokens
+      2) saved stable features CSV containing candidate_str
+
+    Returns DataFrame aligned to df_used rows (same order), with:
+      - is_mined__* feature columns (0/1)
+      - m_is_mined__* computable flags (=1)
+    """
+
+    if id_col not in df_used.columns:
+        raise ValueError(f"df_used is missing '{id_col}' (needed to join tokens)")
+
+    # ---- load & combine token files for this scenario ----
+    # expected layout: ../out/ait_ads/tokens/{run_name}/{scenario}/*.csv
+    scen_tok_dir = os.path.join(tokens_dir, run_name, scenario)
+    tok_files = sorted(glob(os.path.join(scen_tok_dir, tokens_glob)))
+    if not tok_files:
+        raise FileNotFoundError(f"No token files found in {scen_tok_dir} matching {tokens_glob}")
+
+    tok_parts = []
+    for f in tok_files:
+        tdf = pd.read_csv(f)
+        if id_col not in tdf.columns or "tokens" not in tdf.columns:
+            raise ValueError(f"Token file {f} must have columns: '{id_col}', 'tokens'")
+        tdf = tdf[[id_col, "tokens"]].copy()
+        tdf["tokens"] = tdf["tokens"].apply(_parse_tokens_cell)
+        tok_parts.append(tdf)
+
+    tok_df = pd.concat(tok_parts, ignore_index=True)
+
+    # combine duplicates (same alert_id across windows) by unioning token lists
+    tok_df = (
+        tok_df.groupby(id_col)["tokens"]
+              .agg(lambda lists: sorted(set(t for L in lists for t in (L or []))))
+              .reset_index()
+    )
+
+    # ---- align tokens to df_used row order ----
+    tok_map = tok_df.set_index(id_col)["tokens"]
+    tokens_aligned = df_used[id_col].map(tok_map)
+
+    # alerts without tokens -> empty list (feature will be 0)
+    tokens_aligned = tokens_aligned.apply(lambda x: x if isinstance(x, list) else [])
+
+    # ---- build multi-hot token matrix (fast ANDs) ----
+    # join tokens into string then get_dummies -> columns are token strings
+    X_tokens = tokens_aligned.apply(lambda L: "|".join(L)).str.get_dummies(sep="|")
+
+    # ---- load stable candidates for this scenario ----
+    scen_rank_dir = os.path.join(rankings_dir, run_name)
+    if stable_filename is None:
+        stable_filename = f"{scenario}_stable_features.csv"
+    stable_path = os.path.join(scen_rank_dir, stable_filename)
+    if not os.path.exists(stable_path):
+        raise FileNotFoundError(f"Stable features file not found: {stable_path}")
+
+    stable = pd.read_csv(stable_path)
+    if "candidate_str" not in stable.columns:
+        raise ValueError(f"{stable_path} must contain a 'candidate_str' column")
+
+    if top_n is not None:
+        stable = stable.head(top_n)
+
+    candidates = stable["candidate_str"].dropna().astype(str).tolist()
+
+    # ---- compute mined symbolic features ----
+    X_sym = pd.DataFrame(index=df_used.index)
+
+    for cand in candidates:
+        toks = _candidate_to_tokens(cand)
+        if not toks:
+            continue
+
+        # AND over token columns; missing token => always false
+        mask = pd.Series(True, index=df_used.index)
+        for t in toks:
+            if t in X_tokens.columns:
+                mask &= (X_tokens[t] == 1)
+            else:
+                mask &= False
+
+        col = "is_mined__" + cand.replace(" ", "").replace("&", "__AND__")[:200]
+        X_sym[col] = mask.astype(int)
+        X_sym["m_" + col] = 1
+
+    # optionally keep only features that fire at least once
+    is_cols = [c for c in X_sym.columns if c.startswith("is_mined__")]
+    if is_cols:
+        fires = X_sym[is_cols].sum(axis=0)
+        keep = fires[fires >= min_fires].index.tolist()
+        keep_cols = keep + ["m_" + c for c in keep if ("m_" + c) in X_sym.columns]
+        X_sym = X_sym[keep_cols]
+
+    return X_sym
 
 def normalize_groups(x):
     if isinstance(x, list):
