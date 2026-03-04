@@ -3,6 +3,7 @@ import pandas as pd
 from glob import glob
 import os
 import re
+import hashlib
 
 # --- fast.log (Suricata/Snort) parsing fallbacks ---
 SIG_RE = re.compile(r"\[\*\*\]\s*\[\d+:\d+:\d+\]\s*(.*?)\s*\[\*\*\]")
@@ -18,101 +19,6 @@ USER_RE = re.compile(r"\buser(?:name)?[=\s:]+(?P<user>[a-zA-Z0-9._-]+)")
 SSHD_USER_RE = re.compile(r"\bfor\s+(invalid user\s+)?(?P<user>[a-zA-Z0-9._-]+)\b")
 IP_RE = re.compile(r"\b(?P<ip>\d{1,3}(?:\.\d{1,3}){3})\b")
 PROC_RE = re.compile(r"\b(sshd|sudo|cron|nginx|apache2|php|python)\b", re.IGNORECASE)
-
-# Helpers
-# def parse_ids_and_flow(row):
-#     raw_log = row.get("raw_log", "")
-#     ids_sig = row.get("ids_signature")
-#     ids_cat = row.get("ids_category")
-#     ids_sev = row.get("ids_severity")
-#     proto = row.get("proto")
-#     srcip = row.get("srcip")
-#     dstip = row.get("dstip")
-#     srcport = row.get("srcport")
-#     dstport = row.get("dstport")
-
-#     # normalize numeric ports if strings
-#     if srcport is not None:
-#         try: srcport = int(srcport)
-#         except Exception: pass
-#     if dstport is not None:
-#         try: dstport = int(dstport)
-#         except Exception: pass
-
-#     # handle "ip:port" in dstip
-#     if isinstance(dstip, str) and ":" in dstip and dstport is None:
-#         ip, port = dstip.rsplit(":", 1)
-#         if port.isdigit():
-#             dstip = ip
-#             dstport = int(port)
-
-#     if isinstance(raw_log, str):
-#         if ids_sig is None and "[**]" in raw_log:
-#             m = SIG_RE.search(raw_log)
-#             if m:
-#                 ids_sig = m.group(1).strip()
-
-#         if ids_cat is None:
-#             m = CLASS_RE.search(raw_log)
-#             if m:
-#                 ids_cat = m.group(1).strip()
-
-#         if ids_sev is None:
-#             m = PRIO_RE.search(raw_log)
-#             if m:
-#                 try:
-#                     ids_sev = float(m.group(1))
-#                 except Exception:
-#                     pass
-
-#         if proto is None:
-#             m = PROTO_RE.search(raw_log)
-#             if m:
-#                 proto = m.group(1).upper()
-
-#         # flow "a:b -> c:d"
-#         if (
-#             srcip is None or dstip is None or srcport is None or dstport is None
-#         ) and "->" in raw_log:
-#             m = FLOW_RE.search(raw_log)
-#             if m:
-#                 srcip = srcip or m.group("srcip")
-#                 dstip = dstip or m.group("dstip")
-#                 if srcport is None:
-#                     srcport = int(m.group("srcport"))
-#                 if dstport is None:
-#                     dstport = int(m.group("dstport"))
-
-#         # Fallback if regex search failed
-#         if dstport is None:
-#             dstport = extract_port(raw_log)
-
-#     is_ids_alert = int(
-#         (ids_sig is not None)
-#         or (ids_cat is not None)
-#         or (ids_sev is not None)
-#         or (isinstance(raw_log, str) and "[**]" in raw_log)
-#         or (row.get("decoder_parent") in ["snort", "suricata"])
-#     )
-
-#     alert_channel = (
-#         "ids" if is_ids_alert else ("aminer" if row["source"] == "aminer" else "host")
-#     )
-
-#     return pd.Series(
-#         {   
-#             "proto": proto,
-#             "srcip": srcip,
-#             "dstip": dstip,
-#             "srcport": srcport,
-#             "dstport": dstport,
-#             "ids_signature": ids_sig,
-#             "ids_category": ids_cat,
-#             "ids_severity": ids_sev,
-#             "is_ids_alert": is_ids_alert,
-#             "alert_channel": alert_channel,
-#         }
-#     )
 
 
 def extract_port(raw_log):
@@ -388,6 +294,9 @@ def load_alerts_raw(dir_path):
                     continue
 
     df = pd.DataFrame(rows)
+    
+    # assign IDs to each alert
+    df = add_alert_id(df)
 
     # normalize timestamps
     if not df.empty:
@@ -633,6 +542,24 @@ def add_semantic_features(df: pd.DataFrame) -> pd.DataFrame:
 
     df["exploit_class"] = df.apply(_exploit_class, axis=1)
 
+    return df
+
+def add_alert_id(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+
+    # make timestamp stable string (so hashing is consistent)
+    ts = pd.to_datetime(df["timestamp"], utc=True, errors="coerce").astype("int64").astype(str)
+
+    key = (
+        df["scenario"].fillna("").astype(str) + "|" +
+        df["source"].fillna("").astype(str) + "|" +
+        ts + "|" +
+        df["entity"].fillna("").astype(str) + "|" +
+        df["category"].fillna("").astype(str) + "|" +
+        df["raw_log"].fillna("").astype(str)
+    )
+
+    df["alert_id"] = key.apply(lambda s: hashlib.sha1(s.encode("utf-8")).hexdigest())
     return df
 
 

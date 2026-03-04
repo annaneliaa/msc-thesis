@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import os
 from typing import List, Callable, Optional, Any, Dict, Union
 from itertools import combinations
 
@@ -134,32 +135,6 @@ def get_window_df(df_s, t_s, start_k, end_k):
     return df_k, n_benign, n_attack, (n_attack > 0)
 
 
-def tokenize_window(df_k):
-    """
-    Tokenize a single window of alerts into transactional token lists.
-
-    Extends the base semantic fields with window-relative behavioral
-    features (e.g., source frequency bin, fan-in, fan-out).
-
-    Args:
-        df_k (pd.DataFrame):
-            Alert dataframe for one time window.
-
-    Returns:
-        pd.Series:
-            Series of list-of-token representations per alert.
-    """
-    return tokenize_alerts(
-        df_k,
-        base_fields
-        + [
-            "src_freq_bin",
-            "dst_fanin_bin",
-            "src_fanout_bin",
-        ],  # With behavioral features
-    )
-
-
 def compute_memory_scores(ranking_k, cov_mem, risk_mem, mem_lambda=1.0):
     """
     For each candidate, compute a memory-based score using coverage and risk memories.
@@ -168,7 +143,7 @@ def compute_memory_scores(ranking_k, cov_mem, risk_mem, mem_lambda=1.0):
     Args:
         ranking_k (pd.DataFrame):
             Current window ranking with at least columns:
-            ["candidate", "score_raw"].
+            ["candidate", "contrast_score"].
         cov_mem:
             Coverage memory object.
         risk_mem:
@@ -190,7 +165,7 @@ def compute_memory_scores(ranking_k, cov_mem, risk_mem, mem_lambda=1.0):
 def apply_utility_rerank(ranking_k, mem_beta=0.1):
     """
     Computes utility score for each proposed candidate in window k as
-    score = score_raw + mem_beta * mem_score
+    score = contrast_score + mem_beta * mem_score
 
     Re-rank mined candidates using this computed utility score.
 
@@ -201,7 +176,7 @@ def apply_utility_rerank(ranking_k, mem_beta=0.1):
     Args:
         ranking_k (pd.DataFrame):
             Current window ranking with at least columns:
-            ["candidate", "score_raw"].
+            ["candidate", "contrast_score"].
         cov_mem:
             Coverage memory object.
         risk_mem:
@@ -214,11 +189,12 @@ def apply_utility_rerank(ranking_k, mem_beta=0.1):
 
     Returns:
         pd.DataFrame:
-            Re-ranked dataframe sorted by updated score ("score").
+            Re-ranked dataframe sorted by ("combined_score"), which is the contrast score in the current window combined
+            with the memory score. Contains all original columns plus "mem_score" and "combined_score".
     """
     ranking_k = ranking_k.copy()
-    ranking_k["score"] = ranking_k["score_raw"] + mem_beta * ranking_k["mem_score"]
-    return ranking_k.sort_values("score", ascending=False).reset_index(drop=True)
+    ranking_k["combined_score"] = ranking_k["contrast_score"] + mem_beta * ranking_k["mem_score"]
+    return ranking_k.sort_values("combined_score", ascending=False).reset_index(drop=True)
 
 
 # TODO: add here removal of candidates whose score drops below threshold?
@@ -292,12 +268,50 @@ def update_memories_and_snapshot(
         "risk_scores": dict(risk_mem.scores),
     }
 
+def find_stable_features(scenario, scenario_rankings, run_name):
+    rankings = scenario_rankings[scenario]
+
+    combined = []
+    for i, df in enumerate(rankings):
+        tmp = df.copy()
+        tmp["window"] = i
+        combined.append(tmp)
+
+    combined_df = pd.concat(combined, ignore_index=True)
+
+    rankings_dir = f"../out/ait_ads/rankings/{run_name}"
+    os.makedirs(rankings_dir, exist_ok=True)
+
+    summary = (
+        combined_df.groupby("candidate_str")
+        .agg(
+            mean_score=("combined_score", "mean"),
+            std_score=("combined_score", "std"),
+            positive_ratio=("combined_score", lambda x: (x > 0).mean()),
+            mean_coverage=("coverage", "mean"),
+            windows=("window", "nunique")
+        )
+    )
+
+    summary["cv_score"] = summary["std_score"] / summary["mean_score"].abs()
+
+    stable_features = summary[
+        (summary["mean_score"] > 0) &
+        (summary["positive_ratio"] >= 0.7) &
+        (summary["cv_score"] < 1) &
+        (summary["mean_coverage"] > 0.01)
+    ]
+
+    stable_features = stable_features.sort_values("mean_score", ascending=False)
+
+    file = os.path.join(rankings_dir, f"{scenario}_stable_features.csv")
+
+    stable_features.to_csv(file)
+    print(f"Saved stable features for scenario '{scenario}' to {file}")
 
 # -----------------------------------
 # Tokenization
 # -----------------------------------
-
-
 def tokenize_alerts(
     df: pd.DataFrame,
     fields: List[str],
@@ -347,6 +361,35 @@ def tokenize_alerts(
     return pd.Series(tokens_per_row, index=df.index)
 
 
+def tokenize_window(df_k):
+    """
+    Tokenize a single window of alerts into transactional token lists.
+
+    Extends the base semantic fields with window-relative behavioral
+    features (e.g., source frequency bin, fan-in, fan-out).
+
+    Args:
+        df_k (pd.DataFrame):
+            Alert dataframe for one time window.
+
+    Returns:
+        pd.Series:
+            Series of list-of-token representations per alert.
+    """
+    tokens = tokenize_alerts(
+        df_k,
+        base_fields + [
+            "src_freq_bin",
+            "dst_fanin_bin",
+            "src_fanout_bin",
+        ],
+    )
+
+    return pd.DataFrame({
+        "alert_id": df_k["alert_id"].values,
+        "tokens": tokens.values
+    })
+
 # -----------------------------------
 # Scorers
 # -----------------------------------
@@ -373,6 +416,7 @@ def benign_prev_scorer():
         return c0 / n0
 
     return _benign_prevalence_score
+
 
 # Don't use, score is computed post hoc. Cannot let the system reason (rank) based on this score bc of single class problem
 def fp_contrast_scorer(alpha: float = 0.5):
@@ -433,6 +477,7 @@ def split_metric_scorer(alpha: float = 0.5):
 
     return _coverage_risk_score
 
+
 def split_metric_scorer_bayes(alpha: float = 0.5):
     def _coverage_risk_score_b(c0, c1, n0, n1):
 
@@ -447,13 +492,13 @@ def split_metric_scorer_bayes(alpha: float = 0.5):
         coverage = np.log(p0 / (1 - p0))
         risk = np.log(p1 / (1 - p1))
 
-        return pd.DataFrame({
-            "coverage": coverage,
-            "risk": risk,
-            "contrast": np.log(p0 / p1)
-        })
+        return pd.DataFrame(
+            {"coverage": coverage, "risk": risk, "contrast": np.log(p0 / p1)}
+        )
 
     return _coverage_risk_score_b
+
+
 # -----------------------------------
 # Behavioral features
 # -----------------------------------
@@ -725,10 +770,10 @@ def mine_candidates(
     y: pd.Series,
     scorer: ScoreFunction,
     counter: CountFunction,
-    score_name: str = "score_raw",
     top_k: Optional[int] = None,
     min_support: Optional[int] = None,
     counter_kwargs: Optional[Dict[str, Any]] = None,
+    beta: float = 0.5,  # jeffreys smoothing, use 1 for laplace
 ) -> pd.DataFrame:
     """
     Generic miner supporting different candidate generators (single tokens, itemsets, etc.).
@@ -739,6 +784,7 @@ def mine_candidates(
     if counter_kwargs is None:
         counter_kwargs = {}
 
+    # count candidates in the window using the provided counter function
     c0, c1, n0, n1 = counter(tokens, y, **counter_kwargs)
 
     total = c0 + c1
@@ -746,7 +792,7 @@ def mine_candidates(
         keep = total[total >= min_support].index
         c0, c1, total = c0.loc[keep], c1.loc[keep], total.loc[keep]
 
-    # ---- empty guard (prevents shape mismatches downstream)
+    # empty to prevents shape mismatches downstream
     if len(c0) == 0:
         return pd.DataFrame(
             columns=[
@@ -754,35 +800,23 @@ def mine_candidates(
                 "candidate_str",
                 "count_benign",
                 "count_attack",
-                "support_total",
-                score_name,
-                "p_benign_given_candidate",
-                "coverage",
+                "count_total",
+                "p_benign_given",
+                "coverage",  # cov and risk as determined by the scorer
                 "risk",
             ]
         )
 
     score_out = scorer(c0, c1, n0, n1)
 
-    coverage = risk = None
-    if isinstance(score_out, pd.DataFrame):
-        # expected columns
-        if not {"coverage", "risk"}.issubset(score_out.columns):
-            raise ValueError(
-                "Split scorer must return a DataFrame with columns {'coverage','risk'}"
-            )
-        coverage = score_out["coverage"].reindex(c0.index)
-        risk = score_out["risk"].reindex(c0.index)
-        score = coverage - risk.fillna(0.0)  # single ranking scalar
-    else:
-        score = (
-            score_out.reindex(c0.index)
-            if isinstance(score_out, pd.Series)
-            else pd.Series(score_out, index=c0.index)
-        )
+    if not isinstance(score_out, pd.DataFrame) or not {"coverage", "risk"}.issubset(score_out.columns):
+        raise ValueError("Split scorer must return a DataFrame with columns {'coverage','risk'}")
 
-    den = (c0 + c1).replace(0, np.nan)
-    p_benign = (c0 / den).fillna(0.0)
+    coverage = score_out["coverage"].reindex(c0.index)
+    risk = score_out["risk"].reindex(c0.index)
+
+    # Determine the probability of being benign given the candidate using a smoothed estimate
+    p_benign = (c0 + beta) / (c0 + c1 + 2 * beta)
 
     out = pd.DataFrame(
         {
@@ -790,9 +824,8 @@ def mine_candidates(
             "candidate_str": [format_candidate(c) for c in c0.index],
             "count_benign": c0.values,
             "count_attack": c1.values,
-            "support_total": total.values,
-            score_name: score.values,
-            "p_benign_given_candidate": p_benign.values,
+            "count_total": total.values,
+            "p_benign": p_benign.values,  # proability that the alert is benign given that it contains the candidate
         }
     )
 
@@ -801,9 +834,9 @@ def mine_candidates(
     if risk is not None:
         out["risk"] = risk.values
 
-    out = out.sort_values(score_name, ascending=False)
-    if top_k is not None:
-        out = out.head(top_k)
+    # out = out.sort_values(score_name, ascending=False)
+    # if top_k is not None:
+    #     out = out.head(top_k)
 
     return out.reset_index(drop=True)
 
@@ -849,6 +882,8 @@ def window_based_mining(
                 "active_trace": per-window active candidate sets # what the miner proposes for symbolic features
             }
     """
+
+    df = df.copy()
 
     if counter_kwargs is None:
         counter_kwargs = {}
@@ -897,10 +932,15 @@ def window_based_mining(
                 scorer=scorer,
                 counter=counter,
                 counter_kwargs=counter_kwargs,
-                score_name="score_raw",
                 top_k=None,
                 min_support=min_support,
             )
+
+            # Compute contrast score post hoc (contrast = coverage - risk)
+            if {"coverage", "risk"}.issubset(ranking_k.columns):
+                ranking_k["contrast_score"] = ranking_k["coverage"] - ranking_k[
+                    "risk"
+                ].fillna(0.0)
 
             # Apply a reranking of the proposed candidates using coverage and risk scores in memory rerank
             # Evaluate candidates in window k using windows [0...k-1)]
@@ -915,24 +955,15 @@ def window_based_mining(
                     mem_beta=mem_beta,
                 )
 
-            # Compute contrast score post hoc (contrast = coverage - risk)
-            # Compute contrast post hoc if available
-            if {"coverage", "risk"}.issubset(ranking_k.columns):
-                ranking_k["contrast"] = (
-                    ranking_k["coverage"]
-                    - ranking_k["risk"].fillna(0.0)
-                )
-
             # Choose metric that we want to base activation of a candidate on
             # If useMem = False, system will use only the raw scores of candidates in window k
-            util_col = "score" if use_memory else "score_raw"
-
-            # Save full utility scores snapshot for plotting
+            util_col = "combined_score" if use_memory else "contrast_score"
+            if util_col not in ranking_k.columns:
+                raise KeyError(f"Expected '{util_col}' in ranking_k columns, got: {list(ranking_k.columns)}")
+            
+            
             # Option here to store different types of scores (now utility score and contrast score)
             cols_to_store = ["candidate", util_col]
-
-            if "contrast" in ranking_k.columns:
-                cols_to_store.append("contrast")
 
             score_trace.append(
                 {

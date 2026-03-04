@@ -734,7 +734,7 @@ def plot_scenario_heatmap(
     min_total_support,
     top_n=25,
     order="desc",
-    score_col="score",
+    score_col="combined_score",
     support_col="support_total",
     vmin=None,
     vmax=None):
@@ -834,29 +834,29 @@ def plot_utility_heatmap(
 ):
     """
     Heatmap of utility over windows.
-    Expects scenario_memory_entry["utility_trace"] as created in your updated window_based_mining.
+    Expects scenario_memory_entry["score_trace"] from window_based_mining.
     """
-    utility_trace = scenario_memory_entry["utility_trace"]
-    if not utility_trace:
-        raise ValueError("utility_trace is empty")
+    score_trace = scenario_memory_entry["score_trace"]
+    if not score_trace:
+        raise ValueError("score_trace is empty")
 
     # windows + build long df
-    win_labels = [f"{u['start']:%Y-%m-%d %H:%M}" for u in utility_trace]
+    win_labels = [f"{u['start']:%Y-%m-%d %H:%M}" for u in score_trace]
     frames = []
-    for w_idx, u in enumerate(utility_trace):
+    for w_idx, u in enumerate(score_trace):
         tmp = u["values"].copy()
         tmp["window"] = w_idx
         frames.append(tmp)
     long = pd.concat(frames, ignore_index=True)  # columns: candidate, utility, window
 
     # candidate importance: mean abs utility across windows (skip NaNs)
-    imp = long.groupby("candidate")["utility"].apply(lambda s: s.abs().mean())
+    imp = long.groupby("candidate")["score"].apply(lambda s: s.abs().mean())
     top_cands = imp.sort_values(ascending=False).head(top_n).index
 
     # pivot to matrix
     mat = (
         long[long["candidate"].isin(top_cands)]
-        .pivot(index="candidate", columns="window", values="utility")
+        .pivot(index="candidate", columns="window", values="score")
         .reindex(top_cands)
     )
 
@@ -871,12 +871,12 @@ def plot_utility_heatmap(
 
     plt.figure(figsize=(12, 0.35 * len(mat) + 3))
     im = plt.imshow(vals, aspect="auto", cmap=cmap, vmin=vmin, vmax=vmax)
-    plt.colorbar(im, label="utility")
+    plt.colorbar(im, label="score")
     plt.yticks(range(len(mat.index)), [str(c) for c in mat.index], fontsize=8)
     plt.xticks(range(len(win_labels)), win_labels, rotation=90, fontsize=8)
-    plt.title(f"Utility heatmap — {scenario} (top {top_n})")
+    plt.title(f"Score heatmap (mem+raw) — {scenario} (top {top_n})")
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, f"token_utility_heatmap_{scenario}"))
+    plt.savefig(os.path.join(output_dir, f"token_score_heatmap_{scenario}"))
 
 
 def plot_active_set(

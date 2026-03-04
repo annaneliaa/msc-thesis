@@ -4,7 +4,7 @@ from typing import Dict, List
 @dataclass
 class SymbolicMemory:
     """
-    Tracks which symbolic features were useful recently.
+    Tracks which symbolic features are useful over time.
     Scores decay over time; selected features gain score.
     """
     decay: float = 0.8

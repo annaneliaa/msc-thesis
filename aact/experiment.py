@@ -473,6 +473,7 @@ def simple_ablation_experiment(df, window_size, scenario_name=None):
         )
 
     X_static = build_static_features(df_used)
+    
     X_symbolic = build_sym_features(df_used, X_dyn=X_dyn)
 
     # derive active features from what the builder emitted
