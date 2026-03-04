@@ -378,23 +378,14 @@ def tokenize_window(df_k):
     """
     tokens = tokenize_alerts(
         df_k,
-        base_fields + [
-            "src_freq_bin",
-            "dst_fanin_bin",
-            "src_fanout_bin",
-        ],
+        base_fields + ["src_freq_bin", "dst_fanin_bin", "src_fanout_bin"],
     )
-
-    return pd.DataFrame({
-        "alert_id": df_k["alert_id"].values,
-        "tokens": tokens.values
-    })
+    tokens.index = df_k.index  # align indexes for later merging with labels
+    return tokens
 
 # -----------------------------------
 # Scorers
 # -----------------------------------
-
-
 def benign_prev_scorer():
     def _benign_prevalence_score(c0, c1, n0, n1):
         """
@@ -781,9 +772,11 @@ def mine_candidates(
 
     Returns a ranked DataFrame with per-candidate counts, support, score_raw, and optional coverage/risk.
     """
+    
     if counter_kwargs is None:
         counter_kwargs = {}
 
+    y = y.reindex(tokens.index)
     # count candidates in the window using the provided counter function
     c0, c1, n0, n1 = counter(tokens, y, **counter_kwargs)
 
@@ -846,6 +839,7 @@ def mine_candidates(
 # -----------------------------------
 def window_based_mining(
     df,
+    run_name: str,
     scorer: ScoreFunction,
     counter: CountFunction,
     counter_kwargs: Optional[Dict[str, Any]] = None,
@@ -923,7 +917,23 @@ def window_based_mining(
             attack_flags.append(window_has_attack)
 
             # Convert all alerts in window to list-of-tokens representation
-            tokens_k = tokenize_window(df_k)
+            tokens_k = tokenize_window(df_k)  # Series indexed like df_k
+
+            # attach tokens to alert_id for later merging with labels and storing
+            tok_df = pd.DataFrame({"alert_id": df_k["alert_id"].values, "tokens": tokens_k.values})
+
+            # Save for later use
+            out_dir = f"../out/ait_ads/tokens/{run_name}/{scenario}"
+            os.makedirs(out_dir, exist_ok=True)
+            
+            tok_df.to_csv(os.path.join(out_dir, "tokens.csv"), index=False)
+            # list-of-tokens -> multi-hot matrix with alert_id index
+            X_tokens = (
+                tok_df.set_index("alert_id")["tokens"]
+                    .str.join("|")
+                    .str.get_dummies(sep="|")
+            )
+            X_tokens.to_csv(os.path.join(out_dir, "X_tokens.csv"))
 
             # Mining step on all alerts in window returns a ranking of candidates according to scoring mechanism used
             ranking_k = mine_candidates(
