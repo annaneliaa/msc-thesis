@@ -6,6 +6,7 @@ from itertools import combinations
 
 from util import make_time_windows
 from classes import *
+import shutil
 
 # -----------------------------------
 # Interfaces
@@ -193,8 +194,12 @@ def apply_utility_rerank(ranking_k, mem_beta=0.1):
             with the memory score. Contains all original columns plus "mem_score" and "combined_score".
     """
     ranking_k = ranking_k.copy()
-    ranking_k["combined_score"] = ranking_k["contrast_score"] + mem_beta * ranking_k["mem_score"]
-    return ranking_k.sort_values("combined_score", ascending=False).reset_index(drop=True)
+    ranking_k["combined_score"] = (
+        ranking_k["contrast_score"] + mem_beta * ranking_k["mem_score"]
+    )
+    return ranking_k.sort_values("combined_score", ascending=False).reset_index(
+        drop=True
+    )
 
 
 # TODO: add here removal of candidates whose score drops below threshold?
@@ -268,6 +273,7 @@ def update_memories_and_snapshot(
         "risk_scores": dict(risk_mem.scores),
     }
 
+
 def find_stable_features(scenario, scenario_rankings, run_name):
     rankings = scenario_rankings[scenario]
 
@@ -282,24 +288,21 @@ def find_stable_features(scenario, scenario_rankings, run_name):
     rankings_dir = f"../out/ait_ads/rankings/{run_name}"
     os.makedirs(rankings_dir, exist_ok=True)
 
-    summary = (
-        combined_df.groupby("candidate_str")
-        .agg(
-            mean_score=("combined_score", "mean"),
-            std_score=("combined_score", "std"),
-            positive_ratio=("combined_score", lambda x: (x > 0).mean()),
-            mean_coverage=("coverage", "mean"),
-            windows=("window", "nunique")
-        )
+    summary = combined_df.groupby("candidate_str").agg(
+        mean_score=("combined_score", "mean"),
+        std_score=("combined_score", "std"),
+        positive_ratio=("combined_score", lambda x: (x > 0).mean()),
+        mean_coverage=("coverage", "mean"),
+        windows=("window", "nunique"),
     )
 
     summary["cv_score"] = summary["std_score"] / summary["mean_score"].abs()
 
     stable_features = summary[
-        (summary["mean_score"] > 0) &
-        (summary["positive_ratio"] >= 0.7) &
-        (summary["cv_score"] < 1) &
-        (summary["mean_coverage"] > 0.01)
+        (summary["mean_score"] > 0)
+        & (summary["positive_ratio"] >= 0.7)
+        & (summary["cv_score"] < 1)
+        & (summary["mean_coverage"] > 0.01)
     ]
 
     stable_features = stable_features.sort_values("mean_score", ascending=False)
@@ -308,6 +311,7 @@ def find_stable_features(scenario, scenario_rankings, run_name):
 
     stable_features.to_csv(file)
     print(f"Saved stable features for scenario '{scenario}' to {file}")
+
 
 # -----------------------------------
 # Tokenization
@@ -382,6 +386,7 @@ def tokenize_window(df_k):
     )
     tokens.index = df_k.index  # align indexes for later merging with labels
     return tokens
+
 
 # -----------------------------------
 # Scorers
@@ -772,7 +777,7 @@ def mine_candidates(
 
     Returns a ranked DataFrame with per-candidate counts, support, score_raw, and optional coverage/risk.
     """
-    
+
     if counter_kwargs is None:
         counter_kwargs = {}
 
@@ -802,8 +807,12 @@ def mine_candidates(
 
     score_out = scorer(c0, c1, n0, n1)
 
-    if not isinstance(score_out, pd.DataFrame) or not {"coverage", "risk"}.issubset(score_out.columns):
-        raise ValueError("Split scorer must return a DataFrame with columns {'coverage','risk'}")
+    if not isinstance(score_out, pd.DataFrame) or not {"coverage", "risk"}.issubset(
+        score_out.columns
+    ):
+        raise ValueError(
+            "Split scorer must return a DataFrame with columns {'coverage','risk'}"
+        )
 
     coverage = score_out["coverage"].reindex(c0.index)
     risk = score_out["risk"].reindex(c0.index)
@@ -882,6 +891,10 @@ def window_based_mining(
     if counter_kwargs is None:
         counter_kwargs = {}
 
+    # clear old outputs for this run to avoid mixing/appending stale ids
+    shutil.rmtree(f"../out/ait_ads/tokens/{run_name}", ignore_errors=True)
+    shutil.rmtree(f"../out/ait_ads/rankings/{run_name}", ignore_errors=True)
+
     scenario_rankings = {}
     scenario_attack_flags = {}
 
@@ -905,6 +918,22 @@ def window_based_mining(
             t_s, window_size="12H", step_size="12H", align_to="h"
         )
 
+        # reset per-scenario token outputs so we don't append across reruns
+        out_dir = f"../out/ait_ads/tokens/{run_name}/{scenario}"
+        os.makedirs(out_dir, exist_ok=True)
+        tok_path = os.path.join(out_dir, "tokens.csv")
+        xtok_path = os.path.join(out_dir, "X_tokens.csv")
+        if os.path.exists(tok_path):
+            os.remove(tok_path)
+        if os.path.exists(xtok_path):
+            os.remove(xtok_path)
+
+        tok_acc = (
+            {}
+        )  # accumulator for tokens in the scenario, to compute global frequencies if needed
+        out_dir = f"../out/ait_ads/tokens/{run_name}/{scenario}"
+        os.makedirs(out_dir, exist_ok=True)
+
         # Loop over all windows to do token mining
         for start_k, end_k in windows:
             df_k, n_benign, n_attack, window_has_attack = get_window_df(
@@ -919,21 +948,23 @@ def window_based_mining(
             # Convert all alerts in window to list-of-tokens representation
             tokens_k = tokenize_window(df_k)  # Series indexed like df_k
 
-            # attach tokens to alert_id for later merging with labels and storing
-            tok_df = pd.DataFrame({"alert_id": df_k["alert_id"].values, "tokens": tokens_k.values})
+            # # attach tokens to alert_id for later merging with labels and storing
+            # tok_df = pd.DataFrame({"alert_id": df_k["alert_id"].values, "tokens": tokens_k.values})
+            # tok_df.to_csv(
+            #     os.path.join(out_dir, "tokens.csv"),
+            #     mode="a",
+            #     header=not os.path.exists(os.path.join(out_dir, "tokens.csv")),
+            #     index=False,
+            # )
 
-            # Save for later use
-            out_dir = f"../out/ait_ads/tokens/{run_name}/{scenario}"
-            os.makedirs(out_dir, exist_ok=True)
-            
-            tok_df.to_csv(os.path.join(out_dir, "tokens.csv"), index=False)
-            # list-of-tokens -> multi-hot matrix with alert_id index
-            X_tokens = (
-                tok_df.set_index("alert_id")["tokens"]
-                    .str.join("|")
-                    .str.get_dummies(sep="|")
-            )
-            X_tokens.to_csv(os.path.join(out_dir, "X_tokens.csv"))
+            # accumulate (union) tokens per alert_id
+            for aid, toks in zip(df_k["alert_id"].astype(str).values, tokens_k.values):
+                if aid not in tok_acc:
+                    tok_acc[aid] = set()
+                if isinstance(toks, list):
+                    tok_acc[aid].update(toks)
+                else:
+                    tok_acc[aid].add(str(toks)) if pd.notna(toks) else None
 
             # Mining step on all alerts in window returns a ranking of candidates according to scoring mechanism used
             ranking_k = mine_candidates(
@@ -969,9 +1000,10 @@ def window_based_mining(
             # If useMem = False, system will use only the raw scores of candidates in window k
             util_col = "combined_score" if use_memory else "contrast_score"
             if util_col not in ranking_k.columns:
-                raise KeyError(f"Expected '{util_col}' in ranking_k columns, got: {list(ranking_k.columns)}")
-            
-            
+                raise KeyError(
+                    f"Expected '{util_col}' in ranking_k columns, got: {list(ranking_k.columns)}"
+                )
+
             # Option here to store different types of scores (now utility score and contrast score)
             cols_to_store = ["candidate", util_col]
 
@@ -1020,6 +1052,31 @@ def window_based_mining(
                     top_risk=top_risk,
                 )
                 mem_trace.append(snap)
+
+        tok_df_all = pd.DataFrame(
+            {
+                "alert_id": list(tok_acc.keys()),
+                "tokens": [sorted(list(s)) for s in tok_acc.values()],
+            }
+        )
+
+        # overwrite tokens.csv with the scenario-wide, de-duplicated version (recommended)
+        tok_df_all.to_csv(tok_path, index=False)
+
+        X_tokens_all = (
+            tok_df_all.set_index("alert_id")["tokens"]
+            .apply(lambda L: "|".join(L))
+            .str.get_dummies(sep="|")
+        )
+        X_tokens_all.to_csv(xtok_path)
+
+        print(
+            scenario,
+            "unique ids df:",
+            df_s["alert_id"].astype(str).nunique(),
+            "unique ids tok:",
+            tok_df_all["alert_id"].nunique(),
+        )
 
         scenario_rankings[scenario] = rankings
         scenario_attack_flags[scenario] = attack_flags

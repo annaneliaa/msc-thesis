@@ -435,7 +435,7 @@ def burst_diagnostics(
     return out
 
 
-def simple_ablation_experiment(df, window_size, scenario_name=None):
+def simple_ablation_experiment(df, run_name, window_size, scenario_name=None):
     """
     One shot, single-scenario ablation experiment (no time windows, no next window eval).
     For one scenario's full dataset, test whether adding each symbolic feature helps vs baseline
@@ -473,16 +473,19 @@ def simple_ablation_experiment(df, window_size, scenario_name=None):
         )
 
     X_static = build_static_features(df_used)
+
+    X_symbolic = build_sym_features(df_used, run_name, scenario_name)
+
+    print(f"Built features: {len(X_dyn.columns)} dynamic cols, {len(X_static.columns)} static cols, {len(X_symbolic.columns)} symbolic cols")
     
-    X_symbolic = build_sym_features(df_used, X_dyn=X_dyn)
+    assert len(X_symbolic) == len(df_used)
 
     # derive active features from what the builder emitted
-    # Symbolic features = all "is_*" rules that fire at least somewhere in this dataset
-    sym_feats = [c for c in X_symbolic.columns if c.startswith("is_")]
-    # sym_miss = [c for c in X_symbolic.columns if c.startswith("m_")]
+    # Symbolic features = all "is_*" rules that fire at least once 
+    sym_feats = [c for c in X_symbolic.columns if c.startswith("is_") and X_symbolic[c].sum() > 0]
 
-    X_full = pd.concat([X_dyn, X_static, X_symbolic], axis=1).reset_index(drop=True)
-    y = np.asarray(y)
+    X_full = pd.concat([X_dyn, X_static, X_symbolic], axis=1)
+    y = pd.Series(y, index=X_full.index).to_numpy()
 
     assert len(X_full) == len(y)
 

@@ -21,7 +21,7 @@ def train_lr_l1(X_train, y_train):
     return model
 
 
-def train_eval_holdout(X_full, y, schema, test_frac=0.3):
+def train_eval_holdout(X_full, y, schema, test_frac=0.3, time_col="timestamp"):
     """
     Train + evaluate one model on a single holdout split (NOT time-series CV, so it has higher variance)
 
@@ -41,28 +41,58 @@ def train_eval_holdout(X_full, y, schema, test_frac=0.3):
         - test_idx_start: integer index where test split begins (used later for support checks etc.)
         - feature_names: list of actual columns used (after schema selection)
     """
-    X_full = X_full.reset_index(drop=True)
-    y = np.asarray(y)
-    assert len(X_full) == len(y)
+    def _find_valid_time_split(y, test_frac=0.3):
+        n = len(y)
+        split0 = int((1 - test_frac) * n)
 
-    # select schema columns
-    X = X_full[schema.features].fillna(0)
-    feature_names = list(X.columns)
+        # search nearby split points until both sides have both classes
+        for delta in range(0, n):
+            for s in (split0 - delta, split0 + delta):
+                if s <= 1 or s >= n - 1:
+                    continue
+                if np.unique(y[:s]).size == 2 and np.unique(y[s:]).size == 2:
+                    return s
+        return None
+
+    # keep y as a Series aligned to X_full
+    if hasattr(y, "reset_index"):
+        y = y.reset_index(drop=True)
+    else:
+        y = pd.Series(y)
+
+    df = X_full.reset_index(drop=True).copy()
+    df["__y__"] = y.values
+
+    # enforce time order if available
+    if time_col in df.columns:
+        df = df.sort_values(time_col, kind="stable").reset_index(drop=True)
+
+    X = df[schema.features].fillna(0)
+    y = df["__y__"].to_numpy()
 
     n = len(X)
-    split = int((1 - test_frac) * n)
+    split = _find_valid_time_split(y, test_frac=test_frac)
+    if split is None:
+        raise ValueError("Could not find a split where both train and test have both classes.")
+
     X_train, X_test = X.iloc[:split], X.iloc[split:]
     y_train, y_test = y[:split], y[split:]
 
-    # guard: need both classes in both splits for AUC
-    if len(np.unique(y_train)) < 2 or len(np.unique(y_test)) < 2:
-        raise ValueError(
-            "Train or test has only one class. Try a different split_frac or use all scenarios."
-        )
+    if np.unique(y_train).size < 2 or np.unique(y_test).size < 2:
+        # time-realistic runs can legitimately be single-class
+        return {
+            "schema": schema.name,
+            "model": None,
+            "auc": np.nan,
+            "y_test": y_test,
+            "proba_test": None,
+            "test_idx_start": split,
+            "feature_names": list(X.columns),
+            "single_class_split": True,
+        }
 
     model = LogisticRegression(max_iter=1000, class_weight="balanced")
     model.fit(X_train, y_train)
-
     proba_test = model.predict_proba(X_test)[:, 1]
     auc = float(roc_auc_score(y_test, proba_test))
 
@@ -73,7 +103,8 @@ def train_eval_holdout(X_full, y, schema, test_frac=0.3):
         "y_test": y_test,
         "proba_test": proba_test,
         "test_idx_start": split,
-        "feature_names": feature_names,
+        "feature_names": list(X.columns),
+        "single_class_split": False,
     }
 
 

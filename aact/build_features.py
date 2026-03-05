@@ -1,7 +1,8 @@
 import pandas as pd
 import numpy as np
 from collections import deque, defaultdict
-from symbolic_features import build_symbolic_features
+from symbolic_features import build_symbolic_features_from_tokens
+
 
 def normalize_groups(x):
     if isinstance(x, list):
@@ -13,113 +14,137 @@ def normalize_groups(x):
         return [g.strip().strip("'\"").lower() for g in s.split(",") if g.strip()]
     return []
 
-
+# written to mimic AACT baseline
 def build_static_features(df):
     df = df.copy()
-    X_static = pd.DataFrame(index=df.index)
+    X = pd.DataFrame(index=df.index)
 
-    # --- alert semantics (category-based) ---
-    X_static["cat_scan"] = (
-        df["category"].str.contains("scan", case=False, na=False).astype(int)
-    )
+    X["source_aminer"] = (df.get("source") == "aminer").astype(int)
+    X["source_wazuh"]  = (df.get("source") == "wazuh").astype(int)
 
-    X_static["cat_auth"] = (
-        df["category"]
-        .str.contains("auth|login|ssh|pam", case=False, na=False)
-        .astype(int)
-    )
+    # severity-like (robust to missing cols)
+    X["wazuh_level"] = pd.to_numeric(df.get("wazuh_level", 0), errors="coerce").fillna(0)
+    X["ids_severity"] = pd.to_numeric(df.get("ids_severity", 0), errors="coerce").fillna(0)
 
-    X_static["cat_web"] = (
-        df["category"]
-        .str.contains("web|http|wp|apache|nginx", case=False, na=False)
-        .astype(int)
-    )
+    # presence
+    X["has_username"] = df.get("username").notna().astype(int) if "username" in df else 0
+    X["has_procname"] = df.get("procname").notna().astype(int) if "procname" in df else 0
+    X["has_rule_id"]  = df.get("rule_id").notna().astype(int) if "rule_id" in df else 0
+    X["has_mitre"]    = df.get("mitre_ids").notna().astype(int) if "mitre_ids" in df else 0
 
-    # --- source system ---
-    X_static["source_aminer"] = (df["source"] == "aminer").astype(int)
-    X_static["source_wazuh"] = (df["source"] == "wazuh").astype(int)
+    # simple network structure
+    srcip = df.get("srcip", "").fillna("").astype(str)
+    dstip = df.get("dstip", "").fillna("").astype(str)
+    X["is_internal_ip"] = srcip.str.startswith(("10.", "192.168.", "172.16."), na=False).astype(int)
+    X["src_eq_dst"] = ((srcip != "") & (srcip == dstip)).astype(int)
 
-    # --- protocol / service hints from raw log ---
-    X_static["proto_http"] = (
-        df["raw_log"].str.contains("http|get|post", case=False, na=False).astype(int)
-    )
-
-    X_static["proto_ssh"] = (
-        df["raw_log"].str.contains("ssh", case=False, na=False).astype(int)
-    )
-
-    X_static["is_cron"] = (
-        df["raw_log"].str.contains("cron", case=False, na=False).astype(int)
-    )
-    # --- authentication / credential context ---
-
-    X_static["is_auth_event"] = (
-        df["raw_log"].str.contains("auth|login|pam", case=False, na=False).astype(int)
-    )
-
-    X_static["is_cred_event"] = (
-        df["raw_log"].str.contains("cred", case=False, na=False).astype(int)
-    )
-
-    X_static["is_uid0"] = (
-        df["raw_log"].str.contains("uid=0", case=False, na=False).astype(int)
-    )
-
-    X_static["is_success"] = (
-        df["raw_log"].str.contains("res=success", case=False, na=False).astype(int)
-    )
-
-    # --- AMiner-specific ---
-    X_static["aminer_new_event"] = (df["source"] == "aminer") & df[
-        "aminer_new_event"
-    ].fillna(0).astype(int)
-
-    X_static["aminer_training_mode"] = (df["source"] == "aminer") & df[
-        "aminer_training_mode"
-    ].fillna(0).astype(int)
-
-    # --- Wazuh-specific ---
-    X_static["wazuh_low_level"] = (
-        (df["source"] == "wazuh") & (df["wazuh_level"].fillna(0).astype(int) <= 3)
-    ).astype(int)
-
-    X_static["wazuh_antivirus"] = (
-        (df["source"] == "wazuh") & (df["wazuh_antivirus"].fillna(0).astype(int) == 1)
-    ).astype(int)
-
-    X_static["wazuh_update"] = (
-        (df["source"] == "wazuh") & (df["wazuh_update"].fillna(0).astype(int) == 1)
-    ).astype(int)
-
-    # --- identity presence ---
-    X_static["has_username"] = df["username"].notna().astype(int)
-    X_static["has_procname"] = df["procname"].notna().astype(int)
-    X_static["has_rule_id"] = df["rule_id"].notna().astype(int)
-
-    # --- fixed infrastructure hints ---
-    X_static["is_internal_ip"] = (
-        df["srcip"].str.startswith(("10.", "192.168.", "172.16."), na=False).astype(int)
-    )
-
-    X_static["src_eq_dst"] = (df["srcip"] == df["dstip"]).astype(int)
-
-    # decoder / signature semantics
-    X_static["decoder_known"] = df["decoder"].notna().astype(int)
-    X_static["decoder_parent_known"] = df["decoder_parent"].notna().astype(int)
-
-    X_static["ids_low_severity"] = (
-        df["ids_severity"].fillna(0).astype(int) <= 2
-    ).astype(int)
-
-    # MITRE structure
-    X_static["has_mitre"] = df["mitre_ids"].notna().astype(int)
-    X_static["is_mitre_recon"] = (
-        df["mitre_tactic"].str.contains("recon", case=False, na=False)
-    ).astype(int)
+    return X
 
 
+# def build_static_features(df):
+#     df = df.copy()
+#     X_static = pd.DataFrame(index=df.index)
 
-    return X_static
+#     # --- alert semantics (category-based) ---
+#     X_static["cat_scan"] = (
+#         df["category"].str.contains("scan", case=False, na=False).astype(int)
+#     )
+
+#     X_static["cat_auth"] = (
+#         df["category"]
+#         .str.contains("auth|login|ssh|pam", case=False, na=False)
+#         .astype(int)
+#     )
+
+#     X_static["cat_web"] = (
+#         df["category"]
+#         .str.contains("web|http|wp|apache|nginx", case=False, na=False)
+#         .astype(int)
+#     )
+
+#     # --- source system ---
+#     X_static["source_aminer"] = (df["source"] == "aminer").astype(int)
+#     X_static["source_wazuh"] = (df["source"] == "wazuh").astype(int)
+
+#     # --- protocol / service hints from raw log ---
+#     X_static["proto_http"] = (
+#         df["raw_log"].str.contains("http|get|post", case=False, na=False).astype(int)
+#     )
+
+#     X_static["proto_ssh"] = (
+#         df["raw_log"].str.contains("ssh", case=False, na=False).astype(int)
+#     )
+
+#     X_static["is_cron"] = (
+#         df["raw_log"].str.contains("cron", case=False, na=False).astype(int)
+#     )
+#     # --- authentication / credential context ---
+
+#     X_static["is_auth_event"] = (
+#         df["raw_log"].str.contains("auth|login|pam", case=False, na=False).astype(int)
+#     )
+
+#     X_static["is_cred_event"] = (
+#         df["raw_log"].str.contains("cred", case=False, na=False).astype(int)
+#     )
+
+#     X_static["is_uid0"] = (
+#         df["raw_log"].str.contains("uid=0", case=False, na=False).astype(int)
+#     )
+
+#     X_static["is_success"] = (
+#         df["raw_log"].str.contains("res=success", case=False, na=False).astype(int)
+#     )
+
+#     # --- AMiner-specific ---
+#     X_static["aminer_new_event"] = (df["source"] == "aminer") & df[
+#         "aminer_new_event"
+#     ].fillna(0).astype(int)
+
+#     X_static["aminer_training_mode"] = (df["source"] == "aminer") & df[
+#         "aminer_training_mode"
+#     ].fillna(0).astype(int)
+
+#     # --- Wazuh-specific ---
+#     X_static["wazuh_low_level"] = (
+#         (df["source"] == "wazuh") & (df["wazuh_level"].fillna(0).astype(int) <= 3)
+#     ).astype(int)
+
+#     X_static["wazuh_antivirus"] = (
+#         (df["source"] == "wazuh") & (df["wazuh_antivirus"].fillna(0).astype(int) == 1)
+#     ).astype(int)
+
+#     X_static["wazuh_update"] = (
+#         (df["source"] == "wazuh") & (df["wazuh_update"].fillna(0).astype(int) == 1)
+#     ).astype(int)
+
+#     # --- identity presence ---
+#     X_static["has_username"] = df["username"].notna().astype(int)
+#     X_static["has_procname"] = df["procname"].notna().astype(int)
+#     X_static["has_rule_id"] = df["rule_id"].notna().astype(int)
+
+#     # --- fixed infrastructure hints ---
+#     X_static["is_internal_ip"] = (
+#         df["srcip"].str.startswith(("10.", "192.168.", "172.16."), na=False).astype(int)
+#     )
+
+#     X_static["src_eq_dst"] = (df["srcip"] == df["dstip"]).astype(int)
+
+#     # decoder / signature semantics
+#     X_static["decoder_known"] = df["decoder"].notna().astype(int)
+#     X_static["decoder_parent_known"] = df["decoder_parent"].notna().astype(int)
+
+#     X_static["ids_low_severity"] = (
+#         df["ids_severity"].fillna(0).astype(int) <= 2
+#     ).astype(int)
+
+#     # MITRE structure
+#     X_static["has_mitre"] = df["mitre_ids"].notna().astype(int)
+#     X_static["is_mitre_recon"] = (
+#         df["mitre_tactic"].str.contains("recon", case=False, na=False)
+#     ).astype(int)
+
+#     return X_static
 
 
 def build_dyn_features(df, window_size):
@@ -195,5 +220,10 @@ def build_dyn_features(df, window_size):
 
     return X, y, df
 
-def build_sym_features(df, X_dyn):
-    return build_symbolic_features(df, X_dyn)
+
+def build_sym_features(df, run_name, scenario_name):
+    return build_symbolic_features_from_tokens(
+        df_used=df,
+        scenario=scenario_name,
+        run_name=run_name,
+    )

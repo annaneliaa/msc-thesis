@@ -225,7 +225,7 @@ def plot_top_error_categories(
 
 
 def plot_symbolic_performance_delta(
-    results_dict, metric="auc", out_dir="../plots", prefix=""
+    results_dict, scenario_name, metric="auc", out_dir="../plots", prefix=""
 ):
     """
     results_dict: dict like
@@ -244,16 +244,25 @@ def plot_symbolic_performance_delta(
     delta = df[metric] - base_val
 
     plt.figure(figsize=(8, 4))
+
+    # sort by signed delta for readability
+    delta_sorted = delta.sort_values()
+
+    # colors: green = improvement, red = worse
+    colors = ["green" if v > 0 else "red" for v in delta_sorted]
+
+    # plot absolute magnitude (log-safe)
     plt.yscale("log")
-    delta.sort_values().plot(kind="bar")
-    plt.axhline(0, color="black", linewidth=1)
-    plt.ylabel(f"Δ {metric.upper()} vs baseline")
+    plt.bar(delta_sorted.index, delta_sorted.abs(), color=colors)
+
+    plt.ylabel(f"|Δ {metric.upper()}| vs baseline")
     plt.title(f"Impact of symbolic features on {metric.upper()}")
+
     plt.xticks(fontsize=6)
     plt.xticks(rotation=30, ha="right")
     plt.tight_layout()
 
-    fname = f"{_safe_name(prefix)}sym_delta.png"
+    fname = f"{scenario_name}_sym_delta.png"
     plt.savefig(os.path.join(out_dir, fname))
     plt.show()
 
