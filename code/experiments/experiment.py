@@ -2,12 +2,14 @@ import pandas as pd
 import numpy as np
 import pandas as pd
 from sklearn.metrics import roc_auc_score
-from build_features import build_dyn_features, build_static_features, build_sym_features
-from classes import *
-from train import *
-from metrics import eval_subset_metrics
 import os
 import json
+
+from mining.build_features import build_dyn_features, build_static_features, build_sym_features
+from classes import *
+from train.train import *
+from experiments.metrics import eval_subset_metrics
+
 
 def log_row(history, out_path, row: dict):
     """
@@ -530,6 +532,105 @@ def simple_ablation_experiment(df, run_name, window_size, scenario_name=None):
         "base_feats": base_feats,
     }
 
+def simple_ablation_experiment_p(
+    df,
+    X_sym: pd.DataFrame,
+    window_size,
+    scenario_name=None,
+):
+    """
+    Single-scenario ablation experiment using precomputed symbolic features.
+
+    Compares:
+    1) baseline = dynamic + static
+    2) baseline + one symbolic feature
+    3) baseline + all symbolic features
+    """
+
+    if scenario_name is not None:
+        df = df[df["scenario"] == scenario_name].copy()
+        print(f"\nRunning scenario = {scenario_name} ({len(df)} alerts)")
+
+    # need both classes
+    if df["y"].nunique() < 2:
+        raise ValueError(
+            f"Scenario '{scenario_name}' has only one class in y: {df['y'].unique()}"
+        )
+
+    # build base features
+    # X_dyn, y, df_used = build_dyn_features(df, window_size)
+    y = df["y"].values
+
+
+    # if len(np.unique(y)) < 2:
+    #     raise ValueError(
+    #         f"After preprocessing, scenario '{scenario_name}' has only one class in y."
+    #     )
+
+    df_used = df
+    X_static = build_static_features(df_used)
+
+    # align symbolic features to the same rows as df_used
+    X_sym = X_sym.loc[df_used.index].copy()
+
+
+
+    print(
+        f"Built features:",
+        # f"{len(X_dyn.columns)} dynamic cols, "
+        f"{len(X_static.columns)} static cols, "
+        f"{len(X_sym.columns)} symbolic cols"
+    )
+
+    assert len(X_sym) == len(df_used)
+
+    # keep only symbolic features that fire at least once
+    sym_feats = [c for c in X_sym.columns if X_sym[c].sum() > 0]
+
+    # X_full = pd.concat([X_dyn, X_static, X_sym], axis=1)
+    X_full = pd.concat([X_static, X_sym], axis=1)
+    y = pd.Series(y, index=X_full.index).to_numpy()
+
+    assert len(X_full) == len(y)
+
+    # baseline
+    base_feats = list(X_static.columns) #+ list(X_dyn.columns) 
+    schema_base = FeatureSchema("base", base_feats)
+
+    print("\nTraining BASELINE model...")
+    res_base = train_eval_holdout(X_full, y, schema_base, test_frac=0.3)
+    diag_base = burst_diagnostics(X_full, res_base)
+
+    # one-feature ablations
+    ablation_results = {}
+    ablation_diags = {}
+
+    for feat in sym_feats:
+        print(f"\nTraining base + '{feat}' ...")
+        schema_feat = FeatureSchema(f"base+{feat}", base_feats + [feat])
+        res_feat = train_eval_holdout(X_full, y, schema_feat, test_frac=0.3)
+
+        ablation_results[feat] = res_feat
+        ablation_diags[feat] = burst_diagnostics(X_full, res_feat)
+
+    # all symbolic features
+    print("\nTraining BASE + ALL symbolic features...")
+    schema_all = FeatureSchema("base+symbolic_all", base_feats + sym_feats)
+    res_all = train_eval_holdout(X_full, y, schema_all, test_frac=0.3)
+    diag_all = burst_diagnostics(X_full, res_all) #TODO: check if you stil have need of this function
+
+    return {
+        "base": res_base,
+        "diag_base": diag_base,
+        "ablation": ablation_results,
+        "diag_ablation": ablation_diags,
+        "sym_all": res_all,
+        "diag_sym_all": diag_all,
+        "X_full": X_full,
+        "y": y,
+        "sym_feats": sym_feats,
+        "base_feats": base_feats,
+    }
 
 def windowed_ablation_experiment(
     df,

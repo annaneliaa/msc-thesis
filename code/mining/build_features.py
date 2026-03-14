@@ -1,7 +1,8 @@
 import pandas as pd
 import numpy as np
 from collections import deque, defaultdict
-from symbolic_features import build_symbolic_features_from_tokens
+
+from mining.symbolic_features import build_symbolic_features_from_tokens
 
 
 def normalize_groups(x):

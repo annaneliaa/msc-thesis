@@ -252,11 +252,12 @@ def plot_symbolic_performance_delta(
     colors = ["green" if v > 0 else "red" for v in delta_sorted]
 
     # plot absolute magnitude (log-safe)
-    plt.yscale("log")
+    # plt.yscale("log")
+    # TODO: change yticks back to positive
     plt.bar(delta_sorted.index, delta_sorted.abs(), color=colors)
 
     plt.ylabel(f"|Δ {metric.upper()}| vs baseline")
-    plt.title(f"Impact of symbolic features on {metric.upper()}")
+    plt.title(f"Delta AUC (abl.) symbolic features on {metric.upper()}, scenario={scenario_name}")
 
     plt.xticks(fontsize=6)
     plt.xticks(rotation=30, ha="right")
@@ -649,6 +650,70 @@ def plot_fp_only_feature_suppression(
         plt.savefig(os.path.join(out_dir, scen))
 
     return long, summary
+
+def plot_suppression_from_res(
+    res,
+    scenario_name: str,
+    fp_metric: str = "suppressed_benign",
+    tp_metric: str = "suppressed_attack",
+    out_dir: str = "../plots",
+    topk: int | None = None,
+):
+    """
+    Plot per-feature FP and TP suppression from simple_ablation_experiment output.
+
+    Expects:
+        res["diag_ablation"] = {feature_name: diag_dict}
+        res["diag_sym_all"] = diag_dict
+    """
+    rows = []
+
+    for feat, diag in res["diag_ablation"].items():
+        rows.append(
+            {
+                "feature": feat,
+                "fp_suppressed": diag.get(fp_metric, 0),
+                "tp_suppressed": diag.get(tp_metric, 0),
+            }
+        )
+
+    # optional: include all-symbolic bundle
+    diag_all = res.get("diag_sym_all", {})
+    rows.append(
+        {
+            "feature": "all_symbolic",
+            "fp_suppressed": diag_all.get(fp_metric, 0),
+            "tp_suppressed": diag_all.get(tp_metric, 0),
+        }
+    )
+
+    df_plot = pd.DataFrame(rows)
+
+    if topk is not None:
+        df_plot = df_plot.sort_values("fp_suppressed", ascending=False).head(topk)
+
+    df_plot = df_plot.sort_values("fp_suppressed")
+
+    os.makedirs(out_dir, exist_ok=True)
+
+    y = np.arange(len(df_plot))
+    h = 0.4
+
+    plt.figure(figsize=(10, max(4, 0.35 * len(df_plot))))
+    plt.barh(y - h / 2, df_plot["fp_suppressed"], height=h, label="FP suppressed")
+    plt.barh(y + h / 2, df_plot["tp_suppressed"], height=h, label="TP suppressed")
+
+    plt.yticks(y, df_plot["feature"])
+    plt.xlabel("Count")
+    plt.title(f"{scenario_name} — FP/TP suppression per symbolic feature")
+    plt.legend()
+    plt.grid(axis="x", alpha=0.3)
+    plt.tight_layout()
+
+    plt.savefig(os.path.join(out_dir, f"{scenario_name}_fp_tp_suppression.png"))
+    plt.show()
+
+    return df_plot
 
 def plot_class_histogram(df, label_col="y"):
     counts = df[label_col].value_counts().sort_index()

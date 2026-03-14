@@ -36,7 +36,7 @@ def attacks_per_period_report(
 
     # bucket column
     if period == "hour":
-        d["bucket"] = d[ts_col].dt.floor("H")
+        d["bucket"] = d[ts_col].dt.floor("h")
     elif period == "day":
         d["bucket"] = d[ts_col].dt.floor("D")
     else:  # week
@@ -92,7 +92,7 @@ def make_time_windows(
     end: Optional[pd.Timestamp] = None,
     align_to: Optional[
         str
-    ] = "D",  # "D" for day, "H" for hour, or None. Rounds start and end times to clean boundaries before generating windows
+    ] = "D",  # "D" for day, "h" for hour, or None. Rounds start and end times to clean boundaries before generating windows
     tz: str = "UTC",
 ) -> List[Tuple[pd.Timestamp, pd.Timestamp]]:
     """

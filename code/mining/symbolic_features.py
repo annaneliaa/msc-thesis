@@ -3,6 +3,7 @@ import ast
 import json
 from glob import glob
 import pandas as pd
+from mining.alert_tokenization import tokenize_window
 
 
 def _parse_tokens_cell(x):
@@ -39,20 +40,42 @@ def _parse_tokens_cell(x):
     return [s]
 
 
+# def _candidate_to_tokens(candidate_str: str) -> list[str]:
+#     """Turn 'tokA&tokB' or 'tokA & tokB' into ['tokA','tokB']."""
+#     if candidate_str is None or (
+#         isinstance(candidate_str, float) and pd.isna(candidate_str)
+#     ):
+#         return []
+#     s = str(candidate_str).strip()
+#     if not s:
+#         return []
+#     # normalize separators
+#     s = s.replace(" & ", "&")
+#     # if your formatter ever uses commas, OR, etc, extend here
+#     toks = [t.strip() for t in s.split("&") if t.strip()]
+#     return toks
+
+
 def _candidate_to_tokens(candidate_str: str) -> list[str]:
-    """Turn 'tokA&tokB' or 'tokA & tokB' into ['tokA','tokB']."""
     if candidate_str is None or (
         isinstance(candidate_str, float) and pd.isna(candidate_str)
     ):
         return []
+
     s = str(candidate_str).strip()
     if not s:
         return []
-    # normalize separators
+
     s = s.replace(" & ", "&")
-    # if your formatter ever uses commas, OR, etc, extend here
-    toks = [t.strip() for t in s.split("&") if t.strip()]
+    toks = [normalize_token(t) for t in s.split("&") if t.strip()]
     return toks
+
+
+def normalize_token(t: str) -> str:
+    if t is None:
+        return ""
+    t = str(t).strip()
+    return t
 
 
 def build_symbolic_features_from_tokens(
@@ -103,7 +126,10 @@ def build_symbolic_features_from_tokens(
 
     print("df alerts:", len(df_used), "unique ids:", df_used["alert_id"].nunique())
     print("tok alerts:", len(tok_df), "unique ids:", tok_df["alert_id"].nunique())
-    print("match rate (by id):", df_used["alert_id"].astype(str).isin(tok_df["alert_id"].astype(str)).mean())
+    print(
+        "match rate (by id):",
+        df_used["alert_id"].astype(str).isin(tok_df["alert_id"].astype(str)).mean(),
+    )
 
     # combine duplicates (same alert_id across windows) by unioning token lists
     tok_df = (
@@ -170,6 +196,146 @@ def build_symbolic_features_from_tokens(
 
     return X_sym
 
+
+def build_symbolic_features_from_candidates(
+    df_used: pd.DataFrame,
+    surviving_candidates_df: pd.DataFrame,
+    min_fires: int = 1,
+) -> pd.DataFrame:
+
+    tokens = tokenize_window(df_used)
+    tokens = tokens.apply(lambda x: x if isinstance(x, list) else [])
+
+    X_tokens = tokens.apply(lambda L: "|".join(L)).str.get_dummies(sep="|")
+
+    candidates = (
+        surviving_candidates_df["candidate_str"]
+        .dropna()
+        .astype(str)
+        .drop_duplicates()
+        .tolist()
+    )
+
+    X_sym = pd.DataFrame(index=df_used.index)
+
+    for cand in candidates:
+        toks = _candidate_to_tokens(cand)
+
+        mask = pd.Series(True, index=df_used.index)
+        for t in toks:
+            mask &= X_tokens.get(t, 0) == 1
+
+        col = "is_mined__" + cand.replace("&", "__AND__")
+        X_sym[col] = mask.astype(int)
+
+    # drop features that never fire
+    fires = X_sym.sum()
+    keep = fires[fires >= min_fires].index
+    X_sym = X_sym[keep]
+
+    return X_sym
+def build_symbolic_features_from_candidates_cached(
+    df_used: pd.DataFrame,
+    surviving_candidates_df: pd.DataFrame,
+    scenario_name: str,
+    run_name: str,
+    tokens_base_dir: str = "../out",
+    id_col: str = "alert_id",
+    min_fires: int = 1,
+) -> pd.DataFrame:
+    """
+    Build symbolic features using saved tokens.csv instead of re-tokenizing alerts.
+    """
+
+    if id_col not in df_used.columns:
+        raise ValueError(f"df_used must contain '{id_col}'")
+
+    if "candidate_str" not in surviving_candidates_df.columns:
+        raise ValueError("surviving_candidates_df must contain 'candidate_str'")
+
+    tok_path = os.path.join(
+        tokens_base_dir, run_name, "tokens", scenario_name, "tokens.csv"
+    )
+    if not os.path.exists(tok_path):
+        raise FileNotFoundError(f"Could not find token file: {tok_path}")
+
+    # load saved tokens
+    tok_df = pd.read_csv(tok_path)
+
+    if id_col not in tok_df.columns or "tokens" not in tok_df.columns:
+        raise ValueError(f"{tok_path} must contain columns '{id_col}' and 'tokens'")
+
+    # parse token strings into Python sets
+    tok_df["tokens"] = tok_df["tokens"].apply(
+        lambda x: (
+            {normalize_token(t) for t in ast.literal_eval(x)} if pd.notna(x) else set()
+        )
+    )
+
+    # map alert_id -> token set
+    tok_map = tok_df.set_index(id_col)["tokens"]
+
+    # align token sets to df_used rows
+    alert_token_sets = (
+        df_used[id_col].map(tok_map).apply(lambda x: x if isinstance(x, set) else set())
+    )
+
+    all_tokens = set().union(*tok_df["tokens"])
+
+    print("df_used unique ids:", df_used[id_col].astype(str).nunique())
+    print("tok_df unique ids:", tok_df[id_col].astype(str).nunique())
+    print(
+        "match rate:",
+        df_used[id_col].astype(str).isin(tok_df[id_col].astype(str)).mean(),
+    )
+
+    # unique candidates
+    candidates = (
+        surviving_candidates_df["candidate_str"]
+        .dropna()
+        .astype(str)
+        .drop_duplicates()
+        .tolist()
+    )
+
+    print(
+        f"Building symbolic features for {len(candidates)} candidates using cached tokens from {tok_path}..."
+    )
+
+    # debug: show candidate-token mismatches
+    print("\nChecking candidate/token mismatches...")
+    n_with_missing = 0
+    for cand in candidates[:20]:
+        cand_tokens = {normalize_token(t) for t in _candidate_to_tokens(cand)}
+        missing = cand_tokens - all_tokens
+        if missing:
+            n_with_missing += 1
+            print("Candidate:", cand)
+            print("Parsed tokens:", cand_tokens)
+            print("Missing:", missing)
+            print()
+
+    if n_with_missing == 0:
+        print("No missing-token mismatches found in first 20 candidates.\n")
+
+    data = {}
+
+    for cand in candidates:
+        cand_tokens = {normalize_token(t) for t in _candidate_to_tokens(cand)}
+        if not cand_tokens:
+            continue
+
+        values = [
+            int(cand_tokens.issubset(alert_toks)) for alert_toks in alert_token_sets
+        ]
+
+        if sum(values) >= min_fires:
+            col = "is_mined__" + cand.replace(" ", "").replace("&", "__AND__")[:200]
+            data[col] = values
+
+    X_sym = pd.DataFrame(data, index=df_used.index)
+
+    return X_sym
 
 def normalize_groups(x):
     if isinstance(x, list):
