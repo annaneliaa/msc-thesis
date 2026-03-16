@@ -2,7 +2,8 @@ import pandas as pd
 import numpy as np
 import os
 from typing import Callable, Optional, Any, Dict, Union
-from pathlib import Path 
+from pathlib import Path
+import inspect
 
 
 from util import make_time_windows
@@ -23,6 +24,7 @@ CountFunction = Callable[..., tuple[pd.Series, pd.Series, int, int]]
 ScoreFunction = Callable[
     [pd.Series, pd.Series, int, int], Union[pd.Series, pd.DataFrame]
 ]
+
 
 # -----------------------------------
 # Behavioral features
@@ -62,9 +64,30 @@ def add_behavioral_features(df, time_col="timestamp", src_col="srcip", dst_col="
 
     return df
 
+
 # -----------------------------------
 # Helpers
 # -----------------------------------
+def _prepare_counter_kwargs(counter, base_kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Keep only kwargs accepted by the selected counter.
+
+    If the counter has **kwargs, pass everything through.
+    """
+    sig = inspect.signature(counter)
+    params = sig.parameters
+
+    accepts_var_kwargs = any(
+        p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+    )
+    if accepts_var_kwargs:
+        return base_kwargs
+
+    accepted_names = set(params.keys())
+    return {k: v for k, v in base_kwargs.items() if k in accepted_names}
+
+
+
 def format_candidate(c) -> str:
     """
     Helper for printing a candidate for plots/logs.
@@ -289,6 +312,7 @@ def update_memories_and_snapshot(
         "risk_scores": dict(risk_mem.scores),
     }
 
+
 # -----------------------------------
 # Filters
 # -----------------------------------
@@ -406,7 +430,7 @@ def filter_stable_candidates(
         & (df["positive_ratio"] >= min_positive_ratio)
         & (df["score_cv"] <= max_score_cv)
         & (df["mean_benign_coverage"] >= min_mean_benign_coverage)
-        & (df["min_support_count"] >= min_support_count)
+        & (df["min_support_count"] >= min_support_count)  # remove very rare tokens
     )
 
     filtered_df = df.loc[stable_mask].copy()
@@ -426,6 +450,7 @@ def filter_stable_candidates(
     print(f"Saved stable features for scenario '{scenario_name}' to {file}")
 
     return filtered_df
+
 
 def compute_tfidf_score(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
@@ -462,7 +487,6 @@ def filter_tfidf_candidates(
     tfidf_col: str = "mean_tfidf",
     min_tfidf: float = 0.001,
     max_window_frequency_ratio: float = 0.9,
-    min_support_count: int = 10,
 ) -> pd.DataFrame:
     """
     Filter candidates using TF-IDF and simple frequency constraints.
@@ -479,18 +503,17 @@ def filter_tfidf_candidates(
     n_windows = df["window_id"].nunique()
     df["window_frequency_ratio"] = df["window_frequency"] / n_windows
 
-    tfidf_mask = (
-        (df[tfidf_col] >= min_tfidf)  # remove very weak tokens
-        & (
-            df["window_frequency_ratio"] <= max_window_frequency_ratio
-        )  # remove overly generic tokens
-        & (df["min_support_count"] >= min_support_count)  # remove very rare tokens
-    )
+    tfidf_mask = (df[tfidf_col] >= min_tfidf) & (  # remove very weak tokens
+        df["window_frequency_ratio"] <= max_window_frequency_ratio
+    )  # remove overly generic tokens
 
     filtered_df = df.loc[tfidf_mask].copy()
 
     print(
-        "Removed ", (~tfidf_mask).sum(), " unstable candidates, kept ", tfidf_mask.sum()
+        "Removed",
+        df.loc[~tfidf_mask, "candidate"].nunique(),
+        "candidates, kept",
+        df.loc[tfidf_mask, "candidate"].nunique(),
     )
 
     return filtered_df
@@ -509,7 +532,7 @@ def compute_discriminative_power_metrics(
     This is for accurate estimation of how well a candidate can discriminate between benign and attack contexts, without being skewed by single-class windows where risk is not measurable.
     """
     out = df.copy()
-    
+
     # mark dual-class windows
     out["is_dual_class_window"] = out["n1"] > 0
 
@@ -596,6 +619,7 @@ def compute_discriminative_power_metrics(
 
     return out
 
+
 def filter_discriminative_candidates(
     df: pd.DataFrame,
     min_benign_prevalence: float = 0.01,
@@ -624,6 +648,7 @@ def filter_discriminative_candidates(
     )
 
     return filtered_df
+
 
 # -----------------------------------
 # Miners
@@ -680,6 +705,7 @@ def mine_candidates(
 
     return out.reset_index(drop=True), n0, n1
 
+
 # -----------------------------------
 # Window-based mining
 # -----------------------------------
@@ -688,7 +714,7 @@ def window_based_mining(
     run_name: str,
     counter: CountFunction,
     counter_kwargs: Optional[Dict[str, Any]] = None,
-    out_base: Optional[str] = None, 
+    out_base: Optional[str] = None,
     time_col: str = "timestamp",
     label_col: str = "y",
     window_size: str = "12H",
@@ -697,6 +723,11 @@ def window_based_mining(
 ):
     """
     Run mining over time windows for one precached scenario.
+
+    The selected counter determines which extra kwargs are used,
+    so the  the same mining can work for different counters such as:
+        - count_itemsets_eclat(tokens, y, ...)
+        - count_itemsets_matmul(tokens, y, X_tokens=..., vocab=..., ...)
 
     Returns:
         scenario_counts:
@@ -718,7 +749,15 @@ def window_based_mining(
     counts = []
     attack_flags = []
 
-    for start_k, end_k, meta_k, X_k, y_k, window_has_attack, vocab in iter_precached_windows(
+    for (
+        start_k,
+        end_k,
+        meta_k,
+        X_k,
+        y_k,
+        window_has_attack,
+        vocab,
+    ) in iter_precached_windows(
         scenario_name=scenario_name,
         run_name=run_name,
         out_base=out_base,
@@ -728,19 +767,35 @@ def window_based_mining(
         step_size=step_size,
         align_to=align_to,
     ):
-        
+
         print(f"Processing window {start_k} to {end_k}...")
 
         attack_flags.append(window_has_attack)
 
-        counter_kwargs_k = dict(counter_kwargs)
-        counter_kwargs_k["X_tokens"] = X_k
-        counter_kwargs_k["vocab"] = vocab
-
-        if "alert_id" in meta_k.columns:
+        # Choose row-level transactions
+        if "tokens" in meta_k.columns:
+            tokens_k = meta_k["tokens"].reset_index(drop=True)
+        elif "alert_id" in meta_k.columns:
             tokens_k = meta_k["alert_id"].astype(str).reset_index(drop=True)
         else:
-            tokens_k = pd.Series(range(len(meta_k)), index=meta_k.index)
+            tokens_k = pd.Series(range(len(meta_k))).reset_index(drop=True)
+
+        y_k = y_k.reset_index(drop=True)
+
+        # Build a superset of possible kwargs
+        counter_kwargs_k = dict(counter_kwargs)
+        counter_kwargs_k.update(
+            {
+                "X_tokens": X_k,
+                "vocab": vocab,
+                "meta_k": meta_k,
+                "start_k": start_k,
+                "end_k": end_k,
+            }
+        )
+
+        # Keep only what this counter accepts
+        counter_kwargs_k = _prepare_counter_kwargs(counter, counter_kwargs_k)
 
         counts_k = mine_candidates(
             tokens=tokens_k,
@@ -764,6 +819,7 @@ def window_based_mining(
 
     print(f"Completed mining for scenario '{scenario_name}'.")
     return scenario_counts, scenario_attack_flags
+
 
 def window_based_mining_old(
     df,
@@ -851,7 +907,7 @@ def window_based_mining_old(
             else:
                 if pd.notna(toks):
                     tok_acc[aid].add(str(toks))
-        
+
         # create cache key for this window
         counter_kwargs_k = dict(counter_kwargs)
         # counter_kwargs_k["cache_key"] = (
@@ -989,7 +1045,9 @@ def window_based_mining_mem(
 
         # Loop over all windows to do token mining
         for start_k, end_k, i in enumerate(windows):
-            print(f"Processing window {i} out of {len(windows)}: {start_k} to {end_k}...")
+            print(
+                f"Processing window {i} out of {len(windows)}: {start_k} to {end_k}..."
+            )
             # Get all alerts for the current window
             df_k, n_benign, n_attack, window_has_attack = get_window_df(
                 df_s, t_s, start_k, end_k

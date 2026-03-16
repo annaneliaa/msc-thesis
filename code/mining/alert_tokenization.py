@@ -1,59 +1,17 @@
 import pandas as pd
 import json
 import ast
-from typing import List
+from typing import List, Optional
 from util import make_time_windows
 from pathlib import Path 
-
+from scipy import sparse
+import numpy as np
+import os
 # -----------------------------------
 # Base token fields corresponding to labeled df columns, used for tokenization and candidate generation
 # -----------------------------------
-base_fields = [
-    # core alert context
-    "source",
-    "category_norm",
-    "rule_desc",
-    "alert_channel",
-    # decoder / pipeline
-    "decoder",
-    "decoder_parent",
-    "input_type",
-    "log_source_path",
-    # network context
-    "proto",
-    "srcport",
-    "dstport",
-    # wazuh
-    "wazuh_level",
-    "groups_str",
-    "rule_groups_json",
-    "rule_firedtimes", 
-    "rule_frequency",
-    "is_ids_alert",
-    "ids_signature",
-    "ids_category",
-    "ids_severity",
-    # mitre
-    "mitre_tactic",
-    "mitre_technique",
-    # host context
-    "procname",
-    "username",
-    # agent / infra
-    "agent_name",
-    "manager_name",
-    # aminer
-    "aminer_component_type",
-    "aminer_component_name",
-    "aminer_message",
-    "aminer_persistence_file",
-    "aminer_affected_paths",
-    "aminer_affected_values",
-    "aminer_log_resources",
-    "aminer_training_mode",
-    "aminer_new_event",
-]
-
+with open("../mining/base_fields.json", "r") as f:
+    base_fields = json.load(f) 
 
 # -----------------------------------
 # Tokenization
@@ -169,46 +127,36 @@ def tokenize_window(df_k):
     tokens.index = df_k.index  # align indexes for later merging with labels
     return tokens
 
-import os
-import json
-from typing import Optional, Tuple
-
-import numpy as np
-import pandas as pd
-from scipy import sparse
-
-
 def build_token_cache_for_scenario(
     df: pd.DataFrame,
     scenario_name: str,
-    id_col: str = "alert_id",
     time_col: str = "timestamp",
     sort_tokens: bool = True,
 ) -> tuple[pd.DataFrame, sparse.csr_matrix, pd.Index]:
     """
-    Build a scenario-level token cache.
+    Build a scenario-level token cache with ONE TRANSACTION PER INPUT ROW.
 
     This function:
     1. filters the dataframe to one scenario
     2. tokenizes all rows in that scenario
-    3. aggregates tokens to one row per alert_id
-    4. builds one sparse multi-hot matrix over all alerts in the scenario
+    3. keeps one cache row per original dataframe row
+    4. builds one sparse binary multi-hot matrix over all row-alerts
 
     Returns:
         meta_df:
-            DataFrame with one row per alert, containing:
-            - alert_id
+            DataFrame with one row per original input row, containing:
             - timestamp
             - scenario
             - y
             - event_label
             - attack_type
+            - alert_id (if present)
             - tokens (list[str])
 
             The row order of meta_df matches the row order of X_tokens_all.
 
         X_tokens_all:
-            scipy.sparse.csr_matrix of shape (n_alerts, n_tokens)
+            scipy.sparse.csr_matrix of shape (n_rows, n_tokens)
 
         vocab:
             pd.Index of token strings, aligned to the columns of X_tokens_all
@@ -219,66 +167,39 @@ def build_token_cache_for_scenario(
     if df_s.empty:
         raise ValueError(f"No rows found for scenario '{scenario_name}'")
 
-    df_s = df_s.sort_values(time_col).copy()
+    df_s[time_col] = pd.to_datetime(df_s[time_col])
+    df_s = df_s.sort_values(time_col).reset_index(drop=True)
 
-    # Tokenize at row level
+    # Tokenize each row independently
     tokens_s = tokenize_window(df_s)
     tokens_s.index = df_s.index
 
-    label_cols = ["y", "event_label", "attack_type"]
-    label_cols = [c for c in label_cols if c in df_s.columns]
-
-    label_acc = {c: {} for c in label_cols}
-
-    # Aggregate to one row per alert_id
-    tok_acc: dict[str, set[str]] = {}
-    ts_acc: dict[str, pd.Timestamp] = {}
-
-    for idx, row in df_s.iterrows():
-        aid = str(row[id_col])
-        ts = pd.to_datetime(row[time_col])
-        toks = tokens_s.loc[idx]
-
-        for c in label_cols:
-            if aid not in label_acc[c]:
-                label_acc[c][aid] = row[c]
-
-        if aid not in tok_acc:
-            tok_acc[aid] = set()
-            ts_acc[aid] = ts
-        else:
-            # keep earliest timestamp seen for that alert_id
-            if ts < ts_acc[aid]:
-                ts_acc[aid] = ts
-
-        if isinstance(toks, list):
-            tok_acc[aid].update(str(t) for t in toks if pd.notna(t))
-        elif pd.notna(toks):
-            tok_acc[aid].add(str(toks))
-
-    alert_ids = list(tok_acc.keys())
-
+    # Make sure every row becomes exactly one transaction
     token_lists = []
-    for aid in alert_ids:
-        toks = list(tok_acc[aid])
+    for toks in tokens_s:
+        if isinstance(toks, list):
+            # deduplicate within row so X is binary, not count-based
+            toks = list(set(str(t) for t in toks if pd.notna(t)))
+        elif pd.notna(toks):
+            toks = [str(toks)]
+        else:
+            toks = []
+
         if sort_tokens:
             toks = sorted(toks)
+
         token_lists.append(toks)
 
-    meta_dict = dict({
-            id_col: alert_ids,
-            time_col: [ts_acc[aid] for aid in alert_ids],
-            "scenario": scenario_name,
-            "tokens": token_lists,
-        }
-    )
+    # Build row-level metadata
+    meta_cols = [time_col, "scenario", "y", "event_label", "attack_type"]
+    if "alert_id" in df_s.columns:
+        meta_cols.append("alert_id")
 
-    for c in label_cols:
-        meta_dict[c] = [label_acc[c].get(aid) for aid in alert_ids]
+    meta_cols = [c for c in meta_cols if c in df_s.columns]
 
-    # alert_id | timestamp | scenario | y | event_label | attack_type | tokens
-    meta_df = pd.DataFrame(meta_dict)
-    meta_df = meta_df.sort_values(time_col).reset_index(drop=True)
+    meta_df = df_s[meta_cols].copy()
+    meta_df["tokens"] = token_lists
+    meta_df = meta_df.reset_index(drop=True)
 
     # Build vocabulary
     vocab_set = set()
@@ -288,15 +209,14 @@ def build_token_cache_for_scenario(
     vocab = pd.Index(sorted(vocab_set), name="token")
     token_to_col = {tok: j for j, tok in enumerate(vocab)}
 
-    # Build sparse matrix in CSR format
+    # Build sparse binary matrix
     row_idx = []
     col_idx = []
 
     for i, toks in enumerate(meta_df["tokens"]):
         for tok in toks:
-            j = token_to_col[tok]
             row_idx.append(i)
-            col_idx.append(j)
+            col_idx.append(token_to_col[tok])
 
     data = np.ones(len(row_idx), dtype=np.uint8)
 
@@ -305,10 +225,14 @@ def build_token_cache_for_scenario(
         shape=(len(meta_df), len(vocab)),
         dtype=np.uint8,
     )
-    
-    print("Token cache built: {} alerts, {} unique tokens".format(X_tokens_all.shape[0], X_tokens_all.shape[1]))
-    return meta_df, X_tokens_all, vocab
 
+    print(
+        "Token cache built: {} row-alerts, {} unique tokens".format(
+            X_tokens_all.shape[0], X_tokens_all.shape[1]
+        )
+    )
+
+    return meta_df, X_tokens_all, vocab
 
 def save_token_cache(
     meta_df: pd.DataFrame,
@@ -336,9 +260,9 @@ def save_token_cache(
         out_dir: directory where the cache was saved
     """
     if out_base is None:
-        # Compute relative to the project root (msc-thesis)
         out_base = str(Path(__file__).parents[2] / "out")
-        out_dir = os.path.join(out_base, run_name, "tokens", scenario_name)
+
+    out_dir = os.path.join(out_base, run_name, "tokens", scenario_name)
     os.makedirs(out_dir, exist_ok=True)
 
     print(f"Saving token cache for scenario '{scenario_name}' to disk...")
