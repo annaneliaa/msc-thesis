@@ -1,5 +1,5 @@
 *.zip
-data
+data/*
 *.json
 .DS_Store
 out

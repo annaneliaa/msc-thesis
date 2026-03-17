@@ -347,10 +347,10 @@ def compute_stability_metrics_over_windows(
 
     # per-window metrics
     df["benign_coverage"] = (df["c0"] / df["n0"].replace(0, pd.NA)).fillna(0.0)
-    df["risk"] = (df["c1"] / df["n1"].replace(0, pd.NA)).fillna(0.0)
+    df["attack_coverage"] = (df["c1"] / df["n1"].replace(0, pd.NA)).fillna(0.0)
     # simple score definition
     if score_col == "contrast_score":
-        df["score"] = df["benign_coverage"] - df["risk"]
+        df["score"] = df["benign_coverage"] - df["attack_coverage"]
     else:
         raise ValueError(f"Unsupported score_col: {score_col}")
 
@@ -821,376 +821,376 @@ def window_based_mining(
     return scenario_counts, scenario_attack_flags
 
 
-def window_based_mining_old(
-    df,
-    scenario_name: str,
-    run_name: str,
-    counter: CountFunction,
-    counter_kwargs: Optional[Dict[str, Any]] = None,
-    min_support: int = 1,
-):
-    """
-    Single-scenario window-based mining.
-
-    Returns:
-        scenario_rankings: dict
-            {scenario_name: [ranking_df_per_window, ...]}
-
-        scenario_attack_flags: dict
-            {scenario_name: [window_has_attack, ...]}
-
-        scenario_memory: dict
-            Kept for interface consistency with the memory version.
-            Contains score_trace and active_trace, but mem_trace stays empty.
-    """
-    dataframe = df.copy()
-
-    if counter_kwargs is None:
-        counter_kwargs = {}
-
-    # clear old outputs for this run
-    shutil.rmtree(f"../out/{run_name}/tokens", ignore_errors=True)
-    shutil.rmtree(f"../out/{run_name}/rankings", ignore_errors=True)
-
-    scenario_counts = {}
-    scenario_attack_flags = {}
-
-    # keep only the requested scenario
-    df_s = dataframe[dataframe["scenario"] == scenario_name].copy()
-    print(f"Running mining for scenario {scenario_name}....")
-
-    if df_s.empty:
-        raise ValueError(f"No rows found for scenario '{scenario_name}'")
-
-    counts, attack_flags = [], []
-
-    # sort and create windows
-    df_s = df_s.sort_values("timestamp")
-    t_s = df_s["timestamp"]
-    windows = make_time_windows(t_s, window_size="12H", step_size="12H", align_to="h")
-
-    # prepare token output files
-    out_dir = f"../out/{run_name}/tokens/{scenario_name}"
-    os.makedirs(out_dir, exist_ok=True)
-
-    tok_path = os.path.join(out_dir, "tokens.csv")
-    xtok_path = os.path.join(out_dir, "X_tokens.csv")
-
-    if os.path.exists(tok_path):
-        os.remove(tok_path)
-    if os.path.exists(xtok_path):
-        os.remove(xtok_path)
-
-    # collect tokens per alert over the full scenario
-    tok_acc = {}
-
-    # loop over windows
-    for start_k, end_k in windows:
-        df_k, n_benign, n_attack, window_has_attack = get_window_df(
-            df_s, t_s, start_k, end_k
-        )
-        if df_k is None:
-            continue
-
-        attack_flags.append(window_has_attack)
-
-        # tokenize alerts in this window
-        tokens_k = tokenize_window(df_k)
-
-        # accumulate tokens per alert_id
-        for aid, toks in zip(df_k["alert_id"].astype(str).values, tokens_k.values):
-            if aid not in tok_acc:
-                tok_acc[aid] = set()
-
-            if isinstance(toks, list):
-                tok_acc[aid].update(toks)
-            else:
-                if pd.notna(toks):
-                    tok_acc[aid].add(str(toks))
-
-        # create cache key for this window
-        counter_kwargs_k = dict(counter_kwargs)
-        # counter_kwargs_k["cache_key"] = (
-        #     f"{scenario_name}_{start_k.strftime('%Y%m%d_%H%M%S')}_{end_k.strftime('%Y%m%d_%H%M%S')}"
-        # )
-
-        # mine candidates in this window
-        counts_k = mine_candidates(
-            tokens=tokens_k,
-            y=df_k["y"],
-            counter=counter,
-            counter_kwargs=counter_kwargs_k,
-        )
-
-        counts.append(counts_k)
-
-    # save scenario-wide deduplicated tokens
-    tok_df_all = pd.DataFrame(
-        {
-            "alert_id": list(tok_acc.keys()),
-            "tokens": [sorted(list(s)) for s in tok_acc.values()],
-        }
-    )
-
-    tok_df_all.to_csv(tok_path, index=False)
-
-    X_tokens_all = (
-        tok_df_all.set_index("alert_id")["tokens"]
-        .apply(lambda L: "|".join(L))
-        .str.get_dummies(sep="|")
-    )
-    X_tokens_all.to_csv(xtok_path)
-
-    print(
-        scenario_name,
-        "unique ids df:",
-        df_s["alert_id"].astype(str).nunique(),
-        "unique ids tok:",
-        tok_df_all["alert_id"].nunique(),
-    )
-
-    scenario_counts[scenario_name] = counts
-    scenario_attack_flags[scenario_name] = attack_flags
-
-    return scenario_counts, scenario_attack_flags
-
-
-def window_based_mining_mem(
-    df,
-    run_name: str,
-    scorer: ScoreFunction,
-    counter: CountFunction,
-    counter_kwargs: Optional[Dict[str, Any]] = None,
-    min_support: int = 50,
-    use_memory: bool = True,
-    mem_lambda: float = 1.0,
-    mem_beta: float = 0.1,
-    top_cov: int = 50,
-    top_risk: int = 50,
-    utility_threshold: float = 0.0,
-    active_top_k: Optional[int] = None,
-):
-    """
-    Run windowed token/itemset mining per scenario with optional symbolic memory.
-
-    For each scenario:
-    - Split alerts into sliding time windows.
-    - Mine candidates using the provided counter and scorer.
-    - Optionally re-rank candidates using symbolic memory from previous windows.
-    - Update memory based on top coverage/risk candidates in the current window.
-    - Track per-window rankings, attack presence, utility trajectories, and active sets.
-
-    Returns:
-        scenario_rankings: dict
-            scenario -> list of per-window ranking DataFrames. # current view
-
-        scenario_attack_flags: dict
-            scenario -> list of booleans indicating whether each window contains attacks. # single class window or not
-
-        scenario_memory: dict
-            scenario -> {
-                "mem_trace": memory state snapshots per window,
-                "utility_trace": per-window candidate utility values,
-                "active_trace": per-window active candidate sets # what the miner proposes for symbolic features
-            }
-    """
-
-    dataframe = df.copy()
-
-    if counter_kwargs is None:
-        counter_kwargs = {}
-
-    # clear old outputs for this run to avoid mixing/appending stale ids
-    shutil.rmtree(f"../out/{run_name}/tokens", ignore_errors=True)
-    shutil.rmtree(f"../out/{run_name}/rankings", ignore_errors=True)
-
-    scenario_rankings = {}
-    scenario_attack_flags = {}
-
-    # This dict will store information about the full mining run for scenario S
-    scenario_memory = {}
-
-    for scenario, df_s in dataframe.groupby("scenario", sort=False):
-        print(f"Running mining for scenario {scenario}....")
-
-        # Initialize memories for coverage and risk scores of mined candidates
-        cov_mem = SymbolicMemory() if use_memory else None
-        risk_mem = SymbolicMemory() if use_memory else None
-
-        rankings, attack_flags = [], []
-        mem_trace, score_trace, active_trace = [], [], []
-
-        # Split up the dataset for scenario S according to time windows
-        df_s = df_s.sort_values("timestamp")
-        t_s = df_s["timestamp"]
-        windows = make_time_windows(
-            t_s, window_size="12H", step_size="12H", align_to="h"
-        )
-
-        # reset per-scenario token outputs so we don't append across reruns
-        out_dir = f"../out/{run_name}/tokens/{scenario}"
-        os.makedirs(out_dir, exist_ok=True)
-        tok_path = os.path.join(out_dir, "tokens.csv")
-        xtok_path = os.path.join(out_dir, "X_tokens.csv")
-        if os.path.exists(tok_path):
-            os.remove(tok_path)
-        if os.path.exists(xtok_path):
-            os.remove(xtok_path)
-
-        tok_acc = (
-            {}
-        )  # accumulator for tokens in the scenario, to compute global frequencies if needed
-        out_dir = f"../out/{run_name}/tokens/{scenario}"
-        os.makedirs(out_dir, exist_ok=True)
-
-        # Loop over all windows to do token mining
-        for start_k, end_k, i in enumerate(windows):
-            print(
-                f"Processing window {i} out of {len(windows)}: {start_k} to {end_k}..."
-            )
-            # Get all alerts for the current window
-            df_k, n_benign, n_attack, window_has_attack = get_window_df(
-                df_s, t_s, start_k, end_k
-            )
-            if df_k is None:
-                continue
-
-            # Check if we are in a single class window
-            attack_flags.append(window_has_attack)
-
-            # Convert all alerts in window to list-of-tokens representation
-            tokens_k = tokenize_window(df_k)  # Series indexed like df_k
-
-            # accumulate (union) tokens per alert_id
-            for aid, toks in zip(df_k["alert_id"].astype(str).values, tokens_k.values):
-                if aid not in tok_acc:
-                    # For each new alert ID create a new empty set to store unique tokens
-                    tok_acc[aid] = set()
-                if isinstance(toks, list):
-                    # If toks is a list, add all token in the list to the set for that alert ID
-                    tok_acc[aid].update(toks)
-                else:
-                    # If toks is a single value, convert token to string and add to the set for that alert ID
-                    tok_acc[aid].add(str(toks)) if pd.notna(toks) else None
-
-            # Mining step on all alerts in window returns a ranking of candidates according to scoring mechanism used
-            ranking_k = mine_candidates(
-                tokens=tokens_k,
-                y=df_k["y"],
-                scorer=scorer,
-                counter=counter,
-                counter_kwargs=counter_kwargs,
-                top_k=None,
-                min_support=min_support,
-            )
-
-            # Compute contrast score post hoc (contrast = coverage - risk)
-            if {"coverage", "risk"}.issubset(ranking_k.columns):
-                ranking_k["contrast_score"] = ranking_k["coverage"] - ranking_k[
-                    "risk"
-                ].fillna(0.0)
-
-            # Apply a reranking of the proposed candidates using coverage and risk scores in memory rerank
-            # Evaluate candidates in window k using windows [0...k-1)]
-            if use_memory:
-                # Compute memory score for each
-                ranking_k = compute_memory_scores(
-                    ranking_k, cov_mem, risk_mem, mem_lambda=mem_lambda
-                )
-
-                ranking_k = apply_utility_rerank(
-                    ranking_k,
-                    mem_beta=mem_beta,
-                )
-
-            # Choose metric that we want to base activation of a candidate on
-            # If useMem = False, system will use only the raw scores of candidates in window k
-            util_col = "combined_score" if use_memory else "contrast_score"
-            if util_col not in ranking_k.columns:
-                raise KeyError(
-                    f"Expected '{util_col}' in ranking_k columns, got: {list(ranking_k.columns)}"
-                )
-
-            # Option here to store different types of scores (now utility score and contrast score)
-            cols_to_store = ["candidate", util_col]
-
-            score_trace.append(
-                {
-                    "start": start_k,
-                    "end": end_k,
-                    "score_col": util_col,
-                    "values": ranking_k[cols_to_store].copy(),
-                }
-            )
-
-            # TODO: check for adding removal from active set here
-            # compute active set
-            if active_top_k is not None:
-                active_set = ranking_k.nlargest(active_top_k, util_col)[
-                    "candidate"
-                ].tolist()
-            else:
-                active_set = ranking_k.loc[
-                    ranking_k[util_col] > utility_threshold, "candidate"
-                ].tolist()
-
-            active_trace.append(
-                {
-                    "start": start_k,
-                    "end": end_k,
-                    "utility_col": util_col,
-                    "active_candidates": active_set,
-                }
-            )
-
-            rankings.append(ranking_k)
-
-            # Update memory with new scores for each candidate
-            if use_memory:
-                snap = update_memories_and_snapshot(
-                    ranking_k=ranking_k,
-                    cov_mem=cov_mem,
-                    risk_mem=risk_mem,
-                    n_benign=n_benign,
-                    window_has_attack=window_has_attack,
-                    start_k=start_k,
-                    end_k=end_k,
-                    top_cov=top_cov,
-                    top_risk=top_risk,
-                )
-                mem_trace.append(snap)
-
-        tok_df_all = pd.DataFrame(
-            {
-                "alert_id": list(tok_acc.keys()),
-                "tokens": [sorted(list(s)) for s in tok_acc.values()],
-            }
-        )
-
-        # overwrite tokens.csv with the scenario-wide, de-duplicated version (recommended)
-        tok_df_all.to_csv(tok_path, index=False)
-
-        X_tokens_all = (
-            tok_df_all.set_index("alert_id")["tokens"]
-            .apply(lambda L: "|".join(L))
-            .str.get_dummies(sep="|")
-        )
-        X_tokens_all.to_csv(xtok_path)
-
-        print(
-            scenario,
-            "unique ids df:",
-            df_s["alert_id"].astype(str).nunique(),
-            "unique ids tok:",
-            tok_df_all["alert_id"].nunique(),
-        )
-
-        scenario_rankings[scenario] = rankings
-        scenario_attack_flags[scenario] = attack_flags
-        scenario_memory[scenario] = {
-            "mem_trace": mem_trace,
-            "score_trace": score_trace,
-            "active_trace": active_trace,
-        }
-
-    return scenario_rankings, scenario_attack_flags, scenario_memory
+# def window_based_mining_old(
+#     df,
+#     scenario_name: str,
+#     run_name: str,
+#     counter: CountFunction,
+#     counter_kwargs: Optional[Dict[str, Any]] = None,
+#     min_support: int = 1,
+# ):
+#     """
+#     Single-scenario window-based mining.
+
+#     Returns:
+#         scenario_rankings: dict
+#             {scenario_name: [ranking_df_per_window, ...]}
+
+#         scenario_attack_flags: dict
+#             {scenario_name: [window_has_attack, ...]}
+
+#         scenario_memory: dict
+#             Kept for interface consistency with the memory version.
+#             Contains score_trace and active_trace, but mem_trace stays empty.
+#     """
+#     dataframe = df.copy()
+
+#     if counter_kwargs is None:
+#         counter_kwargs = {}
+
+#     # clear old outputs for this run
+#     shutil.rmtree(f"../out/{run_name}/tokens", ignore_errors=True)
+#     shutil.rmtree(f"../out/{run_name}/rankings", ignore_errors=True)
+
+#     scenario_counts = {}
+#     scenario_attack_flags = {}
+
+#     # keep only the requested scenario
+#     df_s = dataframe[dataframe["scenario"] == scenario_name].copy()
+#     print(f"Running mining for scenario {scenario_name}....")
+
+#     if df_s.empty:
+#         raise ValueError(f"No rows found for scenario '{scenario_name}'")
+
+#     counts, attack_flags = [], []
+
+#     # sort and create windows
+#     df_s = df_s.sort_values("timestamp")
+#     t_s = df_s["timestamp"]
+#     windows = make_time_windows(t_s, window_size="12H", step_size="12H", align_to="h")
+
+#     # prepare token output files
+#     out_dir = f"../out/{run_name}/tokens/{scenario_name}"
+#     os.makedirs(out_dir, exist_ok=True)
+
+#     tok_path = os.path.join(out_dir, "tokens.csv")
+#     xtok_path = os.path.join(out_dir, "X_tokens.csv")
+
+#     if os.path.exists(tok_path):
+#         os.remove(tok_path)
+#     if os.path.exists(xtok_path):
+#         os.remove(xtok_path)
+
+#     # collect tokens per alert over the full scenario
+#     tok_acc = {}
+
+#     # loop over windows
+#     for start_k, end_k in windows:
+#         df_k, n_benign, n_attack, window_has_attack = get_window_df(
+#             df_s, t_s, start_k, end_k
+#         )
+#         if df_k is None:
+#             continue
+
+#         attack_flags.append(window_has_attack)
+
+#         # tokenize alerts in this window
+#         tokens_k = tokenize_window(df_k)
+
+#         # accumulate tokens per alert_id
+#         for aid, toks in zip(df_k["alert_id"].astype(str).values, tokens_k.values):
+#             if aid not in tok_acc:
+#                 tok_acc[aid] = set()
+
+#             if isinstance(toks, list):
+#                 tok_acc[aid].update(toks)
+#             else:
+#                 if pd.notna(toks):
+#                     tok_acc[aid].add(str(toks))
+
+#         # create cache key for this window
+#         counter_kwargs_k = dict(counter_kwargs)
+#         # counter_kwargs_k["cache_key"] = (
+#         #     f"{scenario_name}_{start_k.strftime('%Y%m%d_%H%M%S')}_{end_k.strftime('%Y%m%d_%H%M%S')}"
+#         # )
+
+#         # mine candidates in this window
+#         counts_k = mine_candidates(
+#             tokens=tokens_k,
+#             y=df_k["y"],
+#             counter=counter,
+#             counter_kwargs=counter_kwargs_k,
+#         )
+
+#         counts.append(counts_k)
+
+#     # save scenario-wide deduplicated tokens
+#     tok_df_all = pd.DataFrame(
+#         {
+#             "alert_id": list(tok_acc.keys()),
+#             "tokens": [sorted(list(s)) for s in tok_acc.values()],
+#         }
+#     )
+
+#     tok_df_all.to_csv(tok_path, index=False)
+
+#     X_tokens_all = (
+#         tok_df_all.set_index("alert_id")["tokens"]
+#         .apply(lambda L: "|".join(L))
+#         .str.get_dummies(sep="|")
+#     )
+#     X_tokens_all.to_csv(xtok_path)
+
+#     print(
+#         scenario_name,
+#         "unique ids df:",
+#         df_s["alert_id"].astype(str).nunique(),
+#         "unique ids tok:",
+#         tok_df_all["alert_id"].nunique(),
+#     )
+
+#     scenario_counts[scenario_name] = counts
+#     scenario_attack_flags[scenario_name] = attack_flags
+
+#     return scenario_counts, scenario_attack_flags
+
+
+# def window_based_mining_mem(
+#     df,
+#     run_name: str,
+#     scorer: ScoreFunction,
+#     counter: CountFunction,
+#     counter_kwargs: Optional[Dict[str, Any]] = None,
+#     min_support: int = 50,
+#     use_memory: bool = True,
+#     mem_lambda: float = 1.0,
+#     mem_beta: float = 0.1,
+#     top_cov: int = 50,
+#     top_risk: int = 50,
+#     utility_threshold: float = 0.0,
+#     active_top_k: Optional[int] = None,
+# ):
+#     """
+#     Run windowed token/itemset mining per scenario with optional symbolic memory.
+
+#     For each scenario:
+#     - Split alerts into sliding time windows.
+#     - Mine candidates using the provided counter and scorer.
+#     - Optionally re-rank candidates using symbolic memory from previous windows.
+#     - Update memory based on top coverage/risk candidates in the current window.
+#     - Track per-window rankings, attack presence, utility trajectories, and active sets.
+
+#     Returns:
+#         scenario_rankings: dict
+#             scenario -> list of per-window ranking DataFrames. # current view
+
+#         scenario_attack_flags: dict
+#             scenario -> list of booleans indicating whether each window contains attacks. # single class window or not
+
+#         scenario_memory: dict
+#             scenario -> {
+#                 "mem_trace": memory state snapshots per window,
+#                 "utility_trace": per-window candidate utility values,
+#                 "active_trace": per-window active candidate sets # what the miner proposes for symbolic features
+#             }
+#     """
+
+#     dataframe = df.copy()
+
+#     if counter_kwargs is None:
+#         counter_kwargs = {}
+
+#     # clear old outputs for this run to avoid mixing/appending stale ids
+#     shutil.rmtree(f"../out/{run_name}/tokens", ignore_errors=True)
+#     shutil.rmtree(f"../out/{run_name}/rankings", ignore_errors=True)
+
+#     scenario_rankings = {}
+#     scenario_attack_flags = {}
+
+#     # This dict will store information about the full mining run for scenario S
+#     scenario_memory = {}
+
+#     for scenario, df_s in dataframe.groupby("scenario", sort=False):
+#         print(f"Running mining for scenario {scenario}....")
+
+#         # Initialize memories for coverage and risk scores of mined candidates
+#         cov_mem = SymbolicMemory() if use_memory else None
+#         risk_mem = SymbolicMemory() if use_memory else None
+
+#         rankings, attack_flags = [], []
+#         mem_trace, score_trace, active_trace = [], [], []
+
+#         # Split up the dataset for scenario S according to time windows
+#         df_s = df_s.sort_values("timestamp")
+#         t_s = df_s["timestamp"]
+#         windows = make_time_windows(
+#             t_s, window_size="12H", step_size="12H", align_to="h"
+#         )
+
+#         # reset per-scenario token outputs so we don't append across reruns
+#         out_dir = f"../out/{run_name}/tokens/{scenario}"
+#         os.makedirs(out_dir, exist_ok=True)
+#         tok_path = os.path.join(out_dir, "tokens.csv")
+#         xtok_path = os.path.join(out_dir, "X_tokens.csv")
+#         if os.path.exists(tok_path):
+#             os.remove(tok_path)
+#         if os.path.exists(xtok_path):
+#             os.remove(xtok_path)
+
+#         tok_acc = (
+#             {}
+#         )  # accumulator for tokens in the scenario, to compute global frequencies if needed
+#         out_dir = f"../out/{run_name}/tokens/{scenario}"
+#         os.makedirs(out_dir, exist_ok=True)
+
+#         # Loop over all windows to do token mining
+#         for start_k, end_k, i in enumerate(windows):
+#             print(
+#                 f"Processing window {i} out of {len(windows)}: {start_k} to {end_k}..."
+#             )
+#             # Get all alerts for the current window
+#             df_k, n_benign, n_attack, window_has_attack = get_window_df(
+#                 df_s, t_s, start_k, end_k
+#             )
+#             if df_k is None:
+#                 continue
+
+#             # Check if we are in a single class window
+#             attack_flags.append(window_has_attack)
+
+#             # Convert all alerts in window to list-of-tokens representation
+#             tokens_k = tokenize_window(df_k)  # Series indexed like df_k
+
+#             # accumulate (union) tokens per alert_id
+#             for aid, toks in zip(df_k["alert_id"].astype(str).values, tokens_k.values):
+#                 if aid not in tok_acc:
+#                     # For each new alert ID create a new empty set to store unique tokens
+#                     tok_acc[aid] = set()
+#                 if isinstance(toks, list):
+#                     # If toks is a list, add all token in the list to the set for that alert ID
+#                     tok_acc[aid].update(toks)
+#                 else:
+#                     # If toks is a single value, convert token to string and add to the set for that alert ID
+#                     tok_acc[aid].add(str(toks)) if pd.notna(toks) else None
+
+#             # Mining step on all alerts in window returns a ranking of candidates according to scoring mechanism used
+#             ranking_k = mine_candidates(
+#                 tokens=tokens_k,
+#                 y=df_k["y"],
+#                 scorer=scorer,
+#                 counter=counter,
+#                 counter_kwargs=counter_kwargs,
+#                 top_k=None,
+#                 min_support=min_support,
+#             )
+
+#             # Compute contrast score post hoc (contrast = coverage - risk)
+#             if {"coverage", "risk"}.issubset(ranking_k.columns):
+#                 ranking_k["contrast_score"] = ranking_k["coverage"] - ranking_k[
+#                     "risk"
+#                 ].fillna(0.0)
+
+#             # Apply a reranking of the proposed candidates using coverage and risk scores in memory rerank
+#             # Evaluate candidates in window k using windows [0...k-1)]
+#             if use_memory:
+#                 # Compute memory score for each
+#                 ranking_k = compute_memory_scores(
+#                     ranking_k, cov_mem, risk_mem, mem_lambda=mem_lambda
+#                 )
+
+#                 ranking_k = apply_utility_rerank(
+#                     ranking_k,
+#                     mem_beta=mem_beta,
+#                 )
+
+#             # Choose metric that we want to base activation of a candidate on
+#             # If useMem = False, system will use only the raw scores of candidates in window k
+#             util_col = "combined_score" if use_memory else "contrast_score"
+#             if util_col not in ranking_k.columns:
+#                 raise KeyError(
+#                     f"Expected '{util_col}' in ranking_k columns, got: {list(ranking_k.columns)}"
+#                 )
+
+#             # Option here to store different types of scores (now utility score and contrast score)
+#             cols_to_store = ["candidate", util_col]
+
+#             score_trace.append(
+#                 {
+#                     "start": start_k,
+#                     "end": end_k,
+#                     "score_col": util_col,
+#                     "values": ranking_k[cols_to_store].copy(),
+#                 }
+#             )
+
+#             # TODO: check for adding removal from active set here
+#             # compute active set
+#             if active_top_k is not None:
+#                 active_set = ranking_k.nlargest(active_top_k, util_col)[
+#                     "candidate"
+#                 ].tolist()
+#             else:
+#                 active_set = ranking_k.loc[
+#                     ranking_k[util_col] > utility_threshold, "candidate"
+#                 ].tolist()
+
+#             active_trace.append(
+#                 {
+#                     "start": start_k,
+#                     "end": end_k,
+#                     "utility_col": util_col,
+#                     "active_candidates": active_set,
+#                 }
+#             )
+
+#             rankings.append(ranking_k)
+
+#             # Update memory with new scores for each candidate
+#             if use_memory:
+#                 snap = update_memories_and_snapshot(
+#                     ranking_k=ranking_k,
+#                     cov_mem=cov_mem,
+#                     risk_mem=risk_mem,
+#                     n_benign=n_benign,
+#                     window_has_attack=window_has_attack,
+#                     start_k=start_k,
+#                     end_k=end_k,
+#                     top_cov=top_cov,
+#                     top_risk=top_risk,
+#                 )
+#                 mem_trace.append(snap)
+
+#         tok_df_all = pd.DataFrame(
+#             {
+#                 "alert_id": list(tok_acc.keys()),
+#                 "tokens": [sorted(list(s)) for s in tok_acc.values()],
+#             }
+#         )
+
+#         # overwrite tokens.csv with the scenario-wide, de-duplicated version (recommended)
+#         tok_df_all.to_csv(tok_path, index=False)
+
+#         X_tokens_all = (
+#             tok_df_all.set_index("alert_id")["tokens"]
+#             .apply(lambda L: "|".join(L))
+#             .str.get_dummies(sep="|")
+#         )
+#         X_tokens_all.to_csv(xtok_path)
+
+#         print(
+#             scenario,
+#             "unique ids df:",
+#             df_s["alert_id"].astype(str).nunique(),
+#             "unique ids tok:",
+#             tok_df_all["alert_id"].nunique(),
+#         )
+
+#         scenario_rankings[scenario] = rankings
+#         scenario_attack_flags[scenario] = attack_flags
+#         scenario_memory[scenario] = {
+#             "mem_trace": mem_trace,
+#             "score_trace": score_trace,
+#             "active_trace": active_trace,
+#         }
+
+#     return scenario_rankings, scenario_attack_flags, scenario_memory

@@ -234,6 +234,7 @@ def build_symbolic_features_from_candidates(
     X_sym = X_sym[keep]
 
     return X_sym
+
 def build_symbolic_features_from_candidates_cached(
     df_used: pd.DataFrame,
     surviving_candidates_df: pd.DataFrame,
