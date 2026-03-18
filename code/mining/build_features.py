@@ -2,9 +2,9 @@ import pandas as pd
 import numpy as np
 from collections import deque, defaultdict
 
-# from mining.symbolic_features import build_symbolic_features_from_tokens
-
-
+# -----------------------------------
+# Helpers
+# -----------------------------------
 def normalize_groups(x):
     if isinstance(x, list):
         return [str(g).lower() for g in x]
@@ -15,6 +15,9 @@ def normalize_groups(x):
         return [g.strip().strip("'\"").lower() for g in s.split(",") if g.strip()]
     return []
 
+# -----------------------------------
+# Static features
+# -----------------------------------
 # written to mimic AACT baseline
 def build_static_features(df):
     df = df.copy()
@@ -147,7 +150,9 @@ def build_static_features(df):
 
 #     return X_static
 
-
+# -----------------------------------
+# Dynamic features
+# -----------------------------------
 def build_dyn_features(df, window_size):
     df = df.copy()
     df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
@@ -221,10 +226,50 @@ def build_dyn_features(df, window_size):
 
     return X, y, df
 
-
+# -----------------------------------
+# Symbolic features
+# -----------------------------------
 # def build_sym_features(df, run_name, scenario_name):
 #     return build_symbolic_features_from_tokens(
 #         df_used=df,
 #         scenario=scenario_name,
 #         run_name=run_name,
 #     )
+
+# -----------------------------------
+# Behavioral features
+# -----------------------------------
+def add_behavioral_features(df, time_col="timestamp", src_col="srcip", dst_col="dstip"):
+    """
+    Adds window-relative behavioral features (counts + bins) to df:
+    - src_freq_bin: activity level of a source within the current window
+    - dst_fanin_bin: number of unique sources per destination within the window
+    - src_fanout_bin: number of unique destinations per source within the window
+    """
+    df = df.copy()
+
+    src_counts = df[src_col].value_counts()
+    df["count_src_window"] = df[src_col].map(src_counts)
+    df["src_freq_bin"] = pd.cut(
+        df["count_src_window"],
+        bins=[-1, 5, 20, 100, float("inf")],
+        labels=["low", "medium", "high", "very_high"],
+    )
+
+    fan_in = df.groupby(dst_col)[src_col].nunique()
+    df["unique_src_per_dst"] = df[dst_col].map(fan_in)
+    df["dst_fanin_bin"] = pd.cut(
+        df["unique_src_per_dst"],
+        bins=[-1, 3, 10, 50, float("inf")],
+        labels=["low", "medium", "high", "very_high"],
+    )
+
+    fan_out = df.groupby(src_col)[dst_col].nunique(dropna=False)
+    df["unique_dst_per_src"] = df[src_col].map(fan_out)
+    df["src_fanout_bin"] = pd.cut(
+        df["unique_dst_per_src"],
+        bins=[-1, 3, 10, 50, float("inf")],
+        labels=["low", "medium", "high", "very_high"],
+    )
+
+    return df

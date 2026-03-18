@@ -1,0 +1,34 @@
+metrics to add to count dataframe (output of the counting step of mining that returns c0, c1, n0, n1):
+
+counts_df:
+c0
+c1
+n0
+n1
+count_total (n0 + n1 in current window)
+window_id
+
+metrics:
+benign_prevalence (per window, c0 / n0)
+avg_benign_prevalence (across all benign only windows)
+n_benign_only_windows (where the candidate appears)
+
+attack_prevalence (per window, c1 / n1)
+avg_attack_prevalence (across all dual class windows, we assume no attack only windows)
+n_attack_only_windows (where the candidate appears)
+
+n_validation_windows (# of dual class winows used for validation)
+n_risky_windows (# windows where attack attack_prevalence > benign prevalence, where we take the prevalences of that window only?)
+risky_window_ratio (fraction of validation windows where the candidate was risky)
+
+mean_contrast_score (for the candidate, in the current validation window, take avg of (avg_benign_prevalence - attack prevalence)
+min_contrast score (worst case contrast score as computed above)
+
+c0_total_validation (total benign occurrences (c0) across validation windows)
+c1_total_validation (total attack occurrences (c1) across validation windows)
+
+tf
+idf
+tfidf
+mean_tfidf
+min_tfidf

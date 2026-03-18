@@ -320,7 +320,7 @@ def plot_symbolic_score_shift(
 # function that plots score-shifts separately for true attacks (y=1) and benign (y=0)
 # within the same symbolic subset (feature=1) on the test split
 def plot_symbolic_score_shift_by_label(
-    X_full, y, res_base, res_sym, feature, out_dir="../plots", prefix="", bins=30
+    X_full, y, res_base, res_sym, feature, out_dir="plots", prefix="", bins=30
 ):
     out_dir = _ensure_dir(out_dir)
 
