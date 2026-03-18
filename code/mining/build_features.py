@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 from collections import deque, defaultdict
 
-from mining.symbolic_features import build_symbolic_features_from_tokens
+# from mining.symbolic_features import build_symbolic_features_from_tokens
 
 
 def normalize_groups(x):
@@ -222,9 +222,9 @@ def build_dyn_features(df, window_size):
     return X, y, df
 
 
-def build_sym_features(df, run_name, scenario_name):
-    return build_symbolic_features_from_tokens(
-        df_used=df,
-        scenario=scenario_name,
-        run_name=run_name,
-    )
+# def build_sym_features(df, run_name, scenario_name):
+#     return build_symbolic_features_from_tokens(
+#         df_used=df,
+#         scenario=scenario_name,
+#         run_name=run_name,
+#     )

@@ -3,60 +3,15 @@ import ast
 import json
 from glob import glob
 import pandas as pd
-from mining.alert_tokenization import tokenize_window
-
-
-def _parse_tokens_cell(x):
-    """Parse a tokens cell from CSV (list[str] stored as json or python literal or delimited string)."""
-    if x is None or (isinstance(x, float) and pd.isna(x)):
-        return []
-    if isinstance(x, list):
-        return [str(t) for t in x]
-
-    s = str(x).strip()
-    if not s:
-        return []
-
-    # JSON list
-    if s.startswith("[") and s.endswith("]"):
-        # try JSON then python literal
-        try:
-            v = json.loads(s)
-            if isinstance(v, list):
-                return [str(t) for t in v]
-        except Exception:
-            try:
-                v = ast.literal_eval(s)
-                if isinstance(v, list):
-                    return [str(t) for t in v]
-            except Exception:
-                pass
-
-    # fallback: pipe-separated tokens
-    if "|" in s:
-        return [t for t in s.split("|") if t]
-
-    # single token
-    return [s]
-
-
-# def _candidate_to_tokens(candidate_str: str) -> list[str]:
-#     """Turn 'tokA&tokB' or 'tokA & tokB' into ['tokA','tokB']."""
-#     if candidate_str is None or (
-#         isinstance(candidate_str, float) and pd.isna(candidate_str)
-#     ):
-#         return []
-#     s = str(candidate_str).strip()
-#     if not s:
-#         return []
-#     # normalize separators
-#     s = s.replace(" & ", "&")
-#     # if your formatter ever uses commas, OR, etc, extend here
-#     toks = [t.strip() for t in s.split("&") if t.strip()]
-#     return toks
-
+import numpy as np
+from pathlib import Path
+from typing import Optional
+from scipy import sparse
 
 def _candidate_to_tokens(candidate_str: str) -> list[str]:
+    """
+    Turn 'tokA&tokB' or 'tokA & tokB' into ['tokA','tokB'].
+    """
     if candidate_str is None or (
         isinstance(candidate_str, float) and pd.isna(candidate_str)
     ):
@@ -77,540 +32,193 @@ def normalize_token(t: str) -> str:
     t = str(t).strip()
     return t
 
+def _load_vocab_token_to_col(vocab_path: str) -> dict[str, int]:
+    with open(vocab_path, "r", encoding="utf-8") as f:
+        vocab_raw = json.load(f)
 
-def build_symbolic_features_from_tokens(
+    if isinstance(vocab_raw, dict):
+        return {str(k): int(v) for k, v in vocab_raw.items()}
+    if isinstance(vocab_raw, list):
+        return {str(tok): i for i, tok in enumerate(vocab_raw)}
+
+    raise TypeError(f"Unsupported vocab format: {type(vocab_raw)}")
+
+
+def _ensure_meta_tx_id(meta_df: pd.DataFrame, tx_col: str) -> pd.DataFrame:
+    meta_df = meta_df.copy()
+    if tx_col not in meta_df.columns:
+        meta_df = meta_df.reset_index(drop=True)
+        meta_df.insert(0, tx_col, np.arange(len(meta_df), dtype=np.int64))
+    return meta_df
+
+
+def _attach_tx_id_from_meta(
     df_used: pd.DataFrame,
-    scenario: str,
-    run_name: str,
-    tokens_dir: str = "../out/ait_ads/tokens",
-    rankings_dir: str = "../out/ait_ads/rankings",
-    tokens_glob: str = "tokens.csv",  #  saved token files
-    stable_filename: str | None = None,
-    top_n: int | None = None,
-    min_fires: int = 1,  # drop features that never fire
-    id_col: str = "alert_id",
+    meta_df: pd.DataFrame,
+    id_col: str,
+    tx_col: str,
 ) -> pd.DataFrame:
-    """
-    Build mined symbolic features for ONE scenario from:
-      1) saved token files containing columns: alert_id, tokens
-      2) saved stable features CSV containing candidate_str
-
-    Returns DataFrame aligned to df_used rows (same order), with:
-      - is_mined__* feature columns (0/1)
-      - m_is_mined__* computable flags (=1)
-    """
+    if tx_col in df_used.columns:
+        return df_used.copy()
 
     if id_col not in df_used.columns:
-        raise ValueError(f"df_used is missing '{id_col}' (needed to join tokens)")
+        raise ValueError(f"df_used must contain '{tx_col}' or '{id_col}'")
+    if id_col not in meta_df.columns:
+        raise ValueError(f"Cached meta must contain '{id_col}'")
 
-    # ---- load & combine token files for this scenario ----
-    # expected layout: ../out/ait_ads/tokens/{run_name}/{scenario}/*.csv
-    scen_tok_dir = os.path.join(tokens_dir, run_name, scenario)
-    tok_files = sorted(glob(os.path.join(scen_tok_dir, tokens_glob)))
-    if not tok_files:
-        raise FileNotFoundError(
-            f"No token files found in {scen_tok_dir} matching {tokens_glob}"
+    if meta_df[id_col].duplicated().any():
+        raise ValueError(
+            f"Cached meta has duplicate '{id_col}' values, cannot safely join tx ids"
         )
 
-    tok_parts = []
-    for f in tok_files:
-        tdf = pd.read_csv(f)
-        if id_col not in tdf.columns or "tokens" not in tdf.columns:
-            raise ValueError(f"Token file {f} must have columns: '{id_col}', 'tokens'")
-        tdf = tdf[[id_col, "tokens"]].copy()
-        tdf["tokens"] = tdf["tokens"].apply(_parse_tokens_cell)
-        tok_parts.append(tdf)
-
-    tok_df = pd.concat(tok_parts, ignore_index=True)
-    print("token join match rate:", df_used[id_col].isin(tok_df[id_col]).mean())
-
-    print("df alerts:", len(df_used), "unique ids:", df_used["alert_id"].nunique())
-    print("tok alerts:", len(tok_df), "unique ids:", tok_df["alert_id"].nunique())
-    print(
-        "match rate (by id):",
-        df_used["alert_id"].astype(str).isin(tok_df["alert_id"].astype(str)).mean(),
+    out = df_used.merge(
+        meta_df[[id_col, tx_col]],
+        on=id_col,
+        how="left",
+        validate="many_to_one",
     )
 
-    # combine duplicates (same alert_id across windows) by unioning token lists
-    tok_df = (
-        tok_df.groupby(id_col)["tokens"]
-        .agg(lambda lists: sorted(set(t for L in lists for t in (L or []))))
-        .reset_index()
-    )
+    if out[tx_col].isna().any():
+        n_missing = int(out[tx_col].isna().sum())
+        raise ValueError(f"{n_missing} rows in df_used could not be matched to cached meta")
 
-    # ---- align tokens to df_used row order ----
-    tok_map = tok_df.set_index(id_col)["tokens"]
-    tokens_aligned = df_used[id_col].map(tok_map)
-
-    # alerts without tokens -> empty list (feature will be 0)
-    tokens_aligned = tokens_aligned.apply(lambda x: x if isinstance(x, list) else [])
-
-    # ---- build multi-hot token matrix (fast ANDs) ----
-    # join tokens into string then get_dummies -> columns are token strings
-    X_tokens = tokens_aligned.apply(lambda L: "|".join(L)).str.get_dummies(sep="|")
-
-    # ---- load stable candidates for this scenario ----
-    scen_rank_dir = os.path.join(rankings_dir, run_name)
-    if stable_filename is None:
-        stable_filename = f"{scenario}_stable_features.csv"
-    stable_path = os.path.join(scen_rank_dir, stable_filename)
-    if not os.path.exists(stable_path):
-        raise FileNotFoundError(f"Stable features file not found: {stable_path}")
-
-    stable = pd.read_csv(stable_path)
-    if "candidate_str" not in stable.columns:
-        raise ValueError(f"{stable_path} must contain a 'candidate_str' column")
-
-    if top_n is not None:
-        stable = stable.head(top_n)
-
-    candidates = stable["candidate_str"].dropna().astype(str).tolist()
-
-    # ---- compute mined symbolic features ----
-    X_sym = pd.DataFrame(index=df_used.index)
-
-    for cand in candidates:
-        toks = _candidate_to_tokens(cand)
-        if not toks:
-            continue
-
-        # AND over token columns; missing token => always false
-        mask = pd.Series(True, index=df_used.index)
-        for t in toks:
-            if t in X_tokens.columns:
-                mask &= X_tokens[t] == 1
-            else:
-                mask &= False
-
-        col = "is_mined__" + cand.replace(" ", "").replace("&", "__AND__")[:200]
-        X_sym[col] = mask.astype(int)
-        X_sym["m_" + col] = 1
-
-    # optionally keep only features that fire at least once
-    is_cols = [c for c in X_sym.columns if c.startswith("is_mined__")]
-    if is_cols:
-        fires = X_sym[is_cols].sum(axis=0)
-        keep = fires[fires >= min_fires].index.tolist()
-        keep_cols = keep + ["m_" + c for c in keep if ("m_" + c) in X_sym.columns]
-        X_sym = X_sym[keep_cols]
-
-    return X_sym
+    out[tx_col] = out[tx_col].astype(np.int64)
+    return out
 
 
-def build_symbolic_features_from_candidates(
-    df_used: pd.DataFrame,
-    surviving_candidates_df: pd.DataFrame,
-    min_fires: int = 1,
-) -> pd.DataFrame:
+def _parse_tidset_value(x) -> np.ndarray:
+    if x is None:
+        return np.array([], dtype=np.int64)
+    if isinstance(x, float) and pd.isna(x):
+        return np.array([], dtype=np.int64)
+    if isinstance(x, str):
+        return np.array(ast.literal_eval(x), dtype=np.int64)
+    return np.asarray(x, dtype=np.int64)
 
-    tokens = tokenize_window(df_used)
-    tokens = tokens.apply(lambda x: x if isinstance(x, list) else [])
 
-    X_tokens = tokens.apply(lambda L: "|".join(L)).str.get_dummies(sep="|")
+def _candidate_token_ids(cand_str: str, token_to_col: dict[str, int]) -> list[int]:
+    cand_tokens = [normalize_token(t) for t in _candidate_to_tokens(cand_str)]
+    cand_tokens = list(dict.fromkeys(cand_tokens))
+    token_ids = [token_to_col[t] for t in cand_tokens if t in token_to_col]
 
-    candidates = (
-        surviving_candidates_df["candidate_str"]
-        .dropna()
-        .astype(str)
-        .drop_duplicates()
-        .tolist()
-    )
+    if len(token_ids) != len(cand_tokens):
+        return []
 
-    X_sym = pd.DataFrame(index=df_used.index)
+    return token_ids
 
-    for cand in candidates:
-        toks = _candidate_to_tokens(cand)
 
-        mask = pd.Series(True, index=df_used.index)
-        for t in toks:
-            mask &= X_tokens.get(t, 0) == 1
+def _feature_col_name(cand_str: str, max_len: int = 200) -> str:
+    return "is_mined__" + cand_str.replace(" ", "").replace("&", "__AND__")[:max_len]
 
-        col = "is_mined__" + cand.replace("&", "__AND__")
-        X_sym[col] = mask.astype(int)
 
-    # drop features that never fire
-    fires = X_sym.sum()
-    keep = fires[fires >= min_fires].index
-    X_sym = X_sym[keep]
+def _candidate_fire_rows(
+    cand_row: pd.Series,
+    X_sub: sparse.csr_matrix,
+    tx_to_row: dict[int, int],
+    token_to_col: dict[str, int],
+) -> list[int]:
+    if "tidset" in cand_row.index:
+        tidset = _parse_tidset_value(cand_row["tidset"])
+        if tidset.size > 0:
+            return [tx_to_row[int(tx)] for tx in tidset if int(tx) in tx_to_row]
 
-    return X_sym
+    cand_str = str(cand_row["candidate_str"])
+    token_ids = _candidate_token_ids(cand_str, token_to_col)
+    if not token_ids:
+        return []
+
+    nnz = X_sub[:, token_ids].getnnz(axis=1)
+    return np.flatnonzero(nnz == len(token_ids)).tolist()
+
 
 def build_symbolic_features_from_candidates_cached(
     df_used: pd.DataFrame,
     surviving_candidates_df: pd.DataFrame,
     scenario_name: str,
     run_name: str,
-    tokens_base_dir: str = "../out",
+    tokens_base_dir: Optional[str] = None,
     id_col: str = "alert_id",
+    tx_col: str = "_tx_id",
     min_fires: int = 1,
+    meta_filename: str = "meta.parquet",
+    matrix_filename: str = "X_tokens.npz",
+    vocab_filename: str = "vocab.json",
 ) -> pd.DataFrame:
     """
-    Build symbolic features using saved tokens.csv instead of re-tokenizing alerts.
+    Build symbolic feature matrix from cached token files and survivors.
+
+    - Matches df_used to cached transaction ids via id_col -> tx_col
+    - Uses survivor tidsets if present
+    - Else reconstruct fires from X_tokens
+    - Returns X_sym indexed by id_col
     """
+    if "candidate_str" not in surviving_candidates_df.columns:
+        raise ValueError("surviving_candidates_df must contain 'candidate_str'")
+
+    if tokens_base_dir is None:
+        raise ValueError("tokens_base_dir must be provided")
 
     if id_col not in df_used.columns:
         raise ValueError(f"df_used must contain '{id_col}'")
 
-    if "candidate_str" not in surviving_candidates_df.columns:
-        raise ValueError("surviving_candidates_df must contain 'candidate_str'")
+    base_dir = os.path.join(tokens_base_dir, "tokens", scenario_name)
+    meta_path = os.path.join(base_dir, meta_filename)
+    matrix_path = os.path.join(base_dir, matrix_filename)
+    vocab_path = os.path.join(base_dir, vocab_filename)
 
-    tok_path = os.path.join(
-        tokens_base_dir, run_name, "tokens", scenario_name, "tokens.csv"
-    )
-    if not os.path.exists(tok_path):
-        raise FileNotFoundError(f"Could not find token file: {tok_path}")
+    if not os.path.exists(meta_path):
+        raise FileNotFoundError(f"Could not find meta file: {meta_path}")
+    if not os.path.exists(matrix_path):
+        raise FileNotFoundError(f"Could not find matrix file: {matrix_path}")
+    if not os.path.exists(vocab_path):
+        raise FileNotFoundError(f"Could not find vocab file: {vocab_path}")
 
-    # load saved tokens
-    tok_df = pd.read_csv(tok_path)
+    meta_df = _ensure_meta_tx_id(pd.read_parquet(meta_path), tx_col)
+    df_used = _attach_tx_id_from_meta(df_used.copy(), meta_df, id_col, tx_col)
 
-    if id_col not in tok_df.columns or "tokens" not in tok_df.columns:
-        raise ValueError(f"{tok_path} must contain columns '{id_col}' and 'tokens'")
+    if df_used[id_col].duplicated().any():
+        dupes = df_used.loc[df_used[id_col].duplicated(), id_col].head().tolist()
+        raise ValueError(f"'{id_col}' must be unique. Example duplicates: {dupes}")
 
-    # parse token strings into Python sets
-    tok_df["tokens"] = tok_df["tokens"].apply(
-        lambda x: (
-            {normalize_token(t) for t in ast.literal_eval(x)} if pd.notna(x) else set()
-        )
-    )
+    X_tokens = sparse.load_npz(matrix_path).tocsr()
+    token_to_col = _load_vocab_token_to_col(vocab_path)
 
-    # map alert_id -> token set
-    tok_map = tok_df.set_index(id_col)["tokens"]
+    df_tx_ids = df_used[tx_col].to_numpy(dtype=np.int64)
+    X_sub = X_tokens[df_tx_ids]
+    tx_to_row = {int(tx): i for i, tx in enumerate(df_tx_ids)}
 
-    # align token sets to df_used rows
-    alert_token_sets = (
-        df_used[id_col].map(tok_map).apply(lambda x: x if isinstance(x, set) else set())
-    )
-
-    all_tokens = set().union(*tok_df["tokens"])
-
-    print("df_used unique ids:", df_used[id_col].astype(str).nunique())
-    print("tok_df unique ids:", tok_df[id_col].astype(str).nunique())
-    print(
-        "match rate:",
-        df_used[id_col].astype(str).isin(tok_df[id_col].astype(str)).mean(),
+    candidates_df = (
+        surviving_candidates_df
+        .dropna(subset=["candidate_str"])
+        .drop_duplicates(subset=["candidate_str"])
+        .copy()
     )
 
-    # unique candidates
-    candidates = (
-        surviving_candidates_df["candidate_str"]
-        .dropna()
-        .astype(str)
-        .drop_duplicates()
-        .tolist()
-    )
+    rows, cols, feature_names = [], [], []
 
-    print(
-        f"Building symbolic features for {len(candidates)} candidates using cached tokens from {tok_path}..."
-    )
-
-    # debug: show candidate-token mismatches
-    print("\nChecking candidate/token mismatches...")
-    n_with_missing = 0
-    for cand in candidates[:20]:
-        cand_tokens = {normalize_token(t) for t in _candidate_to_tokens(cand)}
-        missing = cand_tokens - all_tokens
-        if missing:
-            n_with_missing += 1
-            print("Candidate:", cand)
-            print("Parsed tokens:", cand_tokens)
-            print("Missing:", missing)
-            print()
-
-    if n_with_missing == 0:
-        print("No missing-token mismatches found in first 20 candidates.\n")
-
-    data = {}
-
-    for cand in candidates:
-        cand_tokens = {normalize_token(t) for t in _candidate_to_tokens(cand)}
-        if not cand_tokens:
+    for _, cand_row in candidates_df.iterrows():
+        fire_rows = _candidate_fire_rows(cand_row, X_sub, tx_to_row, token_to_col)
+        if len(fire_rows) < min_fires:
             continue
 
-        values = [
-            int(cand_tokens.issubset(alert_toks)) for alert_toks in alert_token_sets
-        ]
+        col_idx = len(feature_names)
+        rows.extend(fire_rows)
+        cols.extend([col_idx] * len(fire_rows))
+        feature_names.append(_feature_col_name(str(cand_row["candidate_str"])))
 
-        if sum(values) >= min_fires:
-            col = "is_mined__" + cand.replace(" ", "").replace("&", "__AND__")[:200]
-            data[col] = values
+    out_index = pd.Index(df_used[id_col].to_numpy(), name=id_col)
 
-    X_sym = pd.DataFrame(data, index=df_used.index)
+    if not feature_names:
+        return pd.DataFrame(index=out_index)
 
-    return X_sym
-
-def normalize_groups(x):
-    if isinstance(x, list):
-        return [str(g).lower() for g in x]
-    if isinstance(x, str):
-        return [g.strip().lower() for g in x.split("|") if g.strip()]
-    return []
-
-
-def build_symbolic_features(df, X_dyn=None):
-    """
-    Build symbolic (knowledge-driven) features.
-    is_X: concept holds
-    m_is_X: concept computable
-    """
-    df = df.copy()
-    X_sym = pd.DataFrame(index=df.index)
-
-    if X_dyn is not None:
-        X_dyn = X_dyn.reset_index(drop=True)
-        df = df.reset_index(drop=True)
-    else:
-        raise ValueError("build_symbolic_features needs X_dyn for dyn-based rules.")
-
-    # ---------- helpers / base fields ----------
-    src = df["source"].fillna("")
-    wazuh = src == "wazuh"
-    aminer = src == "aminer"
-    ids = df.get("is_ids_alert", 0).fillna(0).astype(int) == 1
-
-    raw = df.get("raw_log", "").fillna("").astype(str)
-
-    # Make sure these exist as ints (your df already has many of these cols)
-    is_auth_event = df.get("is_auth_event", 0).fillna(0).astype(int)
-    is_success = df.get("is_success", 0).fillna(0).astype(int)
-    is_uid0 = df.get("is_uid0", 0).fillna(0).astype(int)
-
-    username = df.get("username", "").fillna("").astype(str).str.lower()
-    procname = df.get("procname", "").fillna("").astype(str)
-
-    wazuh_level = (
-        pd.to_numeric(df.get("wazuh_level"), errors="coerce").fillna(0).astype(int)
+    X_sym = sparse.csr_matrix(
+        (np.ones(len(rows), dtype=np.uint8), (rows, cols)),
+        shape=(len(df_used), len(feature_names)),
+        dtype=np.uint8,
     )
-    wazuh_update = df.get("wazuh_update", 0).fillna(0).astype(int)
-    wazuh_av = df.get("wazuh_antivirus", 0).fillna(0).astype(int)
 
-    exploit_class = df.get("exploit_class", "").fillna("").astype(str).str.lower()
-    mitre_tactic = df.get("mitre_tactic", "").fillna("").astype(str).str.lower()
-
-    # ---------- derived static context (computed locally) ----------
-    # Presence cues
-    has_username = (username != "").astype(int)
-    has_procname = (procname != "").astype(int)
-
-    # Category scan hint (use category if present; fall back to raw log)
-    cat = df.get("category", "").fillna("").astype(str)
-    cat_scan = cat.str.contains("scan", case=False, na=False).astype(int)
-
-    # Internal IP heuristic (string prefix; good enough for now)
-    srcip = df.get("srcip", "").fillna("").astype(str)
-    dstip = df.get("dstip", "").fillna("").astype(str)
-    is_internal_ip = srcip.str.startswith(
-        ("10.", "192.168.", "172.16."), na=False
-    ).astype(int)
-    src_eq_dst = (srcip != "") & (srcip == dstip)
-    src_eq_dst = src_eq_dst.astype(int)
-
-    # Wazuh low level
-    wazuh_low_level = (wazuh & (wazuh_level <= 3)).astype(int)
-
-    # IDS low severity
-    ids_sev = pd.to_numeric(df.get("ids_severity"), errors="coerce")
-    ids_low_severity = (ids_sev.fillna(0) <= 2).astype(int)
-
-    # MITRE presence
-    mitre_ids = df.get("mitre_ids", "").fillna("").astype(str)
-    has_mitre = (
-        (mitre_ids != "") & (mitre_ids != "null") & (mitre_ids != "[]")
-    ).astype(int)
-
-    # Cron hint
-    is_cron = raw.str.contains("cron", case=False, na=False).astype(int)
-
-    # Rule 1: SuspiciousAuthBurst
-    X_sym["m_is_suspicious_auth_burst"] = 1
-    X_sym["is_suspicious_auth_burst"] = (
-        (is_auth_event == 1) & (is_success == 0) & (X_dyn["ent_count_1d"] >= 3)
-    ).astype(int)
-
-    # Rule 2: RootLoginAttempt
-    X_sym["m_is_root_login_attempt"] = (has_username == 1).astype(int)
-    X_sym["is_root_login_attempt"] = (
-        (is_auth_event == 1) & (is_success == 0) & (username == "root")
-    ).astype(int)
-
-    # Rule 3: BehavioralNovelty (AMiner)
-    X_sym["m_is_behavioral_novelty"] = aminer.astype(int)
-    X_sym["is_behavioral_novelty"] = (
-        aminer & (df.get("aminer_new_event", 0).fillna(0).astype(int) == 1)
-    ).astype(int)
-
-    # Rule 4: HighSeverityWazuh
-    X_sym["m_is_high_severity_wazuh"] = wazuh.astype(int)
-    X_sym["is_high_severity_wazuh"] = (wazuh & (wazuh_level >= 7)).astype(int)
-
-    # Rule 5: Wazuh critical >= 10
-    X_sym["m_is_wazuh_critical"] = wazuh.astype(int)
-    X_sym["is_wazuh_critical"] = (wazuh & (wazuh_level >= 10)).astype(int)
-
-    # Rule 6: Mitre mapping
-    X_sym["m_is_wazuh_mitre_mapped"] = wazuh.astype(int)
-    X_sym["is_wazuh_mitre_mapped"] = (wazuh & (has_mitre == 1)).astype(int)
-
-    # Rule 7: IDS high priority (note: your threshold looked low; keep as-is)
-    X_sym["m_is_ids_high_priority"] = ids_sev.notna().astype(int)
-    X_sym["is_ids_high_priority"] = (ids_sev.notna() & (ids_sev >= 2)).astype(int)
-
-    # Rule 8: IDS concept
-    X_sym["m_is_ids_concept"] = 1
-    X_sym["is_ids_concept"] = ids.astype(int)
-
-    # Rule 9: High severity and novelty (missing m_ in your original; add it)
-    X_sym["m_is_high_sev_and_novel"] = (wazuh & aminer).astype(int)
-    X_sym["is_high_sev_and_novel"] = (
-        (X_sym["is_high_severity_wazuh"] == 1) & (X_sym["is_behavioral_novelty"] == 1)
-    ).astype(int)
-
-    # (A1) rare entity then burst
-    X_sym["m_is_rare_entity_then_burst"] = 1
-    X_sym["is_rare_entity_then_burst"] = (
-        (X_dyn["days_since_ent_seen"] >= 7) & (X_dyn["ent_count_1d"] >= 5)
-    ).astype(int)
-
-    # (A2) auth failure then uid0
-    X_sym["m_is_auth_failure_then_uid0"] = 1
-    X_sym["is_auth_failure_then_uid0"] = (
-        (is_auth_event == 1) & (is_success == 0) & (is_uid0 == 1)
-    ).astype(int)
-
-    # (A4) high sev but not update / AV
-    X_sym["m_is_high_sev_non_update_non_av"] = wazuh.astype(int)
-    X_sym["is_high_sev_non_update_non_av"] = (
-        wazuh & (wazuh_level >= 7) & (wazuh_update == 0) & (wazuh_av == 0)
-    ).astype(int)
-
-    # (B6) IDS class malware/c2/tls/dns suspicious
-    X_sym["m_is_ids_category_malware_or_c2"] = (exploit_class != "").astype(int)
-    X_sym["is_ids_category_malware_or_c2"] = exploit_class.isin(
-        ["malware", "c2_activity", "tls_fingerprint", "dns_suspicious"]
-    ).astype(int)
-
-    # (B5) MITRE execution/persistence
-    X_sym["m_is_mitre_execution_or_persistence"] = (mitre_tactic != "").astype(int)
-    X_sym["is_mitre_execution_or_persistence"] = mitre_tactic.str.contains(
-        "execution|persistence", regex=True
-    ).astype(int)
-
-    # Combined features
-    X_sym["m_is_novel_and_ids"] = 1
-    X_sym["is_novel_and_ids"] = (
-        (X_sym["is_behavioral_novelty"] == 1) & (X_sym["is_ids_concept"] == 1)
-    ).astype(int)
-
-    X_sym["m_is_auth_burst_and_ids"] = 1
-    X_sym["is_auth_burst_and_ids"] = (
-        (X_sym["is_suspicious_auth_burst"] == 1) & (X_sym["is_ids_concept"] == 1)
-    ).astype(int)
-
-    X_sym["m_is_auth_burst_high_ent_rate"] = 1
-    X_sym["is_auth_burst_high_ent_rate"] = (
-        (X_sym["is_suspicious_auth_burst"] == 1) & (X_dyn["ent_rate_1d"] >= 0.2)
-    ).astype(int)
-
-    # composite FP-revealing symbolic rules
-    # (C1) Benign auth noise:
-    # successful auth + user known + low-sev wazuh
-    X_sym["m_is_benign_auth_noise"] = wazuh.astype(int)
-    X_sym["is_benign_auth_noise"] = (
-        (is_auth_event == 1)
-        & (is_success == 1)
-        & (has_username == 1)
-        & (wazuh_low_level == 1)
-    ).astype(int)
-
-    # (C2) AMiner novelty but stable (likely benign):
-    # aminer new event + process present + internal IP
-    X_sym["m_is_aminer_novel_but_stable"] = aminer.astype(int)
-    X_sym["is_aminer_novel_but_stable"] = (
-        aminer
-        & (df.get("aminer_new_event", 0).fillna(0).astype(int) == 1)
-        & (has_procname == 1)
-        & (is_internal_ip == 1)
-    ).astype(int)
-
-    # (C3) Scanner-looking but internal:
-    X_sym["m_is_internal_scan_like"] = 1
-    X_sym["is_internal_scan_like"] = (
-        (cat_scan == 1) & (is_internal_ip == 1) & (src_eq_dst == 1)
-    ).astype(int)
-
-    # (C4) Low-severity IDS background noise:
-    X_sym["m_is_low_sev_ids_background"] = 1
-    X_sym["is_low_sev_ids_background"] = (
-        (ids.astype(int) == 1) & (ids_low_severity == 1) & (has_mitre == 1)
-    ).astype(int)
-
-    # (C5) Periodic maintenance (cron + high recent recurrence)
-    # Requires you to have something like ent_count_1d; tune threshold as needed.
-    X_sym["m_is_periodic_maintenance"] = 1
-    X_sym["is_periodic_maintenance"] = (
-        (is_cron == 1) & (X_dyn["ent_count_1d"] >= 3)
-    ).astype(int)
-
-    # (D1) Benign-prone entity burst (FP-ish):
-    # entity is very active now, but historically almost never attacks
-    X_sym["m_is_benign_prone_entity_burst"] = 1
-    X_sym["is_benign_prone_entity_burst"] = (
-        (X_dyn["ent_count_1d"] >= 5) & (X_dyn["ent_rate_1d"] <= 0.01)
-    ).astype(int)
-
-    # (D2) Benign-prone category burst:
-    X_sym["m_is_benign_prone_category_burst"] = 1
-    X_sym["is_benign_prone_category_burst"] = (
-        (X_dyn["cat_count_1d"] >= 10) & (X_dyn["cat_rate_1d"] <= 0.01)
-    ).astype(int)
-
-    # (D3) Auth failure on benign-prone entity:
-    X_sym["m_is_auth_fail_on_benign_entity"] = 1
-    X_sym["is_auth_fail_on_benign_entity"] = (
-        (df.get("is_auth_event", 0).fillna(0).astype(int) == 1)
-        & (df.get("is_success", 0).fillna(0).astype(int) == 0)
-        & (X_dyn["ent_rate_1d"] <= 0.01)
-        & (X_dyn["ent_count_1d"] >= 3)
-    ).astype(int)
-
-    # (D4) IDS high-severity but entity historically benign (possible FP):
-    sev = pd.to_numeric(df.get("ids_severity"), errors="coerce").fillna(0)
-    X_sym["m_is_ids_high_sev_on_benign_entity"] = 1
-    X_sym["is_ids_high_sev_on_benign_entity"] = (
-        (df.get("is_ids_alert", 0).fillna(0).astype(int) == 1)
-        & (sev >= 3)
-        & (X_dyn["ent_rate_1d"] <= 0.01)
-    ).astype(int)
-
-    # (D5) Wazuh high severity but category historically benign (possible FP):
-    X_sym["m_is_wazuh_high_sev_on_benign_category"] = wazuh.astype(int)
-    X_sym["is_wazuh_high_sev_on_benign_category"] = (
-        wazuh & (wazuh_level >= 7) & (X_dyn["cat_rate_1d"] <= 0.01)
-    ).astype(int)
-
-    # Attack indicators
-    # (D6) Novel entity spike:
-    # host not seen for a long time, then suddenly active (good attack heuristic)
-    X_sym["m_is_novel_entity_spike"] = 1
-    X_sym["is_novel_entity_spike"] = (
-        (X_dyn["days_since_ent_seen"] >= 7) & (X_dyn["ent_count_1d"] >= 5)
-    ).astype(int)
-
-    # (D7) Novel category burst:
-    X_sym["m_is_novel_category_burst"] = 1
-    X_sym["is_novel_category_burst"] = (
-        (X_dyn["days_since_cat_seen"] >= 7) & (X_dyn["cat_count_1d"] >= 10)
-    ).astype(int)
-
-    # (D8) "Chronic attacker" entity (good attack indicator; sanity check rule)
-    X_sym["m_is_chronic_attacker_entity"] = 1
-    X_sym["is_chronic_attacker_entity"] = (
-        (X_dyn["ent_rate_1d"] >= 0.2) & (X_dyn["ent_count_1d"] >= 5)
-    ).astype(int)
-
-    # (D9) "Chronic attacker" category (good attack indicator)
-    X_sym["m_is_chronic_attacker_category"] = 1
-    X_sym["is_chronic_attacker_category"] = (
-        (X_dyn["cat_rate_1d"] >= 0.2) & (X_dyn["cat_count_1d"] >= 10)
-    ).astype(int)
-
-    return X_sym
+    return pd.DataFrame.sparse.from_spmatrix(
+        X_sym,
+        index=out_index,
+        columns=feature_names,
+    )

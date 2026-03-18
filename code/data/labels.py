@@ -1,5 +1,6 @@
 import pandas as pd
 import re
+import os
 
 ALWAYS_BENIGN = [
     "aminer: new event type",
@@ -257,9 +258,10 @@ def assign_label(row, windows_index, min_score=1):
 
 def assign_labels(
     df,
-    labels_path="../data/ait_ads/labels.csv",
+    dir_path: str,
+    labels_file="labels.csv",
     min_score=1,
-    out_path="../data/ait_ads/labeled_combined_ait.csv",
+    out_file="labeled_combined_ait_ads.parquet",
 ):
     """
     Assign binary labels to alerts based on attack windows and semantic matching.
@@ -276,6 +278,9 @@ def assign_labels(
         df["timestamp"], utc=True, format="mixed", errors="coerce"
     )
 
+    labels_path = os.path.join(dir_path, labels_file)
+
+    print(f"Reading labels from: {labels_path}")
     labels = pd.read_csv(labels_path)
     labels["start"] = pd.to_datetime(labels["start"], unit="s", utc=True)
     labels["end"] = pd.to_datetime(labels["end"], unit="s", utc=True)
@@ -303,6 +308,7 @@ def assign_labels(
 
     df["attack_type"] = df.apply(_get_attack_type, axis=1)
 
-    df.to_csv(out_path, index=False)
+    out_path = os.path.join(dir_path, out_file)
+    df.to_parquet(out_path, index=False)
     print(f"Done. Wrote labeled dataset to: {out_path}")
     return df

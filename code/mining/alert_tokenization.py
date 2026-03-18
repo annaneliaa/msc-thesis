@@ -28,9 +28,9 @@ def _expand_token_values(val):
     if val is None:
         return []
 
-    # real Python list/tuple/set
-    if isinstance(val, (list, tuple, set)):
-        return [str(x).strip() for x in val if str(x).strip()]
+    # Handle numpy arrays
+    if isinstance(val, np.ndarray):
+        return [str(x).strip() for x in val if str(x).strip() and not pd.isna(x)]
 
     # missing scalar
     if pd.isna(val):
@@ -75,9 +75,11 @@ def tokenize_alerts(
 
     usable_fields = []
     for f in fields:
-        nunique = df[f].nunique(dropna=True)
-        if nunique <= max_unique_per_field:
-            usable_fields.append(f)
+        if f in df.columns:
+            # Convert to string to handle unhashable types like numpy arrays
+            nunique = df[f].astype(str).nunique(dropna=True)
+            if nunique <= max_unique_per_field:
+                usable_fields.append(f)
 
     print(
         f"Tokenizing using {len(usable_fields)} fields (out of {len(fields)} requested). \nExcluded fields: {set(fields) - set(usable_fields)}"
@@ -201,6 +203,9 @@ def build_token_cache_for_scenario(
     meta_df["tokens"] = token_lists
     meta_df = meta_df.reset_index(drop=True)
 
+    # add transaction ID column so we know which cached transactions a candidate fires on
+    meta_df.insert(0, "_tx_id", np.arange(len(meta_df), dtype=np.int64))
+
     # Build vocabulary
     vocab_set = set()
     for toks in meta_df["tokens"]:
@@ -274,16 +279,21 @@ def save_token_cache(
 
     meta_to_save = meta_df.copy()
 
-    # parquet cannot always round-trip arbitrary Python lists nicely across setups,
-    # so store token lists as JSON strings for robustness
+    # store token lists as JSON strings
     if "tokens" in meta_to_save.columns:
         meta_to_save["tokens"] = meta_to_save["tokens"].apply(json.dumps)
+
+    # Make sure tx ids are present
+    if "_tx_id" not in meta_to_save.columns:
+        meta_to_save.insert(0, "_tx_id", np.arange(len(meta_to_save), dtype=np.int64))
 
     meta_to_save.to_parquet(meta_path, index=False)
     sparse.save_npz(matrix_path, X_tokens_all)
 
+    token_to_col = {str(tok): int(j) for j, tok in enumerate(vocab)}
     with open(vocab_path, "w", encoding="utf-8") as f:
-        json.dump(list(vocab), f, ensure_ascii=False)
+        json.dump(token_to_col, f, ensure_ascii=False)
+
 
     print(f"Token cache saved to: {out_dir}")
 
@@ -475,3 +485,4 @@ def iter_precached_windows(
         window_has_attack = bool((y_k == 1).any())
 
         yield start_k, end_k, meta_k, X_k, y_k, window_has_attack, vocab
+

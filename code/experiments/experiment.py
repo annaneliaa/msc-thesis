@@ -5,7 +5,7 @@ from sklearn.metrics import roc_auc_score
 import os
 import json
 
-from mining.build_features import build_dyn_features, build_static_features, build_sym_features
+from mining.build_features import build_dyn_features, build_static_features
 from classes import *
 from train.train import *
 from experiments.metrics import eval_subset_metrics
@@ -437,100 +437,100 @@ def burst_diagnostics(
     return out
 
 
-def simple_ablation_experiment(df, run_name, window_size, scenario_name=None):
-    """
-    One shot, single-scenario ablation experiment (no time windows, no next window eval).
-    For one scenario's full dataset, test whether adding each symbolic feature helps vs baseline
+# def simple_ablation_experiment(df, run_name, window_size, scenario_name=None):
+#     """
+#     One shot, single-scenario ablation experiment (no time windows, no next window eval).
+#     For one scenario's full dataset, test whether adding each symbolic feature helps vs baseline
 
-    Function filters dataset to one scenario. Then build features once:
-    - dynamic features (from window_size lookback)
-    - "static" features (taken from alert)
-    - symbolic features (all rules emitted by build_sym_features)
+#     Function filters dataset to one scenario. Then build features once:
+#     - dynamic features (from window_size lookback)
+#     - "static" features (taken from alert)
+#     - symbolic features (all rules emitted by build_sym_features)
 
-    Train on a random holdout split:
-    1) baseline = dynamic + static
-    2) baseline + one symbolic feature
-    3) baseline + all (active) symbolic features
+#     Train on a random holdout split:
+#     1) baseline = dynamic + static
+#     2) baseline + one symbolic feature
+#     3) baseline + all (active) symbolic features
 
-    Returns per-feature performance. Shows if adding feature f helps on the scenario data.
-    """
+#     Returns per-feature performance. Shows if adding feature f helps on the scenario data.
+#     """
 
-    if scenario_name is not None:
-        df = df[df["scenario"] == scenario_name].copy()
-        print(f"\nRunning scenario = {scenario_name} ({len(df)} alerts)")
+#     if scenario_name is not None:
+#         df = df[df["scenario"] == scenario_name].copy()
+#         print(f"\nRunning scenario = {scenario_name} ({len(df)} alerts)")
 
-    # guard: need both classes to compute AUC
-    if df["y"].nunique() < 2:
-        raise ValueError(
-            f"Scenario '{scenario_name}' has only one class in y: {df['y'].unique()}"
-        )
+#     # guard: need both classes to compute AUC
+#     if df["y"].nunique() < 2:
+#         raise ValueError(
+#             f"Scenario '{scenario_name}' has only one class in y: {df['y'].unique()}"
+#         )
 
-    # --- Build features ONCE for the whole dataset ---
-    # window_size here is a lookback used inside build_dyn_features
-    X_dyn, y, df_used = build_dyn_features(df, window_size)
+#     # --- Build features ONCE for the whole dataset ---
+#     # window_size here is a lookback used inside build_dyn_features
+#     X_dyn, y, df_used = build_dyn_features(df, window_size)
 
-    if len(np.unique(y)) < 2:
-        raise ValueError(
-            f"After preprocessing, scenario '{scenario_name}' has only one class in y."
-        )
+#     if len(np.unique(y)) < 2:
+#         raise ValueError(
+#             f"After preprocessing, scenario '{scenario_name}' has only one class in y."
+#         )
 
-    X_static = build_static_features(df_used)
+#     X_static = build_static_features(df_used)
 
-    X_symbolic = build_sym_features(df_used, run_name, scenario_name)
+#     X_symbolic = build_sym_features(df_used, run_name, scenario_name)
 
-    print(f"Built features: {len(X_dyn.columns)} dynamic cols, {len(X_static.columns)} static cols, {len(X_symbolic.columns)} symbolic cols")
+#     print(f"Built features: {len(X_dyn.columns)} dynamic cols, {len(X_static.columns)} static cols, {len(X_symbolic.columns)} symbolic cols")
     
-    assert len(X_symbolic) == len(df_used)
+#     assert len(X_symbolic) == len(df_used)
 
-    # derive active features from what the builder emitted
-    # Symbolic features = all "is_*" rules that fire at least once 
-    sym_feats = [c for c in X_symbolic.columns if c.startswith("is_") and X_symbolic[c].sum() > 0]
+#     # derive active features from what the builder emitted
+#     # Symbolic features = all "is_*" rules that fire at least once 
+#     sym_feats = [c for c in X_symbolic.columns if c.startswith("is_") and X_symbolic[c].sum() > 0]
 
-    X_full = pd.concat([X_dyn, X_static, X_symbolic], axis=1)
-    y = pd.Series(y, index=X_full.index).to_numpy()
+#     X_full = pd.concat([X_dyn, X_static, X_symbolic], axis=1)
+#     y = pd.Series(y, index=X_full.index).to_numpy()
 
-    assert len(X_full) == len(y)
+#     assert len(X_full) == len(y)
 
-    # ----- Baseline model -----
-    base_feats = list(X_dyn.columns) + list(X_static.columns)
-    schema_base = FeatureSchema("base", base_feats)
-    print("\nTraining BASELINE model...")
-    res_base = train_eval_holdout(X_full, y, schema_base, test_frac=0.3)
-    diag_base = burst_diagnostics(X_full, res_base)
+#     # ----- Baseline model -----
+#     base_feats = list(X_dyn.columns) + list(X_static.columns)
+#     schema_base = FeatureSchema("base", base_feats)
+#     print("\nTraining BASELINE model...")
+#     res_base = train_eval_holdout(X_full, y, schema_base, test_frac=0.3)
+#     diag_base = burst_diagnostics(X_full, res_base)
 
-    # ------ Ablation study (baseline + feat) -------
-    # store per-feature results
-    ablation_results = {}
-    ablation_diags = {}
+#     # ------ Ablation study (baseline + feat) -------
+#     # store per-feature results
+#     ablation_results = {}
+#     ablation_diags = {}
 
-    for feat in sym_feats:
-        print(f"\nTraining base + '{feat}' ...")
-        schema_feat = FeatureSchema(f"base+{feat}", base_feats + [feat])
-        res_feat = train_eval_holdout(X_full, y, schema_feat, test_frac=0.3)
+#     for feat in sym_feats:
+#         print(f"\nTraining base + '{feat}' ...")
+#         schema_feat = FeatureSchema(f"base+{feat}", base_feats + [feat])
+#         res_feat = train_eval_holdout(X_full, y, schema_feat, test_frac=0.3)
 
-        ablation_results[feat] = res_feat
-        ablation_diags[feat] = burst_diagnostics(X_full, res_feat)
+#         ablation_results[feat] = res_feat
+#         ablation_diags[feat] = burst_diagnostics(X_full, res_feat)
 
-    # --- Full bundle (baseline + all symbolic) ---
-    print("\nTraining BASE + ALL symbolic features...")
-    schema_all = FeatureSchema("base+symbolic_all", base_feats + sym_feats)
-    res_all = train_eval_holdout(X_full, y, schema_all, test_frac=0.3)
-    diag_all = burst_diagnostics(X_full, res_all)
+#     # --- Full bundle (baseline + all symbolic) ---
+#     print("\nTraining BASE + ALL symbolic features...")
+#     schema_all = FeatureSchema("base+symbolic_all", base_feats + sym_feats)
+#     res_all = train_eval_holdout(X_full, y, schema_all, test_frac=0.3)
+#     diag_all = burst_diagnostics(X_full, res_all)
 
-    return {
-        "base": res_base,
-        "diag_base": diag_base,
-        # one-feature-at-a-time ablation
-        "ablation": ablation_results,
-        "diag_ablation": ablation_diags,
-        # full symbolic bundle
-        "sym_all": res_all,
-        "diag_sym_all": diag_all,
-        "X_full": X_full,
-        "y": y,
-        "sym_feats": sym_feats,
-        "base_feats": base_feats,
-    }
+#     return {
+#         "base": res_base,
+#         "diag_base": diag_base,
+#         # one-feature-at-a-time ablation
+#         "ablation": ablation_results,
+#         "diag_ablation": ablation_diags,
+#         # full symbolic bundle
+#         "sym_all": res_all,
+#         "diag_sym_all": diag_all,
+#         "X_full": X_full,
+#         "y": y,
+#         "sym_feats": sym_feats,
+#         "base_feats": base_feats,
+#     }
 
 def simple_ablation_experiment_p(
     df,
@@ -561,19 +561,30 @@ def simple_ablation_experiment_p(
     # X_dyn, y, df_used = build_dyn_features(df, window_size)
     y = df["y"].values
 
+    df_used = df.copy()
 
-    # if len(np.unique(y)) < 2:
-    #     raise ValueError(
-    #         f"After preprocessing, scenario '{scenario_name}' has only one class in y."
-    #     )
+    if "alert_id" not in df_used.columns:
+        raise ValueError("df must contain 'alert_id'")
+    if df_used["alert_id"].duplicated().any():
+        raise ValueError("df['alert_id'] must be unique")
 
-    df_used = df
+    # make alert_id the alignment index
+    df_used = df_used.set_index("alert_id", drop=False)
+
+    # ensure X_sym is also indexed by alert_id
+    if "alert_id" in X_sym.columns:
+        X_sym = X_sym.set_index("alert_id", drop=False)
+
     X_static = build_static_features(df_used)
 
-    # align symbolic features to the same rows as df_used
-    X_sym = X_sym.loc[df_used.index].copy()
+    missing = df_used.index.difference(X_sym.index)
+    if len(missing) > 0:
+        raise ValueError(
+            f"{len(missing)} alert_ids from df_used are missing in X_sym. "
+            f"First few: {list(missing[:10])}"
+        )
 
-
+    X_sym = X_sym.reindex(df_used.index).copy()
 
     print(
         f"Built features:",
