@@ -134,6 +134,7 @@ def build_token_cache_for_scenario(
     scenario_name: str,
     time_col: str = "timestamp",
     sort_tokens: bool = True,
+    extra_meta_cols: Optional[list[str]] = None,
 ) -> tuple[pd.DataFrame, sparse.csr_matrix, pd.Index]:
     """
     Build a scenario-level token cache with ONE TRANSACTION PER INPUT ROW.
@@ -197,7 +198,11 @@ def build_token_cache_for_scenario(
     if "alert_id" in df_s.columns:
         meta_cols.append("alert_id")
 
+    if extra_meta_cols is not None:
+        meta_cols.extend(extra_meta_cols)
+
     meta_cols = [c for c in meta_cols if c in df_s.columns]
+    meta_cols = list(dict.fromkeys(meta_cols))  # deduplicate, preserve order
 
     meta_df = df_s[meta_cols].copy()
     meta_df["tokens"] = token_lists

@@ -9,6 +9,7 @@ import json
 
 from classes import *
 from mining.alert_tokenization import iter_precached_windows
+from mining.build_features import add_behavioral_features, behavioral_tokens_from_df
 
 # -----------------------------------
 # Interfaces
@@ -175,7 +176,9 @@ def mine_candidates(
     Count candidate occurrences in a collection of tokenized alerts.
 
     This function computes raw counts of each candidate across the provided
-    tokens and labels. It does not assume any temporal structure: the input
+    tokens and labels. 
+    
+    No assumption of any temporal structure: the input
     may represent a full timeline, a single window, or any arbitrary subset
     of alerts.
 
@@ -283,6 +286,21 @@ def window_based_mining(
         print(f"Processing window {start_k} to {end_k}...")
 
         attack_flags.append(window_has_attack)
+
+        # start from cached static tokens
+        base_tokens = meta_k["tokens"].reset_index(drop=True).copy()
+
+        # compute behavioral columns for this window slice
+        meta_k = add_behavioral_features(meta_k, src_col="srcip", dst_col="dstip")
+
+        # convert only behavioral feature columns into tokens
+        beh_tokens = behavioral_tokens_from_df(meta_k).reset_index(drop=True)
+
+        # merge behavioral tokens into cached static tokens
+        meta_k["tokens"] = [
+            sorted(set(base) | set(beh))
+            for base, beh in zip(base_tokens, beh_tokens)
+        ]
 
         # Choose row-level transactions
         if "tokens" in meta_k.columns:

@@ -273,3 +273,16 @@ def add_behavioral_features(df, time_col="timestamp", src_col="srcip", dst_col="
     )
 
     return df
+
+def behavioral_tokens_from_df(df: pd.DataFrame) -> pd.Series:
+    out = []
+    for _, row in df.iterrows():
+        toks = []
+        if pd.notna(row["src_freq_bin"]):
+            toks.append(f"src_freq_bin={row['src_freq_bin']}")
+        if pd.notna(row["dst_fanin_bin"]):
+            toks.append(f"dst_fanin_bin={row['dst_fanin_bin']}")
+        if pd.notna(row["src_fanout_bin"]):
+            toks.append(f"src_fanout_bin={row['src_fanout_bin']}")
+        out.append(toks)
+    return pd.Series(out, index=df.index)
