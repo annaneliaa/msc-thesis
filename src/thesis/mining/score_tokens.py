@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 
+
 # -----------------------------------
 # Scorers
 # -----------------------------------
@@ -89,7 +90,6 @@ def split_metric_scorer(alpha: float = 0.5):
 
 def split_metric_scorer_bayes(alpha: float = 0.5):
     def _coverage_risk_score_b(c0, c1, n0, n1):
-
         # Align candidates so they appear in both series
         idx = c0.index.union(c1.index)
 

@@ -1,4 +1,7 @@
 import pandas as pd
+import os
+
+
 # -----------------------------------
 # Filters
 # -----------------------------------
@@ -85,6 +88,7 @@ def filter_discriminative_candidates(
 
     return filtered_df
 
+
 def filter_tfidf_candidates(
     df: pd.DataFrame,
     tfidf_col: str = "mean_tfidf",
@@ -120,4 +124,3 @@ def filter_tfidf_candidates(
     )
 
     return filtered_df
-

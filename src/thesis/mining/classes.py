@@ -1,12 +1,14 @@
 from dataclasses import dataclass, field
 from typing import Dict, List
 
+
 @dataclass
 class SymbolicMemory:
     """
     Tracks which symbolic features are useful over time.
     Scores decay over time; selected features gain score.
     """
+
     decay: float = 0.8
     reward: float = 1.0
     min_score: float = 0.8
@@ -23,7 +25,7 @@ class SymbolicMemory:
     def reward_feats(self, feats: List[str]):
         for f in feats:
             self.scores[f] = self.scores.get(f, 0.0) + self.reward
-            
+
     # A feature is considered memory-active if score_f ≥ min_score
     def active(self) -> List[str]:
         return [f for f, s in self.scores.items() if s >= self.min_score]
@@ -31,9 +33,8 @@ class SymbolicMemory:
     def active_with_threshold(self, tau: float) -> List[str]:
         return [f for f, s in self.scores.items() if s >= tau]
 
+
 @dataclass(frozen=True)
 class FeatureSchema:
     name: str
     features: List[str]
-
-

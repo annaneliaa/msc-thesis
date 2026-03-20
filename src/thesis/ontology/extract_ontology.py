@@ -2,12 +2,25 @@ import pandas as pd
 from pathlib import Path
 
 PORT2SVC = {
-    21:"ftp", 22:"ssh", 23:"telnet", 25:"smtp", 53:"dns",
-    80:"http", 110:"pop3", 123:"ntp",
-    139:"netbios", 143:"imap", 389:"ldap", 443:"https",
-    445:"smb", 587:"smtp-submission",
-    3306:"mysql", 3389:"rdp", 5432:"postgres", 6379:"redis",
-    9200:"elasticsearch"
+    21: "ftp",
+    22: "ssh",
+    23: "telnet",
+    25: "smtp",
+    53: "dns",
+    80: "http",
+    110: "pop3",
+    123: "ntp",
+    139: "netbios",
+    143: "imap",
+    389: "ldap",
+    443: "https",
+    445: "smb",
+    587: "smtp-submission",
+    3306: "mysql",
+    3389: "rdp",
+    5432: "postgres",
+    6379: "redis",
+    9200: "elasticsearch",
 }
 
 KEYWORD2SVC = [
@@ -23,8 +36,10 @@ KEYWORD2SVC = [
     ("dns", "dns"),
 ]
 
+
 def _to_num(series):
     return pd.to_numeric(series, errors="coerce")
+
 
 def infer_services(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
@@ -32,13 +47,17 @@ def infer_services(df: pd.DataFrame) -> pd.DataFrame:
     # ports -> service
     df["dstport"] = _to_num(df.get("dstport"))
     df["srcport"] = _to_num(df.get("srcport"))
-    df["dst_service"] = df["dstport"].map(lambda p: PORT2SVC.get(int(p)) if pd.notna(p) else None)
+    df["dst_service"] = df["dstport"].map(
+        lambda p: PORT2SVC.get(int(p)) if pd.notna(p) else None
+    )
 
     # text hints
     text = (
-        df.get("raw_log", "").fillna("").astype(str) + " " +
-        df.get("ids_signature", "").fillna("").astype(str) + " " +
-        df.get("ids_category", "").fillna("").astype(str)
+        df.get("raw_log", "").fillna("").astype(str)
+        + " "
+        + df.get("ids_signature", "").fillna("").astype(str)
+        + " "
+        + df.get("ids_category", "").fillna("").astype(str)
     ).str.lower()
 
     text_services = []
@@ -67,6 +86,7 @@ def infer_services(df: pd.DataFrame) -> pd.DataFrame:
     )
     return services_table
 
+
 def topology_edges(df, min_weight=1):
     edges = df.dropna(subset=["scenario", "srcip", "dstip"]).copy()
 
@@ -76,33 +96,45 @@ def topology_edges(df, min_weight=1):
     edges["proto"] = edges["proto"].fillna("UNK")
     edges["dstport"] = pd.to_numeric(edges["dstport"], errors="coerce")
 
-    agg = (edges.groupby(["scenario", "srcip", "dstip", "proto", "dstport"])
-           .size()
-           .reset_index(name="weight"))
+    agg = (
+        edges.groupby(["scenario", "srcip", "dstip", "proto", "dstport"])
+        .size()
+        .reset_index(name="weight")
+    )
 
     return agg[agg["weight"] >= min_weight]
 
-def host_sets(df, edge_table):
-    active = (df.dropna(subset=["scenario","host_ip"])
-                .groupby("scenario")["host_ip"]
-                .agg(lambda x: set(x.astype(str)))
-                .to_dict())
 
-    in_edges = (edge_table.groupby("scenario")
-                .apply(lambda g: set(g["srcip"]).union(set(g["dstip"])))
-                .to_dict())
+def host_sets(df, edge_table):
+    active = (
+        df.dropna(subset=["scenario", "host_ip"])
+        .groupby("scenario")["host_ip"]
+        .agg(lambda x: set(x.astype(str)))
+        .to_dict()
+    )
+
+    in_edges = (
+        edge_table.groupby("scenario")
+        .apply(lambda g: set(g["srcip"]).union(set(g["dstip"])))
+        .to_dict()
+    )
 
     out = []
     for sc in sorted(set(df["scenario"])):
         a = active.get(sc, set())
         e = in_edges.get(sc, set())
-        out.append({
-            "scenario": sc,
-            "n_active_hosts": len(a),
-            "n_hosts_in_edges": len(e),
-            "isolated_but_active": len(a - e),  # host-only alerts (AMiner/Wazuh host logs)
-        })
+        out.append(
+            {
+                "scenario": sc,
+                "n_active_hosts": len(a),
+                "n_hosts_in_edges": len(e),
+                "isolated_but_active": len(
+                    a - e
+                ),  # host-only alerts (AMiner/Wazuh host logs)
+            }
+        )
     return pd.DataFrame(out)
+
 
 def scenario_hosts(df: pd.DataFrame) -> pd.DataFrame:
     # "hosts we observed in any way" (host alerts OR topology nodes)
@@ -110,16 +142,29 @@ def scenario_hosts(df: pd.DataFrame) -> pd.DataFrame:
     host_alert_hosts["host_ip"] = host_alert_hosts["host_ip"].astype(str)
 
     # include hosts that appear only in edges
-    edge_hosts = df.dropna(subset=["scenario", "srcip", "dstip"])[["scenario", "srcip", "dstip"]].copy()
+    edge_hosts = df.dropna(subset=["scenario", "srcip", "dstip"])[
+        ["scenario", "srcip", "dstip"]
+    ].copy()
     edge_hosts["srcip"] = edge_hosts["srcip"].astype(str)
-    edge_hosts["dstip"] = edge_hosts["dstip"].astype(str).str.replace(r":\d+$", "", regex=True)
+    edge_hosts["dstip"] = (
+        edge_hosts["dstip"].astype(str).str.replace(r":\d+$", "", regex=True)
+    )
 
     src_nodes = edge_hosts.rename(columns={"srcip": "host_ip"})[["scenario", "host_ip"]]
     dst_nodes = edge_hosts.rename(columns={"dstip": "host_ip"})[["scenario", "host_ip"]]
 
-    hosts = pd.concat([host_alert_hosts[["scenario", "host_ip"]], src_nodes, dst_nodes], ignore_index=True)
-    hosts = hosts.dropna().drop_duplicates().sort_values(["scenario", "host_ip"]).reset_index(drop=True)
+    hosts = pd.concat(
+        [host_alert_hosts[["scenario", "host_ip"]], src_nodes, dst_nodes],
+        ignore_index=True,
+    )
+    hosts = (
+        hosts.dropna()
+        .drop_duplicates()
+        .sort_values(["scenario", "host_ip"])
+        .reset_index(drop=True)
+    )
     return hosts
+
 
 def run(input_csv: str, out_dir: str, min_edge_weight: int = 3):
     df = pd.read_csv(input_csv)
@@ -142,10 +187,12 @@ def run(input_csv: str, out_dir: str, min_edge_weight: int = 3):
     print(out / "scenario_services.csv")
     print(out / "scenario_edges.csv")
 
+
 if __name__ == "__main__":
     # example:
     # python extract_ontology_inputs.py ../data/ait_ads/all_alerts.csv ./ontology_inputs 3
     import sys
+
     input_csv = sys.argv[1]
     out_dir = sys.argv[2]
     min_w = int(sys.argv[3]) if len(sys.argv) > 3 else 3

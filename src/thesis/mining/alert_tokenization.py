@@ -3,15 +3,17 @@ import json
 import ast
 from typing import List, Optional
 from util import make_time_windows
-from pathlib import Path 
+from pathlib import Path
 from scipy import sparse
 import numpy as np
 import os
+
 # -----------------------------------
 # Base token fields corresponding to labeled df columns, used for tokenization and candidate generation
 # -----------------------------------
 with open("../mining/base_fields.json", "r") as f:
-    base_fields = json.load(f) 
+    base_fields = json.load(f)
+
 
 # -----------------------------------
 # Tokenization
@@ -129,6 +131,7 @@ def tokenize_window(df_k):
     tokens.index = df_k.index  # align indexes for later merging with labels
     return tokens
 
+
 def build_token_cache_for_scenario(
     df: pd.DataFrame,
     scenario_name: str,
@@ -244,6 +247,7 @@ def build_token_cache_for_scenario(
 
     return meta_df, X_tokens_all, vocab
 
+
 def save_token_cache(
     meta_df: pd.DataFrame,
     X_tokens_all: sparse.csr_matrix,
@@ -277,7 +281,6 @@ def save_token_cache(
 
     print(f"Saving token cache for scenario '{scenario_name}' to disk...")
 
-
     meta_path = os.path.join(out_dir, meta_filename)
     matrix_path = os.path.join(out_dir, matrix_filename)
     vocab_path = os.path.join(out_dir, vocab_filename)
@@ -299,13 +302,13 @@ def save_token_cache(
     with open(vocab_path, "w", encoding="utf-8") as f:
         json.dump(token_to_col, f, ensure_ascii=False)
 
-
     print(f"Token cache saved to: {out_dir}")
+
 
 def load_token_cache(
     scenario_name: str,
     run_name: str,
-    out_base: Optional[str] = None, 
+    out_base: Optional[str] = None,
     meta_filename: str = "meta.parquet",
     matrix_filename: str = "X_tokens.npz",
     vocab_filename: str = "vocab.json",
@@ -326,7 +329,7 @@ def load_token_cache(
     if out_base is None:
         # Compute relative to the project root (msc-thesis)
         out_base = str(Path(__file__).parents[2] / "out")
-        
+
     out_dir = os.path.join(out_base, run_name, "tokens", scenario_name)
 
     print(f"Loading token cache for scenario '{scenario_name}' from disk...")
@@ -399,12 +402,12 @@ def slice_token_cache_by_time(
         X_win:
             sparse matrix slice aligned to meta_win rows
     """
-    print(f"Slicing token cache by time: {start_ts} to {end_ts} (include_end={include_end})")
+    print(
+        f"Slicing token cache by time: {start_ts} to {end_ts} (include_end={include_end})"
+    )
 
     if len(meta_df) != X_tokens_all.shape[0]:
-        raise ValueError(
-            "meta_df row count must match X_tokens_all row count"
-        )
+        raise ValueError("meta_df row count must match X_tokens_all row count")
 
     ts = pd.to_datetime(meta_df[time_col])
     start_ts = pd.to_datetime(start_ts)
@@ -424,10 +427,11 @@ def slice_token_cache_by_time(
 
     return meta_win, X_win
 
+
 def iter_precached_windows(
     scenario_name: str,
     run_name: str,
-    out_base: Optional[str] = None, 
+    out_base: Optional[str] = None,
     time_col: str = "timestamp",
     label_col: str = "y",
     window_size: str = "12H",
@@ -448,7 +452,7 @@ def iter_precached_windows(
     if out_base is None:
         # Compute relative to the project root (msc-thesis)
         out_base = str(Path(__file__).parents[2] / "out")
-        
+
     print(f"Iterating precached windows for scenario '{scenario_name}'...")
 
     meta_df, X_tokens_all, vocab = load_token_cache(
@@ -466,7 +470,7 @@ def iter_precached_windows(
 
     meta_df = meta_df.sort_values(time_col).reset_index(drop=True)
     t_s = pd.to_datetime(meta_df[time_col])
-    
+
     windows = make_time_windows(
         t_s,
         window_size=window_size,
@@ -490,4 +494,3 @@ def iter_precached_windows(
         window_has_attack = bool((y_k == 1).any())
 
         yield start_k, end_k, meta_k, X_k, y_k, window_has_attack, vocab
-

@@ -1,4 +1,4 @@
-def mem_score(cov_mem, risk_mem, cand, l=1.0):
+def mem_score(cov_mem, risk_mem, cand, mem_lambda=1.0):
     """
     Compute the symbolic memory score for a candidate feature.
 
@@ -31,7 +31,7 @@ def mem_score(cov_mem, risk_mem, cand, l=1.0):
     c = cov_mem.scores.get(f"cov::{cand}", 0.0)
     r = risk_mem.scores.get(f"risk::{cand}", 0.0)
     return (
-        c - l * r
+        c - mem_lambda * r
     )  # minus because risk should limit activation of seemingly benign candidates
 
 
@@ -57,7 +57,7 @@ def compute_memory_scores(ranking_k, cov_mem, risk_mem, mem_lambda=1.0):
     """
     ranking_k = ranking_k.copy()
     ranking_k["mem_score"] = ranking_k["candidate"].map(
-        lambda cand: mem_score(cov_mem, risk_mem, cand, l=mem_lambda)
+        lambda cand: mem_score(cov_mem, risk_mem, cand, mem_lambda=mem_lambda)
     )
     return ranking_k
 
@@ -99,6 +99,7 @@ def apply_utility_rerank(ranking_k, mem_beta=0.1):
     return ranking_k.sort_values("combined_score", ascending=False).reset_index(
         drop=True
     )
+
 
 # TODO: add here removal of candidates whose score drops below threshold?
 def update_memories_and_snapshot(

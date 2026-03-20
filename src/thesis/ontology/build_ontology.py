@@ -7,17 +7,22 @@ EX = Namespace("http://example.org/aitads#")
 
 os.makedirs("../out/ontology_out", exist_ok=True)
 
+
 def host_uri(scenario, ip):
     return EX[f"{scenario}_host_{str(ip).replace('.', '_')}"]
+
 
 def subnet_uri(scenario, subnet):
     return EX[f"{scenario}_subnet_{subnet.replace('.', '_')}"]
 
+
 def service_uri(name):
     return EX[f"service_{name}"]
 
+
 def exploit_class_uri(name):
     return EX[f"exploitClass_{str(name).strip().lower().replace(' ', '_')}"]
+
 
 def alert_type_uri(name):
     # signature strings can be messy; keep a short-ish safe ID
@@ -33,7 +38,10 @@ def subnet_of_ip(ip, k=3):
         return str(ip)
     return ".".join(parts[:k]) + ".0"
 
-def build_ontology_for_scenario(scenario, hosts_df, services_df, edges_df, alerts_df, out_path, k=3):
+
+def build_ontology_for_scenario(
+    scenario, hosts_df, services_df, edges_df, alerts_df, out_path, k=3
+):
     g = Graph()
     g.bind("ex", EX)
 
@@ -43,17 +51,16 @@ def build_ontology_for_scenario(scenario, hosts_df, services_df, edges_df, alert
     g.add((EX.Service, RDF.type, RDFS.Class))
     g.add((EX.ExploitClass, RDF.type, RDFS.Class))
     g.add((EX.AlertType, RDF.type, RDFS.Class))
-    
+
     # Properties
     g.add((EX.inSubnet, RDF.type, RDF.Property))
     g.add((EX.runsService, RDF.type, RDF.Property))
     g.add((EX.connectsTo, RDF.type, RDF.Property))
     g.add((EX.ip, RDF.type, RDF.Property))
     g.add((EX.edgeWeight, RDF.type, RDF.Property))
-    g.add((EX.hasAlertType, RDF.type, RDF.Property))       # observed on host
-    g.add((EX.edgeHasAlertType, RDF.type, RDF.Property))  
+    g.add((EX.hasAlertType, RDF.type, RDF.Property))  # observed on host
+    g.add((EX.edgeHasAlertType, RDF.type, RDF.Property))
     g.add((EX.hasExploitClass, RDF.type, RDF.Property))
-
 
     # Hosts + subnets
     scen_hosts = hosts_df[hosts_df["scenario"] == scenario].copy()
@@ -77,7 +84,9 @@ def build_ontology_for_scenario(scenario, hosts_df, services_df, edges_df, alert
             cleaned = svcs.strip()
             if cleaned.startswith("[") and cleaned.endswith("]"):
                 cleaned = cleaned[1:-1]
-            parts = [p.strip().strip("'").strip('"') for p in cleaned.split(",") if p.strip()]
+            parts = [
+                p.strip().strip("'").strip('"') for p in cleaned.split(",") if p.strip()
+            ]
         else:
             parts = []
         for sname in parts:
@@ -97,9 +106,19 @@ def build_ontology_for_scenario(scenario, hosts_df, services_df, edges_df, alert
 
     # hasExploitClass(Host, ExploitClass)
     if "exploit_class" in scen_alerts.columns:
-        for host_ip, grp in scen_alerts.dropna(subset=["host_ip"]).groupby(scen_alerts["host_ip"].astype(str)):
+        for host_ip, grp in scen_alerts.dropna(subset=["host_ip"]).groupby(
+            scen_alerts["host_ip"].astype(str)
+        ):
             h = host_uri(scenario, str(host_ip))
-            classes = sorted(set([c for c in grp["exploit_class"].dropna().astype(str) if c and c != "unknown"]))
+            classes = sorted(
+                set(
+                    [
+                        c
+                        for c in grp["exploit_class"].dropna().astype(str)
+                        if c and c != "unknown"
+                    ]
+                )
+            )
             for c in classes:
                 cu = exploit_class_uri(c)
                 g.add((cu, RDF.type, EX.ExploitClass))
@@ -149,17 +168,21 @@ def build_ontology_for_scenario(scenario, hosts_df, services_df, edges_df, alert
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     g.serialize(destination=out_path, format="turtle")
 
-def build_all_scenarios(hosts_csv, services_csv, edges_csv, alerts_csv, out_dir="../out/ontology_out", k=3):
+
+def build_all_scenarios(
+    hosts_csv, services_csv, edges_csv, alerts_csv, out_dir="../out/ontology_out", k=3
+):
     hosts_df = pd.read_csv(hosts_csv)
     services_df = pd.read_csv(services_csv)
     edges_df = pd.read_csv(edges_csv)
     alerts_df = pd.read_csv(alerts_csv)
-
 
     scenarios = sorted(set(hosts_df["scenario"]).union(set(edges_df["scenario"])))
     Path(out_dir).mkdir(parents=True, exist_ok=True)
 
     for sc in scenarios:
         out_path = Path(out_dir) / f"ontology_{sc}.ttl"
-        build_ontology_for_scenario(sc, hosts_df, services_df, edges_df, alerts_df, out_path, k=k)
+        build_ontology_for_scenario(
+            sc, hosts_df, services_df, edges_df, alerts_df, out_path, k=k
+        )
         print("Wrote", out_path)

@@ -1,14 +1,17 @@
 import pandas as pd
 import numpy as np
-import pandas as pd
 from sklearn.metrics import roc_auc_score
 import os
 import json
 
-from mining.build_features import build_dyn_features, build_static_features
-from classes import *
-from train.train import *
-from experiments.metrics import eval_subset_metrics
+from mining.build_features import (
+    build_dyn_features,
+    build_static_features,
+    build_sym_features,
+)
+from mining.classes import SymbolicMemory, FeatureSchema
+from train.train import train_eval_holdout, train_lr_l1
+from experiments.evaluation import eval_subset_metrics
 
 
 def log_row(history, out_path, row: dict):
@@ -58,14 +61,16 @@ def build_all_features(df_k: pd.DataFrame, lookback_days: int):
     window_size = pd.Timedelta(days=lookback_days)
     X_dyn, y, df_used = build_dyn_features(df_k, window_size)
     X_static = build_static_features(df_used)
-    X_sym_all = build_sym_features(df_used, X_dyn=X_dyn)
+    # X_sym_all = build_sym_features(df_used, X_dyn=X_dyn)
 
-    X_full = pd.concat([X_dyn, X_static, X_sym_all], axis=1).reset_index(drop=True)
+    # X_full = pd.concat([X_dyn, X_static, X_sym_all], axis=1).reset_index(drop=True)
+    X_full = pd.concat([X_dyn, X_static], axis=1).reset_index(drop=True)
     y = np.asarray(y)
 
     base_feats = list(X_dyn.columns) + list(X_static.columns)
-    sym_feats = [c for c in X_sym_all.columns if c.startswith("is_")]
-    return X_full, X_sym_all, y, df_used, base_feats, sym_feats
+    # sym_feats = [c for c in X_sym_all.columns if c.startswith("is_")]
+    # return X_full, X_sym_all, y, df_used, base_feats, sym_feats
+    return X_full, y, df_used, base_feats
 
 
 def count_sym_feat_fires(X_sym_all: pd.DataFrame, sym_feats: list[str]) -> dict:
@@ -232,7 +237,10 @@ def loo_ablation_fp_only(
 
     return base_stats, deltas
 
-def make_time_windows(df, window_days=7, step_days=7, ts_col="timestamp", cover_tail=True):
+
+def make_time_windows(
+    df, window_days=7, step_days=7, ts_col="timestamp", cover_tail=True
+):
     """
     Returns: list of (w_start, w_end, w_df)
     Optionally covers the tail so the last partial window is included
@@ -245,7 +253,7 @@ def make_time_windows(df, window_days=7, step_days=7, ts_col="timestamp", cover_
     end = d[ts_col].max()
 
     window = pd.Timedelta(days=float(window_days))
-    step   = pd.Timedelta(days=float(step_days))
+    step = pd.Timedelta(days=float(step_days))
 
     windows = []
     cur = start
@@ -254,7 +262,9 @@ def make_time_windows(df, window_days=7, step_days=7, ts_col="timestamp", cover_
         # generate windows until cur passes end; clamp last window end
         while cur <= end:
             w_start = cur
-            w_end = min(cur + window, end + pd.Timedelta(microseconds=1))  # include max timestamp
+            w_end = min(
+                cur + window, end + pd.Timedelta(microseconds=1)
+            )  # include max timestamp
             w = d[(d[ts_col] >= w_start) & (d[ts_col] < w_end)]
             windows.append((w_start, w_end, w))
             cur = cur + step
@@ -268,7 +278,6 @@ def make_time_windows(df, window_days=7, step_days=7, ts_col="timestamp", cover_
             cur = cur + step
 
     return windows
-
 
 
 def select_symbolic_features(
@@ -479,11 +488,11 @@ def burst_diagnostics(
 #     X_symbolic = build_sym_features(df_used, run_name, scenario_name)
 
 #     print(f"Built features: {len(X_dyn.columns)} dynamic cols, {len(X_static.columns)} static cols, {len(X_symbolic.columns)} symbolic cols")
-    
+
 #     assert len(X_symbolic) == len(df_used)
 
 #     # derive active features from what the builder emitted
-#     # Symbolic features = all "is_*" rules that fire at least once 
+#     # Symbolic features = all "is_*" rules that fire at least once
 #     sym_feats = [c for c in X_symbolic.columns if c.startswith("is_") and X_symbolic[c].sum() > 0]
 
 #     X_full = pd.concat([X_dyn, X_static, X_symbolic], axis=1)
@@ -531,6 +540,7 @@ def burst_diagnostics(
 #         "sym_feats": sym_feats,
 #         "base_feats": base_feats,
 #     }
+
 
 def simple_ablation_experiment_p(
     df,
@@ -587,10 +597,9 @@ def simple_ablation_experiment_p(
     X_sym = X_sym.reindex(df_used.index).copy()
 
     print(
-        f"Built features:",
+        "Built features:",
         # f"{len(X_dyn.columns)} dynamic cols, "
-        f"{len(X_static.columns)} static cols, "
-        f"{len(X_sym.columns)} symbolic cols"
+        f"{len(X_static.columns)} static cols, " f"{len(X_sym.columns)} symbolic cols",
     )
 
     assert len(X_sym) == len(df_used)
@@ -605,7 +614,7 @@ def simple_ablation_experiment_p(
     assert len(X_full) == len(y)
 
     # baseline
-    base_feats = list(X_static.columns) #+ list(X_dyn.columns) 
+    base_feats = list(X_static.columns)  # + list(X_dyn.columns)
     schema_base = FeatureSchema("base", base_feats)
 
     print("\nTraining BASELINE model...")
@@ -628,7 +637,9 @@ def simple_ablation_experiment_p(
     print("\nTraining BASE + ALL symbolic features...")
     schema_all = FeatureSchema("base+symbolic_all", base_feats + sym_feats)
     res_all = train_eval_holdout(X_full, y, schema_all, test_frac=0.3)
-    diag_all = burst_diagnostics(X_full, res_all) #TODO: check if you stil have need of this function
+    diag_all = burst_diagnostics(
+        X_full, res_all
+    )  # TODO: check if you stil have need of this function
 
     return {
         "base": res_base,
@@ -642,6 +653,7 @@ def simple_ablation_experiment_p(
         "sym_feats": sym_feats,
         "base_feats": base_feats,
     }
+
 
 def windowed_ablation_experiment(
     df,
@@ -830,12 +842,12 @@ def windowed_ablation_experiment(
         if use_memory:
             mem.reward_feats(topk)
 
-    
         selected_syms_k = topk  # treat topk as "selected in window k"
 
         mem_scores_selected = (
             {f: float(mem.scores.get(f, 0.0)) for f in selected_syms_k}
-            if use_memory else None
+            if use_memory
+            else None
         )
 
         # Start with empty candidate set
@@ -927,7 +939,7 @@ def greedy_symbolic_search(
 
     # derive active features from what the builder emitted
     sym_feats = [c for c in X_symbolic.columns if c.startswith("is_")]
-    sym_miss = [c for c in X_symbolic.columns if c.startswith("m_")]
+    # sym_miss = [c for c in X_symbolic.columns if c.startswith("m_")]
 
     print("Active symbolic:", sym_feats)
 
@@ -965,13 +977,11 @@ def greedy_symbolic_search(
             - lambda_fp * m["fp"]
         )
 
-
     best_score = objective(m_base, m_base)
 
     for step in range(max_k):
-
         best_candidate = None
-        best_candidate_res = None
+        # best_candidate_res = None
         best_candidate_metrics = None
         best_candidate_score = best_score
 
@@ -988,7 +998,7 @@ def greedy_symbolic_search(
             # stops when no candidate improves the objective
             if score > best_candidate_score:
                 best_candidate = f
-                best_candidate_res = res
+                # best_candidate_res = res
                 best_candidate_metrics = m
                 best_candidate_score = score
 

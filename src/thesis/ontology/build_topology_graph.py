@@ -18,10 +18,12 @@ def collapse_edges(edge_table: pd.DataFrame) -> pd.DataFrame:
     out = edge_table.dropna(subset=cols).groupby(cols)["weight"].sum().reset_index()
     return out
 
+
 def remove_isolates(G):
     G2 = G.copy()
     G2.remove_nodes_from(list(nx.isolates(G2)))
     return G2
+
 
 def add_communities(G):
     Gu = G.to_undirected()
@@ -32,6 +34,7 @@ def add_communities(G):
             node2comm[n] = i
     return node2comm
 
+
 def prune_hub_edges(G, hub_topk=2, keep_per_hub=25):
     G2 = G.copy()
     deg = dict(G2.degree())
@@ -39,14 +42,13 @@ def prune_hub_edges(G, hub_topk=2, keep_per_hub=25):
     for h in hubs:
         nbrs = list(G2.neighbors(h))
         nbrs_sorted = sorted(
-            nbrs,
-            key=lambda n: G2[h][n].get("weight", 1),
-            reverse=True
+            nbrs, key=lambda n: G2[h][n].get("weight", 1), reverse=True
         )
         for n in nbrs_sorted[keep_per_hub:]:
             if G2.has_edge(h, n):
                 G2.remove_edge(h, n)
     return G2
+
 
 def filter_edges(
     edge_table: pd.DataFrame,
@@ -122,6 +124,7 @@ def edge_df_to_graph(edge_table: pd.DataFrame, scenario: str, directed: bool = F
 
     return G
 
+
 def draw_graph(
     G,
     title: str | None = None,
@@ -152,7 +155,9 @@ def draw_graph(
     node2comm = add_communities(G)
     node_colors = [node2comm.get(n, 0) for n in G.nodes()]
 
-    nx.draw_networkx_nodes(G, pos, node_size=node_sizes, node_color=node_colors, cmap=plt.cm.tab20)
+    nx.draw_networkx_nodes(
+        G, pos, node_size=node_sizes, node_color=node_colors, cmap=plt.cm.tab20
+    )
     nx.draw_networkx_edges(G, pos, width=widths, alpha=edge_alpha)
 
     if show_labels:
@@ -181,7 +186,7 @@ def plot_scenario_topologies(
     # filtering
     collapse: bool = True,
     min_weight: int | None = 5,
-    quantile: float | None = None,   # e.g. 0.95
+    quantile: float | None = None,  # e.g. 0.95
     # simplify
     directed: bool = False,
     remove_hubs_k: int = 3,

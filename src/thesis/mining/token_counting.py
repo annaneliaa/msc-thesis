@@ -3,7 +3,6 @@ import pickle
 from itertools import combinations
 import pandas as pd
 from collections import defaultdict
-import numpy as np
 
 
 def _cache_path(cache_dir: str, cache_key: str, level: int) -> str:
@@ -28,6 +27,7 @@ def _load_level_cache(path: str):
     with open(path, "rb") as f:
         obj = pickle.load(f)
     return obj["c0"], obj["c1"], obj["n0"], obj["n1"]
+
 
 # -----------------------------------
 # Counters
@@ -69,6 +69,7 @@ def count_tokens(
 
     return c0, c1, n0, n1
 
+
 def count_itemsets(
     tokens: pd.Series,
     y: pd.Series,
@@ -105,7 +106,8 @@ def count_itemsets(
     c1 = c1.reindex(all_itemsets, fill_value=0)
 
     return c0, c1, n0, n1
- 
+
+
 def count_itemsets_apriori(
     tokens: pd.Series,
     y: pd.Series,
@@ -249,6 +251,7 @@ def count_itemsets_apriori(
 
     # Code should never reach this point
     return pd.Series(dtype=int), pd.Series(dtype=int), n0, n1
+
 
 def count_itemsets_apriori_cached(
     tokens: pd.Series,
@@ -418,6 +421,7 @@ def count_itemsets_apriori_cached(
 
     return c0_m, c1_m, n0, n1
 
+
 def count_itemsets_eclat(
     tokens: pd.Series,
     y: pd.Series,
@@ -494,11 +498,11 @@ def count_itemsets_eclat(
     # k=1 shortcut: count is exactly the postings length
     if k == 1:
         c0 = pd.Series(
-            { (tok,): len(t0) for tok, _, t0, _ in items },
+            {(tok,): len(t0) for tok, _, t0, _ in items},
             dtype=int,
         )
         c1 = pd.Series(
-            { (tok,): len(t1) for tok, _, _, t1 in items },
+            {(tok,): len(t1) for tok, _, _, t1 in items},
             dtype=int,
         )
         all_idx = c0.index.union(c1.index)
@@ -547,7 +551,7 @@ def count_itemsets_eclat(
             # build next suffix by intersecting with later items
             next_suffix = []
             if len(new_prefix) < k:
-                for tok2, tok2_all, tok2_0, tok2_1 in suffix_items[i + 1:]:
+                for tok2, tok2_all, tok2_0, tok2_1 in suffix_items[i + 1 :]:
                     inter_all = new_all & tok2_all
                     if len(inter_all) >= min_support:
                         next_suffix.append(
@@ -571,6 +575,7 @@ def count_itemsets_eclat(
     c1 = c1.reindex(all_idx, fill_value=0)
 
     return c0, c1, n0, n1
+
 
 def count_itemsets_matmul(
     tokens: pd.Series,

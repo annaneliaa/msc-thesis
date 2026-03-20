@@ -1,14 +1,15 @@
 import pandas as pd
 from typing import List, Tuple, Optional
 
+
 def attacks_per_period_report(
     df,
-    period="week",                 # "hour" | "day" | "week"
+    period="week",  # "hour" | "day" | "week"
     ts_col="timestamp",
     y_col="y",
     scenario_col=None,
     tz="UTC",
-    week_start="MON",              # "MON" (ISO) or "SUN"
+    week_start="MON",  # "MON" (ISO) or "SUN"
 ):
     """
     Returns a report of attacks/benign counts bucketed by period.
@@ -69,16 +70,24 @@ def attacks_per_period_report(
         )
         by_scenario["n_benign"] = by_scenario["n_total"] - by_scenario["n_attacks"]
         by_scenario["attack_rate"] = by_scenario["n_attacks"] / by_scenario["n_total"]
-        by_scenario["has_both_classes"] = (by_scenario["n_attacks"] > 0) & (by_scenario["n_benign"] > 0)
+        by_scenario["has_both_classes"] = (by_scenario["n_attacks"] > 0) & (
+            by_scenario["n_benign"] > 0
+        )
 
     summary = {
         f"n_{period}s": int(len(overall)),
         f"{period}s_with_attacks": int((overall["n_attacks"] > 0).sum()),
         f"{period}s_with_both_classes": int(overall["has_both_classes"].sum()),
         f"{period}s_single_class": int((~overall["has_both_classes"]).sum()),
-        f"min_attacks_per_{period}": int(overall["n_attacks"].min()) if len(overall) else 0,
-        f"median_attacks_per_{period}": float(overall["n_attacks"].median()) if len(overall) else 0.0,
-        f"max_attacks_per_{period}": int(overall["n_attacks"].max()) if len(overall) else 0,
+        f"min_attacks_per_{period}": (
+            int(overall["n_attacks"].min()) if len(overall) else 0
+        ),
+        f"median_attacks_per_{period}": (
+            float(overall["n_attacks"].median()) if len(overall) else 0.0
+        ),
+        f"max_attacks_per_{period}": (
+            int(overall["n_attacks"].max()) if len(overall) else 0
+        ),
     }
 
     return overall, by_scenario, summary

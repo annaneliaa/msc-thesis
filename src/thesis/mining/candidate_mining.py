@@ -1,13 +1,11 @@
 import pandas as pd
 import numpy as np
-import os
 from typing import Callable, Optional, Any, Dict, Union
 from pathlib import Path
 import inspect
 from scipy import sparse
 import json
 
-from classes import *
 from mining.alert_tokenization import iter_precached_windows
 from mining.build_features import add_behavioral_features, behavioral_tokens_from_df
 
@@ -23,6 +21,7 @@ CountFunction = Callable[..., tuple[pd.Series, pd.Series, int, int]]
 ScoreFunction = Callable[
     [pd.Series, pd.Series, int, int], Union[pd.Series, pd.DataFrame]
 ]
+
 
 # -----------------------------------
 # Helpers
@@ -120,6 +119,7 @@ def get_window_df(df_s, t_s, start_k, end_k):
     n_attack = int((df_k["y"] == 1).sum())
     return df_k, n_benign, n_attack, (n_attack > 0)
 
+
 def attach_tidsets_to_survivors(
     survivors: pd.DataFrame,
     x_tokens_path: str,
@@ -163,6 +163,7 @@ def attach_tidsets_to_survivors(
 
     return survivors
 
+
 # -----------------------------------
 # Miners
 # -----------------------------------
@@ -176,8 +177,8 @@ def mine_candidates(
     Count candidate occurrences in a collection of tokenized alerts.
 
     This function computes raw counts of each candidate across the provided
-    tokens and labels. 
-    
+    tokens and labels.
+
     No assumption of any temporal structure: the input
     may represent a full timeline, a single window, or any arbitrary subset
     of alerts.
@@ -282,7 +283,6 @@ def window_based_mining(
         step_size=step_size,
         align_to=align_to,
     ):
-
         print(f"Processing window {start_k} to {end_k}...")
 
         attack_flags.append(window_has_attack)
@@ -298,8 +298,7 @@ def window_based_mining(
 
         # merge behavioral tokens into cached static tokens
         meta_k["tokens"] = [
-            sorted(set(base) | set(beh))
-            for base, beh in zip(base_tokens, beh_tokens)
+            sorted(set(base) | set(beh)) for base, beh in zip(base_tokens, beh_tokens)
         ]
 
         # Choose row-level transactions

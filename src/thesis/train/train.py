@@ -41,6 +41,7 @@ def train_eval_holdout(X_full, y, schema, test_frac=0.3, time_col="timestamp"):
         - test_idx_start: integer index where test split begins (used later for support checks etc.)
         - feature_names: list of actual columns used (after schema selection)
     """
+
     def _find_valid_time_split(y, test_frac=0.3):
         n = len(y)
         split0 = int((1 - test_frac) * n)
@@ -70,10 +71,12 @@ def train_eval_holdout(X_full, y, schema, test_frac=0.3, time_col="timestamp"):
     X = df[schema.features].fillna(0)
     y = df["__y__"].to_numpy()
 
-    n = len(X)
+    # n = len(X)
     split = _find_valid_time_split(y, test_frac=test_frac)
     if split is None:
-        raise ValueError("Could not find a split where both train and test have both classes.")
+        raise ValueError(
+            "Could not find a split where both train and test have both classes."
+        )
 
     X_train, X_test = X.iloc[:split], X.iloc[split:]
     y_train, y_test = y[:split], y[split:]
@@ -137,7 +140,6 @@ def train_and_eval(
     - proba_oof: out-of-fold probabilities aligned to rows (NaN where never evaluated)
     - diagnostics: burst/auth counts + mean scores + subset AUCs (when computable)
     """
-
 
     # schema: FeatureSchema specifying which columns to use for the model
     X = X.reset_index(drop=True)
@@ -234,6 +236,7 @@ def make_train_fn(test_frac=0.3):
     """
     Returns train_fn(X_full, y, feature_list) -> result dict from train_eval_holdout with fixed holdout split fraction
     """
+
     def train_fn(X_full, y, feature_list):
         schema = FeatureSchema("tmp", feature_list)
         return train_eval_holdout(X_full, y, schema, test_frac=test_frac)

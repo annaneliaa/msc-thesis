@@ -1,6 +1,7 @@
 import numpy as np
 from sklearn.metrics import roc_auc_score
 
+
 def eval_subset_metrics(X_full, y, res_model, threshold=0.5, subset_col=None):
     split = res_model["test_idx_start"]
 

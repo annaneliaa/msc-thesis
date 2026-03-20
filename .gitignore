@@ -1,9 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Logs
+*.log
+
+# Artifacts
+artifacts/*
+!artifacts/.gitkeep
+!artifacts/*/.gitkeep
+!artifacts/*/.csv
+
+# Data 
+data/
+*.parquet
+*.csv
 *.zip
-data/*
-*.json
-.DS_Store
+
+# Pytest
+.pytest_cache/
+
+# Coverage
+.coverage
+htmlcov/
+
+# Ruff / Black cache
+.ruff_cache/
+
+# Environment variables
+.env
+
+# Old code
+archive
+
+# Output
 out
-plots
-__pycache__
-.DS_Store
-*.egg-info

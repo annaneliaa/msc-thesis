@@ -1,6 +1,7 @@
 import pandas as pd
 import re
 import os
+import json
 
 ALWAYS_BENIGN = [
     "aminer: new event type",
@@ -58,7 +59,14 @@ ATTACK_SEMANTICS = {
     },
     "webshell": {
         "structured": {
-            "ids_signature": ["c99", "r57", "webshell", "cmd=", "eval(", "base64_decode"],
+            "ids_signature": [
+                "c99",
+                "r57",
+                "webshell",
+                "cmd=",
+                "eval(",
+                "base64_decode",
+            ],
             "ids_category": ["web application attack", "trojan activity"],
             "log_source_path": ["apache", "nginx"],
         },
@@ -74,7 +82,12 @@ ATTACK_SEMANTICS = {
             "aminer_persistence_file": ["login"],
             "aminer_affected_paths": ["/model/type/login/"],
         },
-        "strong": ["failed password", "authentication failure", "invalid user", "bruteforce"],
+        "strong": [
+            "failed password",
+            "authentication failure",
+            "invalid user",
+            "bruteforce",
+        ],
         "weak": ["login", "auth", "sshd", "pam", "password"],
         "negative": ["wp-content", "xmlrpc.php"],
     },

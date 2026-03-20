@@ -644,7 +644,6 @@ def add_alert_id(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def load_alerts_from_json(output_file: str, dir_path: str):
-
     os.makedirs(os.path.dirname(os.path.join(dir_path)), exist_ok=True)
     file_name = os.path.join(dir_path, f"{output_file}.parquet")
     print(f"Writing data to {file_name}...\n")
@@ -652,7 +651,6 @@ def load_alerts_from_json(output_file: str, dir_path: str):
     df = load_alerts_raw(dir_path)
     df = add_parsed_fields(df)
     # df = add_semantic_features(df)
-
 
     df.to_parquet(file_name, index=False)
     print("Done.")

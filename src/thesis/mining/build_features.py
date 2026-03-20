@@ -1,6 +1,6 @@
 import pandas as pd
-import numpy as np
 from collections import deque, defaultdict
+
 
 # -----------------------------------
 # Helpers
@@ -15,6 +15,7 @@ def normalize_groups(x):
         return [g.strip().strip("'\"").lower() for g in s.split(",") if g.strip()]
     return []
 
+
 # -----------------------------------
 # Static features
 # -----------------------------------
@@ -24,22 +25,32 @@ def build_static_features(df):
     X = pd.DataFrame(index=df.index)
 
     X["source_aminer"] = (df.get("source") == "aminer").astype(int)
-    X["source_wazuh"]  = (df.get("source") == "wazuh").astype(int)
+    X["source_wazuh"] = (df.get("source") == "wazuh").astype(int)
 
     # severity-like (robust to missing cols)
-    X["wazuh_level"] = pd.to_numeric(df.get("wazuh_level", 0), errors="coerce").fillna(0)
-    X["ids_severity"] = pd.to_numeric(df.get("ids_severity", 0), errors="coerce").fillna(0)
+    X["wazuh_level"] = pd.to_numeric(df.get("wazuh_level", 0), errors="coerce").fillna(
+        0
+    )
+    X["ids_severity"] = pd.to_numeric(
+        df.get("ids_severity", 0), errors="coerce"
+    ).fillna(0)
 
     # presence
-    X["has_username"] = df.get("username").notna().astype(int) if "username" in df else 0
-    X["has_procname"] = df.get("procname").notna().astype(int) if "procname" in df else 0
-    X["has_rule_id"]  = df.get("rule_id").notna().astype(int) if "rule_id" in df else 0
-    X["has_mitre"]    = df.get("mitre_ids").notna().astype(int) if "mitre_ids" in df else 0
+    X["has_username"] = (
+        df.get("username").notna().astype(int) if "username" in df else 0
+    )
+    X["has_procname"] = (
+        df.get("procname").notna().astype(int) if "procname" in df else 0
+    )
+    X["has_rule_id"] = df.get("rule_id").notna().astype(int) if "rule_id" in df else 0
+    X["has_mitre"] = df.get("mitre_ids").notna().astype(int) if "mitre_ids" in df else 0
 
     # simple network structure
     srcip = df.get("srcip", "").fillna("").astype(str)
     dstip = df.get("dstip", "").fillna("").astype(str)
-    X["is_internal_ip"] = srcip.str.startswith(("10.", "192.168.", "172.16."), na=False).astype(int)
+    X["is_internal_ip"] = srcip.str.startswith(
+        ("10.", "192.168.", "172.16."), na=False
+    ).astype(int)
     X["src_eq_dst"] = ((srcip != "") & (srcip == dstip)).astype(int)
 
     return X
@@ -150,6 +161,7 @@ def build_static_features(df):
 
 #     return X_static
 
+
 # -----------------------------------
 # Dynamic features
 # -----------------------------------
@@ -226,6 +238,7 @@ def build_dyn_features(df, window_size):
 
     return X, y, df
 
+
 # -----------------------------------
 # Symbolic features
 # -----------------------------------
@@ -235,6 +248,7 @@ def build_dyn_features(df, window_size):
 #         scenario=scenario_name,
 #         run_name=run_name,
 #     )
+
 
 # -----------------------------------
 # Behavioral features
@@ -273,6 +287,7 @@ def add_behavioral_features(df, time_col="timestamp", src_col="srcip", dst_col="
     )
 
     return df
+
 
 def behavioral_tokens_from_df(df: pd.DataFrame) -> pd.Series:
     out = []

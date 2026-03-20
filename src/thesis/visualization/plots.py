@@ -9,6 +9,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.manifold import TSNE
 from sklearn.metrics.pairwise import cosine_distances
 
+
 # -------------------------
 # Loading + preprocessing + formatting helpers
 # -------------------------
@@ -26,9 +27,11 @@ def _ensure_dir(path: str):
     os.makedirs(path, exist_ok=True)
     return path
 
+
 def _safe_name(s: str) -> str:
     # keep letters, numbers, underscore, dash
     return re.sub(r"[^a-zA-Z0-9_\-]+", "_", str(s)).strip("_")
+
 
 def _as_dict(x):
     if isinstance(x, dict):
@@ -56,6 +59,7 @@ def load_fp_only_history_jsonl(jsonl_path: str) -> pd.DataFrame:
         df = df[df["mode"] == "fp_only"].copy()
     return df
 
+
 def prepare_fp_only_window_metrics(df: pd.DataFrame) -> pd.DataFrame:
     """
     Parses train_window -> train_start/train_end and flattens suppression_all_or into numeric columns.
@@ -64,16 +68,26 @@ def prepare_fp_only_window_metrics(df: pd.DataFrame) -> pd.DataFrame:
     d = df.copy()
 
     arrow = "→"
-    d["train_start"] = pd.to_datetime(d["train_window"].str.split(arrow).str[0], errors="coerce")
-    d["train_end"]   = pd.to_datetime(d["train_window"].str.split(arrow).str[1], errors="coerce")
+    d["train_start"] = pd.to_datetime(
+        d["train_window"].str.split(arrow).str[0], errors="coerce"
+    )
+    d["train_end"] = pd.to_datetime(
+        d["train_window"].str.split(arrow).str[1], errors="coerce"
+    )
     d = d.sort_values(["scenario", "train_start", "k"]).reset_index(drop=True)
 
     d["suppression_all_or"] = d["suppression_all_or"].apply(_as_dict)
 
     cols = [
-        "supp_rate_total","supp_rate_benign","supp_rate_attack",
-        "suppressed_next_total","suppressed_next_benign","suppressed_next_attack",
-        "total_next","total_benign_next","total_attack_next"
+        "supp_rate_total",
+        "supp_rate_benign",
+        "supp_rate_attack",
+        "suppressed_next_total",
+        "suppressed_next_benign",
+        "suppressed_next_attack",
+        "total_next",
+        "total_benign_next",
+        "total_attack_next",
     ]
     for col in cols:
         d[col] = d["suppression_all_or"].apply(lambda dd: dd.get(col, np.nan))
@@ -82,6 +96,7 @@ def prepare_fp_only_window_metrics(df: pd.DataFrame) -> pd.DataFrame:
         d[col] = pd.to_numeric(d[col], errors="coerce")
 
     return d
+
 
 def flatten_fp_only_history(df_hist: pd.DataFrame) -> pd.DataFrame:
     """
@@ -109,37 +124,40 @@ def flatten_fp_only_history(df_hist: pd.DataFrame) -> pd.DataFrame:
         for feat, stats in per_feat.items():
             stats = _as_dict(stats)
 
-            rows.append({
-                "scenario": scen,
-                "k": k,
-                "train_window": tw,
-                "feature": feat,
-
-                "suppressed_benign": stats.get("suppressed_next_benign", np.nan),
-                "suppressed_attack": stats.get("suppressed_next_attack", np.nan),
-                "suppressed_total":  stats.get("suppressed_next_total", np.nan),
-
-                "total_benign": stats.get("total_benign_next", np.nan),
-                "total_attack": stats.get("total_attack_next", np.nan),
-                "total":        stats.get("total_next", np.nan),
-
-                "supp_rate_benign": stats.get("supp_rate_benign", np.nan),
-                "supp_rate_attack": stats.get("supp_rate_attack", np.nan),
-                "supp_rate_total":  stats.get("supp_rate_total", np.nan),
-            })
+            rows.append(
+                {
+                    "scenario": scen,
+                    "k": k,
+                    "train_window": tw,
+                    "feature": feat,
+                    "suppressed_benign": stats.get("suppressed_next_benign", np.nan),
+                    "suppressed_attack": stats.get("suppressed_next_attack", np.nan),
+                    "suppressed_total": stats.get("suppressed_next_total", np.nan),
+                    "total_benign": stats.get("total_benign_next", np.nan),
+                    "total_attack": stats.get("total_attack_next", np.nan),
+                    "total": stats.get("total_next", np.nan),
+                    "supp_rate_benign": stats.get("supp_rate_benign", np.nan),
+                    "supp_rate_attack": stats.get("supp_rate_attack", np.nan),
+                    "supp_rate_total": stats.get("supp_rate_total", np.nan),
+                }
+            )
 
     out = pd.DataFrame(rows)
 
     # Ensure numeric
-    num_cols = [c for c in out.columns if c not in ("scenario", "train_window", "feature")]
+    num_cols = [
+        c for c in out.columns if c not in ("scenario", "train_window", "feature")
+    ]
     for c in num_cols:
         out[c] = pd.to_numeric(out[c], errors="coerce")
 
     return out
 
+
 # -------------------------
 # Plot functions
 # -------------------------
+
 
 # ROC curve
 def plot_roc(y_true, proba, d, title_suffix="", out_dir="../plots"):
@@ -257,14 +275,15 @@ def plot_symbolic_performance_delta(
     plt.bar(delta_sorted.index, delta_sorted.abs(), color=colors)
 
     plt.ylabel(f"|Δ {metric.upper()}| vs baseline")
-    plt.title(f"Delta AUC (abl.) symbolic features on {metric.upper()}, scenario={scenario_name}")
+    plt.title(
+        f"Delta AUC (abl.) symbolic features on {metric.upper()}, scenario={scenario_name}"
+    )
 
     plt.xticks(fontsize=6)
     plt.xticks(rotation=30, ha="right")
     plt.tight_layout()
 
-    fname = f"{scenario_name}_sym_delta.png"
-    plt.savefig(os.path.join(out_dir, fname))
+    plt.savefig(os.path.join(out_dir, f"{scenario_name}_sym_delta.png"))
     plt.show()
 
 
@@ -313,8 +332,11 @@ def plot_symbolic_score_shift(
     plt.title(f"Score shift ({feature}) on all test-set alerts with feature active.")
     plt.tight_layout()
 
-    fname = f"{_safe_name(prefix)}score_shift_{_safe_name(feature)}.png"
-    plt.savefig(os.path.join(out_dir, fname))
+    plt.savefig(
+        os.path.join(
+            out_dir, f"{_safe_name(prefix)}score_shift_{_safe_name(feature)}.png"
+        )
+    )
 
 
 # function that plots score-shifts separately for true attacks (y=1) and benign (y=0)
@@ -437,6 +459,7 @@ def plot_fp_to_tn(
 
     return stats
 
+
 def plot_per_feature_fp_suppression_timeseries(
     jsonl_path,
     scenario_name,
@@ -444,14 +467,13 @@ def plot_per_feature_fp_suppression_timeseries(
     use_memory,
     tau,
     topk=12,
-    value_key="suppressed_next_benign",   # or "suppressed_next_total"
-    min_windows_on=1,                     # filter features that appear in >= this many windows
+    value_key="suppressed_next_benign",  # or "suppressed_next_total"
+    min_windows_on=1,  # filter features that appear in >= this many windows
 ):
-    
     out_path = os.path.join(out_dir, scenario_name)
     os.makedirs(out_path, exist_ok=True)
     print(f"Saving plot to {out_path}...")
-    
+
     # -------- load jsonl --------
     rows = []
     with open(jsonl_path, "r", encoding="utf-8") as f:
@@ -469,7 +491,9 @@ def plot_per_feature_fp_suppression_timeseries(
 
     # parse train_start for x-axis
     arrow = "→"
-    df["train_start"] = pd.to_datetime(df["train_window"].str.split(arrow).str[0], errors="coerce")
+    df["train_start"] = pd.to_datetime(
+        df["train_window"].str.split(arrow).str[0], errors="coerce"
+    )
     df = df.sort_values(["train_start", "k"]).reset_index(drop=True)
 
     # -------- flatten suppression_per_feat into long format --------
@@ -480,25 +504,27 @@ def plot_per_feature_fp_suppression_timeseries(
         per_feat = r["suppression_per_feat"] or {}
         for feat, stats in per_feat.items():
             stats = _as_dict(stats)
-            long_rows.append({
-                "train_start": r["train_start"],
-                "k": r["k"],
-                "feature": feat,
-                "value": stats.get(value_key, np.nan),
-            })
+            long_rows.append(
+                {
+                    "train_start": r["train_start"],
+                    "k": r["k"],
+                    "feature": feat,
+                    "value": stats.get(value_key, np.nan),
+                }
+            )
 
     long = pd.DataFrame(long_rows)
     if long.empty:
-        print(f"No per-feature stats found in suppression_per_feat for scenario='{scenario_name}'.")
+        print(
+            f"No per-feature stats found in suppression_per_feat for scenario='{scenario_name}'."
+        )
         return
 
     long["value"] = pd.to_numeric(long["value"], errors="coerce")
 
     # pick top-k features by total suppression over time (so plot isn't unreadable)
     feat_totals = (
-        long.groupby("feature")["value"]
-        .sum(min_count=1)
-        .sort_values(ascending=False)
+        long.groupby("feature")["value"].sum(min_count=1).sort_values(ascending=False)
     )
 
     # optional: require feature to show up in enough windows
@@ -517,19 +543,34 @@ def plot_per_feature_fp_suppression_timeseries(
 
     plt.xlabel("Train window start date")
     plt.ylabel(f"{value_key} (single feature on NEXT window)")
-    plt.title(f"{scenario_name}: per-feature FP suppression timeseries (useMem={use_memory},tau={tau})")
+    plt.title(
+        f"{scenario_name}: per-feature FP suppression timeseries (useMem={use_memory},tau={tau})"
+    )
     plt.grid(True, alpha=0.3)
     plt.legend(fontsize=5, ncol=1)
     plt.tight_layout()
 
     plt.savefig(out_path)
 
+
 def plot_suppression_rates(df_prepped: pd.DataFrame, figsize=(12, 6), legend_ncol=2):
     """Plot benign vs attack suppression rate over time per scenario (from suppression_all_or)."""
     plt.figure(figsize=figsize)
     for scenario, g in df_prepped.groupby("scenario"):
-        plt.plot(g["train_start"], g["supp_rate_benign"], marker="o", linestyle="-", label=f"{scenario} benign")
-        plt.plot(g["train_start"], g["supp_rate_attack"], marker="x", linestyle="--", label=f"{scenario} attack")
+        plt.plot(
+            g["train_start"],
+            g["supp_rate_benign"],
+            marker="o",
+            linestyle="-",
+            label=f"{scenario} benign",
+        )
+        plt.plot(
+            g["train_start"],
+            g["supp_rate_attack"],
+            marker="x",
+            linestyle="--",
+            label=f"{scenario} attack",
+        )
 
     plt.ylim(-0.02, 1.02)
     plt.xlabel("Train window start date")
@@ -540,16 +581,31 @@ def plot_suppression_rates(df_prepped: pd.DataFrame, figsize=(12, 6), legend_nco
     plt.tight_layout()
     plt.show()
 
+
 def plot_suppressed_counts(df_prepped: pd.DataFrame, figsize=(12, 6), legend_ncol=2):
     """Plot benign vs attack suppressed counts over time per scenario (from suppression_all_or)."""
     plt.figure(figsize=figsize)
     for scenario, g in df_prepped.groupby("scenario"):
-        plt.plot(g["train_start"], g["suppressed_next_benign"], marker="o", linestyle="-", label=f"{scenario} suppressed benign")
-        plt.plot(g["train_start"], g["suppressed_next_attack"], marker="x", linestyle="--", label=f"{scenario} suppressed attack")
+        plt.plot(
+            g["train_start"],
+            g["suppressed_next_benign"],
+            marker="o",
+            linestyle="-",
+            label=f"{scenario} suppressed benign",
+        )
+        plt.plot(
+            g["train_start"],
+            g["suppressed_next_attack"],
+            marker="x",
+            linestyle="--",
+            label=f"{scenario} suppressed attack",
+        )
 
     plt.xlabel("Train window start date")
     plt.ylabel("# suppressed in NEXT window (OR of all candidate rules)")
-    plt.title("How many alerts are suppressed by the FP-only symbolic filter (next window)")
+    plt.title(
+        "How many alerts are suppressed by the FP-only symbolic filter (next window)"
+    )
     plt.grid(True, alpha=0.3)
     plt.legend(ncol=legend_ncol, fontsize=9)
     plt.tight_layout()
@@ -560,7 +616,9 @@ def plot_tradeoff_scatter(df_prepped: pd.DataFrame, figsize=(7.5, 6)):
     """Scatter of attack suppression rate vs benign suppression rate (each point = one window)."""
     plt.figure(figsize=figsize)
     for scenario, g in df_prepped.groupby("scenario"):
-        plt.scatter(g["supp_rate_attack"], g["supp_rate_benign"], label=scenario, alpha=0.8)
+        plt.scatter(
+            g["supp_rate_attack"], g["supp_rate_benign"], label=scenario, alpha=0.8
+        )
 
     plt.xlim(-0.02, 1.02)
     plt.ylim(-0.02, 1.02)
@@ -572,15 +630,16 @@ def plot_tradeoff_scatter(df_prepped: pd.DataFrame, figsize=(7.5, 6)):
     plt.tight_layout()
     plt.show()
 
+
 def plot_fp_only_feature_suppression(
     df_hist_or_path,
     out_dir,
     use_memory,
     tau,
     topk: int = 15,
-    metric: str = "suppressed_benign",   # or "supp_rate_benign"
-    agg: str = "sum",                    # "sum" or "mean"
-    show_attack_suppressed: bool = True  # annotate attack suppressed on bars
+    metric: str = "suppressed_benign",  # or "supp_rate_benign"
+    agg: str = "sum",  # "sum" or "mean"
+    show_attack_suppressed: bool = True,  # annotate attack suppressed on bars
 ):
     """
     Plot per scenario: symbolic features ranked by FP suppression.
@@ -603,7 +662,9 @@ def plot_fp_only_feature_suppression(
 
     long = flatten_fp_only_history(df_hist)
     if long.empty:
-        print("No fp_only per-feature rows found. Check that 'suppression_per_feat' is present.")
+        print(
+            "No fp_only per-feature rows found. Check that 'suppression_per_feat' is present."
+        )
         return long
 
     if metric not in long.columns:
@@ -612,16 +673,15 @@ def plot_fp_only_feature_suppression(
     agg_fn = np.sum if agg == "sum" else np.mean
     group_cols = ["scenario", "feature"]
 
-    summary = (
-        long.groupby(group_cols, as_index=False)
-            .agg({
-                metric: agg_fn,
-                "suppressed_attack": np.sum,   # useful safety signal
-                "suppressed_total": np.sum,
-                "total_benign": np.sum,
-                "total_attack": np.sum,
-                "total": np.sum,
-            })
+    summary = long.groupby(group_cols, as_index=False).agg(
+        {
+            metric: agg_fn,
+            "suppressed_attack": np.sum,  # useful safety signal
+            "suppressed_total": np.sum,
+            "total_benign": np.sum,
+            "total_attack": np.sum,
+            "total": np.sum,
+        }
     )
 
     for scen in sorted(summary["scenario"].dropna().unique()):
@@ -632,7 +692,9 @@ def plot_fp_only_feature_suppression(
 
         plt.figure(figsize=(10, 6))
         plt.barh(sub["feature"], sub[metric])
-        plt.title(f"{scen} — top {topk} sym feats by {agg}({metric}), (useMem={use_memory},tau={tau})")
+        plt.title(
+            f"{scen} — top {topk} sym feats by {agg}({metric}), (useMem={use_memory},tau={tau})"
+        )
         plt.xlabel(f"{agg}({metric})")
         plt.xscale("log")
         plt.grid(axis="x", alpha=0.3)
@@ -641,15 +703,24 @@ def plot_fp_only_feature_suppression(
             # annotate attacks suppressed (safety) on the bars
             for i, (_, row) in enumerate(sub.iterrows()):
                 val = row[metric]
-                atk = int(row["suppressed_attack"]) if np.isfinite(row["suppressed_attack"]) else 0
-                plt.text(val if np.isfinite(val) else 0, i, f"  attack_supp={atk}", va="center")
+                atk = (
+                    int(row["suppressed_attack"])
+                    if np.isfinite(row["suppressed_attack"])
+                    else 0
+                )
+                plt.text(
+                    val if np.isfinite(val) else 0,
+                    i,
+                    f"  attack_supp={atk}",
+                    va="center",
+                )
 
         plt.tight_layout()
 
-
-        plt.savefig(os.path.join(out_dir, scen))
+        plt.savefig(os.path.join(out_dir, fname))
 
     return long, summary
+
 
 def plot_suppression_from_res(
     res,
@@ -715,6 +786,7 @@ def plot_suppression_from_res(
 
     return df_plot
 
+
 def plot_class_histogram(df, label_col="y"):
     counts = df[label_col].value_counts().sort_index()
 
@@ -726,6 +798,7 @@ def plot_class_histogram(df, label_col="y"):
     plt.title("Class Distribution")
     plt.tight_layout()
     plt.show()
+
 
 def plot_token_semantic_scatter(
     ranking: pd.DataFrame,
@@ -749,8 +822,10 @@ def plot_token_semantic_scatter(
 
     # Optional: cap points for speed (keeps most supported ones if present)
     if "support_total" in ranking.columns:
-        df = ranking[[token_col, p_col, "support_total"]].dropna().sort_values(
-            "support_total", ascending=False
+        df = (
+            ranking[[token_col, p_col, "support_total"]]
+            .dropna()
+            .sort_values("support_total", ascending=False)
         )
         df = df.head(max_points).copy()
     else:
@@ -798,6 +873,7 @@ def plot_token_semantic_scatter(
 
     return df.assign(tsne_x=Z[:, 0], tsne_y=Z[:, 1], category=labels)
 
+
 def plot_scenario_heatmap(
     rankings,
     attack_flags,
@@ -811,7 +887,8 @@ def plot_scenario_heatmap(
     score_col="combined_score",
     support_col="support_total",
     vmin=None,
-    vmax=None):
+    vmax=None,
+):
     """
     Plot a candidate x window heatmap, where each cell denotes the FP contrast score for that candiate (=token or token itemset) in that window, for a given scenario.
 
@@ -845,8 +922,10 @@ def plot_scenario_heatmap(
     label_map = {}
     for ranking_k in rankings:
         if "candidate_str" in ranking_k.columns:
-            label_map.update(dict(zip(ranking_k["candidate"], ranking_k["candidate_str"])))
-            
+            label_map.update(
+                dict(zip(ranking_k["candidate"], ranking_k["candidate_str"]))
+            )
+
     # Collect all tokens across windows
 
     # Collect all candidates across windows
@@ -856,8 +935,8 @@ def plot_scenario_heatmap(
     cols = []
     for w, ranking_k in enumerate(rankings):
         s = pd.Series(ranking_k[score_col].values, index=ranking_k["candidate"])
-        s = s[~s.index.duplicated(keep="first")]   # safety
-        cols.append(s.reindex(all_tokens))         # NaN if absent
+        s = s[~s.index.duplicated(keep="first")]  # safety
+        cols.append(s.reindex(all_tokens))  # NaN if absent
     score_df = pd.concat(cols, axis=1)
     score_df.columns = range(len(cols))  # window indices 0..W-1
 
@@ -866,7 +945,9 @@ def plot_scenario_heatmap(
     importance = score_df.abs().mean(axis=1, skipna=True)
 
     score_df = score_df.loc[importance.sort_values(ascending=False).index]
-    top_tokens = score_df.head(top_n).index if order == "desc" else score_df.tail(top_n).index
+    top_tokens = (
+        score_df.head(top_n).index if order == "desc" else score_df.tail(top_n).index
+    )
     heatmap_df = score_df.loc[top_tokens]
 
     # Set fixed color scale so heatmaps are comparable across scenarios
@@ -874,16 +955,17 @@ def plot_scenario_heatmap(
         max_abs = np.abs(heatmap_df.values).max()
         vmin = -max_abs
         vmax = max_abs
-        
+
     # Plot heatmap
     plt.figure(figsize=(12, 6))
-    im = plt.imshow(heatmap_df.values, aspect="auto", cmap="berlin", vmin=vmin, vmax=vmax)
+    im = plt.imshow(
+        heatmap_df.values, aspect="auto", cmap="berlin", vmin=vmin, vmax=vmax
+    )
 
     plt.colorbar(im, label=score_col)
     yticklabels = [label_map.get(c, str(c)) for c in heatmap_df.index]
     plt.yticks(range(len(heatmap_df.index)), yticklabels, fontsize=8)
     plt.xticks(range(len(heatmap_df.columns)), heatmap_df.columns)
-
 
     ax = plt.gca()
     for i, label in enumerate(ax.get_xticklabels()):
@@ -892,9 +974,12 @@ def plot_scenario_heatmap(
 
     plt.xlabel("Window index")
     plt.ylabel("Candidate")
-    plt.title(f"Benign token importance across windows (scenario={scenario}, miner={miner_name}, scorer={scorer_name}, min_support={min_total_support}, order={order})")
+    plt.title(
+        f"Benign token importance across windows (scenario={scenario}, miner={miner_name}, scorer={scorer_name}, min_support={min_total_support}, order={order})"
+    )
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, f"token_heatmap_{scenario}"))
+
 
 def plot_utility_heatmap(
     scenario_memory_entry: dict,
@@ -994,18 +1079,31 @@ def plot_active_set(
 
     # pick top rows by frequency of activation
     freq = {c: sum(c in s for s in active_sets) for c in all_active}
-    top_cands = [c for c, _ in sorted(freq.items(), key=lambda kv: kv[1], reverse=True)[:top_n_rows]]
+    top_cands = [
+        c
+        for c, _ in sorted(freq.items(), key=lambda kv: kv[1], reverse=True)[
+            :top_n_rows
+        ]
+    ]
 
-    bin_mat = np.array([[1 if c in active_sets[w] else 0 for w in range(len(active_sets))] for c in top_cands])
+    bin_mat = np.array(
+        [
+            [1 if c in active_sets[w] else 0 for w in range(len(active_sets))]
+            for c in top_cands
+        ]
+    )
 
     plt.figure(figsize=(12, 0.35 * len(top_cands) + 3))
     im = plt.imshow(bin_mat, aspect="auto", cmap=cmap, vmin=0, vmax=1)
     plt.colorbar(im, label="active (1/0)")
     plt.yticks(range(len(top_cands)), [str(c) for c in top_cands], fontsize=8)
     plt.xticks(range(len(win_labels)), win_labels, rotation=90, fontsize=8)
-    plt.title(f"Active set membership — {scenario} (top {top_n_rows} by activation freq)")
+    plt.title(
+        f"Active set membership — {scenario} (top {top_n_rows} by activation freq)"
+    )
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, f"active_set_{scenario}"))
+
 
 def plot_all(X, results, d, run_name="default"):
     out_dir = _ensure_dir(os.path.join("../plots", _safe_name(run_name)))

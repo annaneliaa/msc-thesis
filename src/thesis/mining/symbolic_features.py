@@ -1,12 +1,11 @@
 import os
 import ast
 import json
-from glob import glob
 import pandas as pd
 import numpy as np
-from pathlib import Path
 from typing import Optional
 from scipy import sparse
+
 
 def _candidate_to_tokens(candidate_str: str) -> list[str]:
     """
@@ -31,6 +30,7 @@ def normalize_token(t: str) -> str:
         return ""
     t = str(t).strip()
     return t
+
 
 def _load_vocab_token_to_col(vocab_path: str) -> dict[str, int]:
     with open(vocab_path, "r", encoding="utf-8") as f:
@@ -80,7 +80,9 @@ def _attach_tx_id_from_meta(
 
     if out[tx_col].isna().any():
         n_missing = int(out[tx_col].isna().sum())
-        raise ValueError(f"{n_missing} rows in df_used could not be matched to cached meta")
+        raise ValueError(
+            f"{n_missing} rows in df_used could not be matched to cached meta"
+        )
 
     out[tx_col] = out[tx_col].astype(np.int64)
     return out
@@ -188,8 +190,7 @@ def build_symbolic_features_from_candidates_cached(
     tx_to_row = {int(tx): i for i, tx in enumerate(df_tx_ids)}
 
     candidates_df = (
-        surviving_candidates_df
-        .dropna(subset=["candidate_str"])
+        surviving_candidates_df.dropna(subset=["candidate_str"])
         .drop_duplicates(subset=["candidate_str"])
         .copy()
     )

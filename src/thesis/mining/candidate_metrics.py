@@ -1,6 +1,7 @@
 import pandas as pd
 from typing import Callable, Union
 import numpy as np
+
 # -----------------------------------
 # Interfaces
 # -----------------------------------
@@ -229,6 +230,7 @@ def compute_candidate_metrics(
 
     return df
 
+
 def compute_stability_metrics_over_windows(
     mined_df: pd.DataFrame,
     eps: float = 1e-12,
@@ -296,6 +298,7 @@ def compute_stability_metrics_over_windows(
 
     return df.merge(stats, on="candidate", how="left")
 
+
 def compute_tfidf_score(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
@@ -326,6 +329,7 @@ def compute_tfidf_score(df: pd.DataFrame) -> pd.DataFrame:
     )
 
     return df.merge(tfidf_summary, on="candidate", how="left")
+
 
 def compute_discriminative_power_metrics(
     df: pd.DataFrame,
