@@ -1,0 +1,15 @@
+app:
+  name: "msc-thesis"
+  env: "dev"
+  host: "127.0.0.1"
+  port: 8000
+
+artifacts:
+  base_dir: "artifacts"
+  model_dir: "artifacts/models"
+  mining_dir: "artifacts/mining"
+  runs_dir: "artifacts/runs"
+
+model:
+  model_name: "dummy-model"
+  model_version: "0.1.0"

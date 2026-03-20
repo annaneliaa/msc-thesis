@@ -6,3 +6,4 @@ out
 plots
 __pycache__
 .DS_Store
+*.egg-info
