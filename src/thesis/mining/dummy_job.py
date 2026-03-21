@@ -3,11 +3,17 @@ from pathlib import Path
 
 import pandas as pd
 
-from thesis.paths import MINING_DIR, ensure_artifact_dirs
+from thesis.paths import ensure_artifact_dirs
+from thesis.schemas.mining import MiningMetadata
+
+
+from thesis.utils.runs import create_run_dir, save_dataframe_artifact, write_manifest
 
 
 def run_dummy_mining_job(run_name: str = "debug") -> Path:
     ensure_artifact_dirs()
+
+    run_dir = create_run_dir(run_name)
 
     df = pd.DataFrame(
         [
@@ -16,7 +22,18 @@ def run_dummy_mining_job(run_name: str = "debug") -> Path:
         ]
     )
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_path = MINING_DIR / f"{run_name}_{timestamp}.csv"
-    df.to_csv(out_path, index=False)
-    return out_path
+    save_dataframe_artifact(df, run_dir, "candidates")
+
+    meta = MiningMetadata(
+        run_name=run_name,
+        n_candidates=len(df),
+        timestamp=datetime.utcnow(),
+    )
+
+    write_manifest(
+        run_dir,
+        config={"run_name": run_name},
+        metadata=meta.model_dump(),
+    )
+
+    return str(run_dir)

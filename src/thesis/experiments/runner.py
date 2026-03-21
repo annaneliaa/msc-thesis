@@ -13,6 +13,10 @@ from mining.classes import SymbolicMemory, FeatureSchema
 from train.train import train_eval_holdout, train_lr_l1
 from experiments.evaluation import eval_subset_metrics
 
+"""
+This file will be the pipeline entry point.
+"""
+
 
 def log_row(history, out_path, row: dict):
     """
@@ -300,7 +304,7 @@ def select_symbolic_features(
     Returns selected features to keep active in next window based on 1-feature ablation results from current window.
 
     In FP-only windows (no attacks in the test split),
-    the objective is:  "reduce false positives / alerts" because AUC is undefined and you don't want any FN increase.
+    the objective is:  "reduce false positives / alerts" because AUC is undefined and we don't want any FN increase.
 
     In classification windows (both classes in test split), objective becomes:
         "do not hurt discrimination (AUC) and do not explode false positives"

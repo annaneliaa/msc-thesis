@@ -27,12 +27,18 @@ class ModelConfig(BaseModel):
     model_version: str = "0.1.0"
 
 
+class EncoderConfig(BaseModel):
+    encoder_name: str = "dummy-encoder"
+    encoder_version: str = "0.1.0"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="THESIS_", extra="ignore")
 
     app: AppConfig = AppConfig()
     artifacts: ArtifactConfig = ArtifactConfig()
     model: ModelConfig = ModelConfig()
+    encoder: EncoderConfig = EncoderConfig()
 
 
 def load_yaml_config(path: Path) -> dict[str, Any]:

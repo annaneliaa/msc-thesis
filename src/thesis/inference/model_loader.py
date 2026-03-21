@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 from thesis.config import Settings
+from thesis.registry.models import get_model_path
 
 
 @dataclass
@@ -15,6 +16,10 @@ class DummyModel:
 
 
 def load_model(settings: Settings) -> DummyModel:
+    path = get_model_path(settings.model.model_name, settings.model.model_version)
+
+    print("Loading model from path: ", path)
+
     return DummyModel(
         model_name=settings.model.model_name,
         model_version=settings.model.model_version,
