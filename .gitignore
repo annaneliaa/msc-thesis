@@ -55,9 +55,6 @@ archive
 # Output
 out
 
-# Github
-.github
-
 # Docker
 .dockerignore
 
