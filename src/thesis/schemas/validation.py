@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from thesis.schemas.definitions import SCHEMAS
+from thesis.schemas.dataframe_schemas import SCHEMAS
 
 
 class SchemaValidationError(ValueError):

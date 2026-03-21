@@ -16,6 +16,7 @@ dependencies = [
   "pyyaml>=6.0",
   "typer>=0.12",
   "pandas>=2.2",
+  "mlflow>=2.12",
 ]
 
 [project.optional-dependencies]
