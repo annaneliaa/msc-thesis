@@ -2,7 +2,7 @@ from fastapi import FastAPI
 
 from thesis.config import load_settings
 from thesis.inference.model_loader import load_model
-from thesis.inference.schemas import PredictRequest, PredictResponse
+from thesis.schemas.inference import PredictRequest, PredictResponse
 from thesis.inference.service import predict_text
 from thesis.paths import ensure_artifact_dirs
 

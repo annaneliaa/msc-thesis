@@ -1,5 +1,5 @@
 from thesis.inference.model_loader import DummyModel
-from thesis.inference.schemas import PredictResponse
+from thesis.schemas.inference import PredictResponse
 
 
 def predict_text(model: DummyModel, text: str) -> PredictResponse:
