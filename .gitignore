@@ -54,3 +54,13 @@ archive
 
 # Output
 out
+
+# Github
+.github
+
+# Docker
+.dockerignore
+
+# ML Flow
+!mlruns
+mlruns/*
