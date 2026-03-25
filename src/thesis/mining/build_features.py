@@ -250,6 +250,10 @@ def build_dyn_features(df, window_size):
 #     )
 
 
+def build_sym_features(df, run_name, scenario_name):
+    return 0
+
+
 # -----------------------------------
 # Behavioral features
 # -----------------------------------

@@ -2,7 +2,7 @@ import pandas as pd
 import json
 import ast
 from typing import List, Optional
-from util import make_time_windows
+from utils.util import make_time_windows
 from pathlib import Path
 from scipy import sparse
 import numpy as np
