@@ -132,3 +132,49 @@ def make_time_windows(
         cur += step
 
     return windows
+
+
+def make_time_windows_unix(
+    t: pd.Series,
+    window_size: str = "3D",
+    step_size: str = "3D",
+    start: Optional[pd.Timestamp] = None,
+    end: Optional[pd.Timestamp] = None,
+    align_to: Optional[str] = "D",
+    tz: str = "UTC",
+    unit: str = "s",  # "s" or "ms"
+) -> List[Tuple[pd.Timestamp, pd.Timestamp]]:
+    """
+    t: numeric unix timestamp series (seconds or milliseconds).
+    Returns per-window tuples in timezone-aware datetime.
+    """
+    # convert series to pandas datetime
+    t_dt = pd.to_datetime(t, unit=unit, utc=True, errors="coerce")
+    if start is None:
+        start = t_dt.min()
+    else:
+        start = pd.to_datetime(start, utc=True, errors="coerce")
+    if end is None:
+        end = t_dt.max()
+    else:
+        end = pd.to_datetime(end, utc=True, errors="coerce")
+
+    if pd.isna(start) or pd.isna(end):
+        raise ValueError("start/end cannot be NA after conversion")
+
+    start = start.tz_convert(tz)
+    end = end.tz_convert(tz)
+
+    if align_to is not None:
+        start = start.floor(align_to)
+        end = end.ceil(align_to)
+
+    win = pd.Timedelta(window_size)
+    step = pd.Timedelta(step_size)
+
+    windows = []
+    cur = start
+    while cur < end:
+        windows.append((cur, cur + win))
+        cur += step
+    return windows

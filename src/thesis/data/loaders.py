@@ -147,7 +147,7 @@ def load_alerts_raw(dir_path):
         scenario = extract_scenario(file)
 
         with open(file, "r") as f:
-            for line in f:
+            for i, line in enumerate(f):
                 obj = json.loads(line)
 
                 # ---------- AMiner ----------
@@ -162,6 +162,7 @@ def load_alerts_raw(dir_path):
                     rows.append(
                         {
                             "timestamp": ts,
+                            "timestamp_raw": ts,
                             "scenario": scenario,
                             "source": "aminer",
                             "category": category,
@@ -270,6 +271,7 @@ def load_alerts_raw(dir_path):
                     rows.append(
                         {
                             "timestamp": ts,
+                            "timestamp_raw": ts,
                             "scenario": scenario,
                             "source": "wazuh",
                             "category": category,
@@ -373,7 +375,20 @@ def load_alerts_raw(dir_path):
             df.loc[mask_wazuh, "timestamp"], utc=True, format="mixed", errors="coerce"
         )
 
+        # Ensure consistent datetime64 dtype
+        df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
+
         df = df.dropna(subset=["timestamp", "category", "entity"])
+
+        # preserve unix timestamp in whole seconds for fast joins with authors' alerts_csv
+        df["timestamp_unix"] = (df["timestamp"].astype("int64") // 10**9).astype(
+            "int64"
+        )
+
+        # preserve millisecond precision too
+        df["timestamp_unix_ms"] = (df["timestamp"].astype("int64") // 10**6).astype(
+            "int64"
+        )
 
         # store mitre_ids consistently as string/json to avoid mixed types in column
         df["mitre_ids"] = df["mitre_ids"].apply(
@@ -613,6 +628,16 @@ def add_semantic_features(df: pd.DataFrame) -> pd.DataFrame:
 def add_alert_id(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
+    df = df.copy()
+
+    required = ["timestamp", "scenario", "source", "entity", "category", "raw_log"]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise ValueError(
+            f"add_alert_id() missing required columns: {missing}. "
+            f"Available columns: {list(df.columns)}"
+        )
+
     # make timestamp stable string (so hashing is consistent)
     ts = (
         pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
@@ -643,14 +668,22 @@ def add_alert_id(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def load_alerts_from_json(output_file: str, dir_path: str):
-    os.makedirs(os.path.dirname(os.path.join(dir_path)), exist_ok=True)
-    file_name = os.path.join(dir_path, f"{output_file}.parquet")
+def load_alerts_from_json(output_file: str, in_path: str, out_path: str):
+    os.makedirs(os.path.dirname(os.path.join(out_path)), exist_ok=True)
+
+    file_name = os.path.join(out_path, f"{output_file}.parquet")
+
+    print(f"Reading raw alerts (JSON) from {in_path}.")
     print(f"Writing data to {file_name}...\n")
 
-    df = load_alerts_raw(dir_path)
+    df = load_alerts_raw(in_path)
+
     df = add_parsed_fields(df)
     # df = add_semantic_features(df)
+    if "timestamp_raw" in df.columns:
+        df["timestamp_raw"] = pd.to_datetime(
+            df["timestamp_raw"], utc=True, errors="coerce"
+        )
 
     df.to_parquet(file_name, index=False)
     print("Done.")
