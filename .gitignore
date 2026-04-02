@@ -31,10 +31,11 @@ artifacts/*
 !artifacts/*/.csv
 
 # Data 
-data/
+msc-thesis/data/*
 *.parquet
 *.csv
 *.zip
+*.json
 
 # Pytest
 .pytest_cache/
