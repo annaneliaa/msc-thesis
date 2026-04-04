@@ -199,11 +199,13 @@ def main(dataset_name, scenario):
 
     data_path = root.parent / "data" / dataset_name
     out_path = root.parent / "out" / "eda" / dataset_name / scenario
+    summary_path = root.parent / "out" / "eda" / dataset_name / "summary"
 
     os.makedirs(out_path, exist_ok=True)
+    os.makedirs(summary_path, exist_ok=True)
 
     # create text file to store EDA summary
-    with open(out_path / "eda_summary.txt", "w") as f:
+    with open(summary_path / f"{scenario}_eda_summary.txt", "w") as f:
         f.write(f"Exploratory Data Analysis for {scenario} scenario\n")
         f.write("=" * 50 + "\n\n")
 

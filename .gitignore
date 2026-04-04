@@ -31,7 +31,7 @@ artifacts/*
 !artifacts/*/.csv
 
 # Data 
-msc-thesis/data/*
+data/*
 *.parquet
 *.csv
 *.zip
