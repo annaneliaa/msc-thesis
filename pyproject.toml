@@ -23,7 +23,10 @@ dependencies = [
   "numpy",
   "scikit-learn",
   "jupyter",
-  "ipywidgets"
+  "ipywidgets",
+  "torch",
+  "python-dotenv",
+  "accelerate>=1.1.0"
 ]
 
 [project.optional-dependencies]

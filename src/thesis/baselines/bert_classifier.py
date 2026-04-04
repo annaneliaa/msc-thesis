@@ -8,11 +8,14 @@ from sklearn.model_selection import train_test_split
 from datasets import Dataset
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from transformers import TrainingArguments, Trainer
+from transformers import DataCollatorWithPadding
 import numpy as np
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+import torch
 
 TEST_SPLIT = 0.2
 VAL_SPLIT = 0.1
+BATCH_SIZE = 8
 
 
 def row_to_text(row):
@@ -64,7 +67,7 @@ def tokenize_dataset(
         return tokenizer(
             batch["text"],
             truncation=True,
-            padding="max_length",
+            # padding="max_length",
             max_length=max_length,
         )
 
@@ -141,8 +144,8 @@ def make_training_args(output_dir: str) -> TrainingArguments:
         eval_strategy="epoch",
         save_strategy="epoch",
         logging_strategy="epoch",
-        per_device_train_batch_size=16,
-        per_device_eval_batch_size=16,
+        per_device_train_batch_size=BATCH_SIZE,
+        per_device_eval_batch_size=BATCH_SIZE,
         num_train_epochs=3,
         learning_rate=2e-5,
         weight_decay=0.01,
@@ -162,12 +165,15 @@ def make_trainer(
     """
     Create a Huggingface Trainer object for training the BERT model.
     """
+    data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
+
     return Trainer(
         model=model,
         args=training_args,
         train_dataset=train_ds,
         eval_dataset=val_ds,
         processing_class=tokenizer,
+        data_collator=data_collator,
         compute_metrics=compute_metrics,
     )
 
@@ -216,8 +222,10 @@ def main(dataset_name: str, scenario: str, model_name: str):
         df, test_size=TEST_SPLIT, stratify=df["label"], random_state=42
     )
 
+    val_size = VAL_SPLIT / (1 - TEST_SPLIT)
+
     train_df, val_df = train_test_split(
-        train_df, test_size=VAL_SPLIT, stratify=train_df["label"], random_state=42
+        train_df, test_size=val_size, stratify=train_df["label"], random_state=42
     )
 
     print(
@@ -234,6 +242,16 @@ def main(dataset_name: str, scenario: str, model_name: str):
     # Load model
     print("Loading model:", model_name)
     model = load_model(model_name)
+
+    # Device check
+    print("PyTorch version:", torch.__version__)
+    print("MPS built:", torch.backends.mps.is_built())
+    print("MPS available:", torch.backends.mps.is_available())
+
+    if torch.backends.mps.is_available():
+        print("Using Apple GPU via MPS")
+    else:
+        print("MPS not available, training will use CPU")
 
     # Make training arguments and trainer
     training_args = make_training_args(out_path)
@@ -276,4 +294,5 @@ if __name__ == "__main__":
         default="distilbert-base-uncased",
     )
     args = parser.parse_args()
+
     main(args.dataset_name, args.scenario, args.model_name)
