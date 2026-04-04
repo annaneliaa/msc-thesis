@@ -112,22 +112,23 @@ def load_model(model_name: str, num_labels: int = 2):
     )
 
 
-def compute_metrics(eval_pred: tuple[np.ndarray, np.ndarray]) -> dict[str, float]:
+def compute_classification_metrics(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+) -> dict[str, float]:
     """
-    Compute accuracy, precision, recall, and F1 score for the evaluation predictions.
-    Expects eval_pred to be a tuple of (logits, labels) where:
-    - logits is a 2D array of shape (num_samples, num_labels) containing the raw output scores from the model for each class.
-    - labels is a 1D array of shape (num_samples,) containing the true class labels for each sample.
-    """
-    logits, labels = eval_pred
-    preds = np.argmax(logits, axis=1)
+    Compute accuracy, precision, recall, and F1 score from predictions.
 
+    Parameters:
+    - y_true: true labels (shape: [n_samples])
+    - y_pred: predicted labels (shape: [n_samples])
+    """
     precision, recall, f1, _ = precision_recall_fscore_support(
-        labels,
-        preds,
+        y_true,
+        y_pred,
         average="binary",
     )
-    acc = accuracy_score(labels, preds)
+    acc = accuracy_score(y_true, y_pred)
 
     return {
         "accuracy": acc,
@@ -135,6 +136,16 @@ def compute_metrics(eval_pred: tuple[np.ndarray, np.ndarray]) -> dict[str, float
         "recall": recall,
         "f1": f1,
     }
+
+
+def compute_metrics(eval_pred) -> dict[str, float]:
+    """
+    Wrapper for Hugging Face Trainer.
+    Expects (logits, labels).
+    """
+    logits, labels = eval_pred
+    preds = np.argmax(logits, axis=1)
+    return compute_classification_metrics(labels, preds)
 
 
 def make_training_args(output_dir: str) -> TrainingArguments:
@@ -183,7 +194,13 @@ def train_and_evaluate(trainer: Trainer, test_ds: Dataset) -> dict[str, float]:
     Train the model using the provided Trainer and evaluate on the test dataset, returning the evaluation metrics.
     """
     trainer.train()
-    return trainer.evaluate(test_ds)
+
+    pred = trainer.predict(test_ds)
+    y_true = pred.label_ids
+    y_pred = pred.predictions.argmax(axis=1)
+
+    metrics = compute_classification_metrics(y_true, y_pred)
+    return metrics
 
 
 def main(dataset_name: str, scenario: str, model_name: str):
@@ -254,7 +271,7 @@ def main(dataset_name: str, scenario: str, model_name: str):
         print("MPS not available, training will use CPU")
 
     # Make training arguments and trainer
-    training_args = make_training_args(out_path)
+    training_args = make_training_args(str(out_path))
 
     trainer = make_trainer(
         model=model,
