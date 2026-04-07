@@ -144,6 +144,10 @@ def compute_classification_metrics(
     n_pred_attack = int((y_pred == 1).sum())
     attack_rate = n_pred_attack / len(y_pred)
 
+    # Compare to actual attack rates in data to check for conservativeness of model
+    n_attack = int((y_true == 1).sum())
+    actual_attack_rate = n_attack / len(y_true)
+
     metrics = {
         "accuracy": acc,
         "precision": precision,
@@ -155,6 +159,7 @@ def compute_classification_metrics(
         "fn": fn,
         "pred_attack_count": n_pred_attack,
         "pred_attack_rate": attack_rate,
+        "actual_attack_rate": actual_attack_rate,
     }
 
     # probability diagnostics
