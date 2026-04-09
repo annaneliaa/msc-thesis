@@ -1,9 +1,11 @@
 import typer
 import pandas as pd
+from pathlib import Path
 
 from thesis.schemas.dataframe_schemas import SCHEMAS
 from thesis.config import load_settings
 from thesis.mining.dummy_job import run_dummy_mining_job
+from thesis.mining.transaction_mining_job import run_transaction_eclat_job
 from thesis.paths import ensure_artifact_dirs
 from thesis.schemas.validation import validate_dataframe
 from thesis.registry.models import list_all_models
@@ -12,7 +14,7 @@ from thesis.registry.encoders import list_all_encoders
 # from thesis.experiments.runner import run_experiment
 
 """
-    Entry point to the system
+Entry point to the system
 """
 
 app = typer.Typer(help="Thesis system CLI")
@@ -31,9 +33,33 @@ def show_config(config_name: str = "base.yaml") -> None:
 
 
 @app.command()
-def mine(run_name: str = "debug") -> None:
+def mine_dummy(run_name: str = "debug") -> None:
     path = run_dummy_mining_job(run_name=run_name)
     typer.echo(f"Dummy mining output written to: {path}")
+
+
+@app.command()
+def mine_transactions(
+    scenario_csv: str = typer.Argument(
+        ..., help="Path to one scenario transaction CSV."
+    ),
+    run_name: str = typer.Option("debug", help="MLflow run name."),
+    min_support: float = typer.Option(0.05, help="Minimum support threshold."),
+    max_len: int = typer.Option(3, help="Maximum itemset size."),
+    target_label: str = typer.Option("benign", help="Label to mine from."),
+    label_col: str = typer.Option("tx_label", help="Transaction label column."),
+    items_col: str = typer.Option("items", help="Items column."),
+) -> None:
+    path = run_transaction_eclat_job(
+        scenario_csv=Path(scenario_csv),
+        run_name=run_name,
+        min_support=min_support,
+        max_len=max_len,
+        target_label=target_label,
+        label_col=label_col,
+        items_col=items_col,
+    )
+    typer.echo(f"Transaction mining output written to: {path}")
 
 
 @app.command()

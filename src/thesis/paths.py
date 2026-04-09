@@ -1,4 +1,5 @@
 from pathlib import Path
+import datetime
 
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG_DIR = ROOT / "configs"
@@ -23,3 +24,10 @@ def ensure_artifact_dirs() -> None:
         CACHE_DIR,
     ]:
         path.mkdir(parents=True, exist_ok=True)
+
+
+def get_mining_run_dir(run_name: str) -> Path:
+    run_id = f"{run_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    run_dir = MINING_DIR / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    return run_dir

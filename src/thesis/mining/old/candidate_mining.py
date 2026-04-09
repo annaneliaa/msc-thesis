@@ -6,8 +6,11 @@ import inspect
 from scipy import sparse
 import json
 
-from mining.alert_tokenization import iter_precached_windows
-from mining.build_features import add_behavioral_features, behavioral_tokens_from_df
+from thesis.mining.old.alert_tokenization import iter_precached_windows
+from thesis.mining.old.build_features import (
+    add_behavioral_features,
+    behavioral_tokens_from_df,
+)
 
 # -----------------------------------
 # Interfaces

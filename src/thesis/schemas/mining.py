@@ -21,6 +21,7 @@ class MiningMetadata(BaseModel):
     # basic stats (optional but useful)
     n_windows: Optional[int] = None
     n_alerts: Optional[int] = None
+    n_transactions: Optional[int] = None
 
     # config traceability
     config_name: Optional[str] = None
