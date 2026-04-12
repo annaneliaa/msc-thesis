@@ -7,6 +7,105 @@ from collections import Counter
 import numpy as np
 import os
 import argparse
+import re
+
+SIGNATURE_TOKEN_WHITELIST = {
+    "access",
+    "apache",
+    "authentication",
+    "code",
+    "database",
+    "directory",
+    "dns",
+    "domain",
+    "entropy",
+    "failed",
+    "forbidden",
+    "handshake",
+    "invalid",
+    "login",
+    "message",
+    "parameter",
+    "query",
+    "request",
+    "server",
+    "status",
+    "success",
+    "suspicious",
+    "tls",
+    "update",
+    "url",
+    "user",
+}
+
+SIGNATURE_TOKEN_BLACKLIST = {
+    # vendor / product / engine names
+    "wazuh",
+    "suricata",
+    "aminer",
+    "clamav",
+    "dovecot",
+    "pam",
+    "apache2",
+    # generic / noisy meta words
+    "alert",
+    "alerts",
+    "info",
+    "event",
+    "events",
+    "log",
+    "logs",
+    "attempt",
+    "attempts",
+    "new",
+    "same",
+    "source",
+    # short / noisy protocol crumbs
+    "id",
+    "ip",
+    "et",
+    "tld",
+    "biz",
+    # generic filler
+    "the",
+    "and",
+    "or",
+    "to",
+    "for",
+    "from",
+    "in",
+    "of",
+    "on",
+    "by",
+    "with",
+    "a",
+    "an",
+}
+
+
+def extract_signature_tokens(
+    signature: str,
+    whitelist: set[str] = SIGNATURE_TOKEN_WHITELIST,
+    blacklist: set[str] = SIGNATURE_TOKEN_BLACKLIST,
+) -> set[str]:
+    """
+    Extract whitelisted semantic tokens from a raw alert signature string.
+
+    Example:
+        'Wazuh: ClamAV database update'
+        -> {'database', 'update'}
+    """
+    if pd.isna(signature):
+        return set()
+
+    text = str(signature).lower()
+
+    # split into alphabetic tokens only
+    raw_tokens = re.findall(r"[a-z]+", text)
+
+    tokens = {tok for tok in raw_tokens if tok in whitelist and tok not in blacklist}
+
+    return tokens
 
 
 def time_of_day_bucket(ts):
@@ -31,6 +130,7 @@ def build_labeled_window_transactions(
     detector_col: str = "short",
     host_col: str = "host",
     label_col: str = "time_label",
+    signature_col: str = "name",
     benign_label: str = "false_positive",
     window_size_s: int = 2,
 ):
@@ -56,6 +156,12 @@ def build_labeled_window_transactions(
     out["detector_item"] = out[detector_col].astype(str)
     out["host_item"] = out[host_col].astype(str)
 
+    # Signature-derived items
+    if signature_col in out.columns:
+        out["signature_tokens"] = out[signature_col].apply(extract_signature_tokens)
+    else:
+        out["signature_tokens"] = [set() for _ in range(len(out))]
+
     def _label_window(labels: pd.Series) -> str:
         labels = set(labels.astype(str))
         has_benign = benign_label in labels
@@ -68,20 +174,30 @@ def build_labeled_window_transactions(
         else:
             return "benign"
 
+    def _build_items(g: pd.DataFrame) -> set[str]:
+        items = set(g["detector_item"]).union(set(g["host_item"]))
+
+        sig_items = set()
+        for toks in g["signature_tokens"]:
+            sig_items.update(toks)
+
+        items.update(sig_items)
+        return items
+
     tx = (
         out.groupby(["window_start", "window_end"], sort=True)
         .apply(
             lambda g: pd.Series(
                 {
                     "n_alerts": len(g),
-                    "items": set(g["detector_item"]).union(set(g["host_item"])),
+                    "items": _build_items(g),
                     "alert_labels": set(g[label_col].astype(str)),
                     "tx_label": _label_window(g[label_col]),
-                    "time_of_day": (
-                        g["time_of_day"].mode().iloc[0]
-                        if not g["time_of_day"].mode().empty
-                        else "unknown"
-                    ),
+                    # "time_of_day": (
+                    #     g["time_of_day"].mode().iloc[0]
+                    #     if not g["time_of_day"].mode().empty
+                    #     else "unknown"
+                    # ),
                 }
             ),
             include_groups=False,
@@ -191,6 +307,13 @@ def compute_pair_tfidf_by_class(
     df["tfidf_benign"] = df["tf_benign"] * df["idf_global"]
 
     return df
+
+
+def compute_uniq_signature_counts(df: pd.DataFrame, sig_col: str) -> pd.DataFrame:
+    signature_counts = df[sig_col].value_counts().reset_index()
+    signature_counts.columns = ["signature", "count"]
+
+    return signature_counts
 
 
 def main(dataset_name, scenario):
@@ -367,11 +490,11 @@ def main(dataset_name, scenario):
         f.write("Top 20 item pairs by attack count + attack support:\n")
         f.write(pair_metrics_df.head(20).to_string(index=False) + "\n\n")
 
-        df = pair_metrics_df.copy()
+        pair_df = pair_metrics_df.copy()
 
         plt.figure()
 
-        plt.scatter(df["support_benign"], df["support_attack"], alpha=0.5)
+        plt.scatter(pair_df["support_benign"], pair_df["support_attack"], alpha=0.5)
 
         plt.yscale("log")
         plt.xscale("log")
@@ -408,6 +531,23 @@ def main(dataset_name, scenario):
             .head(20)
             .to_string(index=False)
             + "\n\n"
+        )
+
+        sig_counts = compute_uniq_signature_counts(df, sig_col="name")
+        f.write(f"Unique signature counts in data: {len(sig_counts)}\n")
+        # apply on original dataset, using 'name' column as signature (which is the most specific identifier of an alert)
+        f.write("Top 30 most common signatures:\n")
+        f.write(sig_counts.head(30).to_string(index=False) + "\n\n")
+        os.makedirs(os.path.join(summary_path, "signatures"), exist_ok=True)
+        sig_counts.to_csv(
+            os.path.join(
+                summary_path, "signatures", f"{scenario}_unique_signature_counts.csv"
+            ),
+            index=False,
+        )
+
+        print(
+            f"EDA completed for scenario: {scenario}. Results saved to {out_path} and summary to {summary_path}"
         )
 
 

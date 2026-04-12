@@ -252,6 +252,7 @@ def _add_cross_label_supports(
     out[f"support_{other_label}"] = other_supports
     out["support_diff"] = out[f"support_{target_label}"] - out[f"support_{other_label}"]
 
+    # sort by descending support difference, then by support in target label, then by itemset size
     return out.sort_values(
         by=["support_diff", f"support_{target_label}", "k"],
         ascending=[False, False, True],
