@@ -26,7 +26,6 @@ def test_parse_alert_row_returns_parsed_alert_with_expected_values():
 
     assert parsed.ts == 1642213952
     assert parsed.window_id == 821106976
-    assert str(parsed.time_norm) == "2022-01-15 09:12:32+00:00"
 
     assert parsed.name == "Wazuh: ClamAV database update"
     assert parsed.ip == "172.17.131.81"

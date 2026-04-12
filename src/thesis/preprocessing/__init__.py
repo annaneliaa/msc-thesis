@@ -1,3 +1,4 @@
-from thesis.preprocessing.parsing import ParsedAlert, parse_alert_row
+from thesis.preprocessing.parsing import parse_alert_row
+from thesis.schemas.preprocessing import IncomingAlert, ParsedAlert
 
-__all__ = ["ParsedAlert", "parse_alert_row"]
+__all__ = ["IncomingAlert", "ParsedAlert", "parse_alert_row"]
