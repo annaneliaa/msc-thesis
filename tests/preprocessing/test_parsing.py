@@ -1,19 +1,23 @@
-from thesis.preprocessing.parsing import ParsedAlert, parse_alert_row
+import pytest
+
+from thesis.preprocessing.parsing import parse_alert_row
+from thesis.schemas.preprocessing import IncomingAlert, ParsedAlert
 
 
 def test_parse_alert_row_returns_parsed_alert_with_expected_values():
-    row = {
-        "time": 1642213952,
-        "name": "Wazuh: ClamAV database update",
-        "ip": "172.17.131.81",
-        "host": "mail",
-        "short": "W-Sys-Cav",
-    }
+    alert = IncomingAlert(
+        time=1642213952,
+        name="Wazuh: ClamAV database update",
+        ip="172.17.131.81",
+        host="mail",
+        short="W-Sys-Cav",
+        time_label="false_positive",
+        event_label="-",
+    )
 
     parsed = parse_alert_row(
-        row=row,
+        alert=alert,
         scenario="fox",
-        time_col="time",
         window_size_seconds=2,
         keep_raw=True,
     )
@@ -29,23 +33,61 @@ def test_parse_alert_row_returns_parsed_alert_with_expected_values():
     assert parsed.host == "mail"
     assert parsed.short == "W-Sys-Cav"
 
-    assert parsed.raw == row
+    assert parsed.raw == {
+        "time": 1642213952,
+        "name": "Wazuh: ClamAV database update",
+        "ip": "172.17.131.81",
+        "host": "mail",
+        "short": "W-Sys-Cav",
+        "time_label": "false_positive",
+        "event_label": "-",
+    }
+
     assert isinstance(parsed.alert_id, str)
     assert len(parsed.alert_id) == 40
 
 
 def test_parse_alert_row_normalizes_missing_values():
-    row = {
-        "time": 1642213952,
-        "name": "",
-        "ip": None,
-        "host": "mail",
-        "short": "W-Sys-Cav",
-    }
+    alert = IncomingAlert(
+        time=1642213952,
+        name="",
+        ip=None,
+        host="mail",
+        short="W-Sys-Cav",
+        time_label="false_positive",
+        event_label="-",
+    )
 
-    parsed = parse_alert_row(row=row, scenario="fox")
+    parsed = parse_alert_row(alert=alert, scenario="fox")
 
     assert parsed.name is None
     assert parsed.ip is None
     assert parsed.host == "mail"
     assert parsed.short == "W-Sys-Cav"
+
+
+def test_parse_alert_row_raises_on_invalid_timestamp():
+    alert = IncomingAlert(
+        time="not_a_timestamp",
+        name="Wazuh: ClamAV database update",
+        ip="172.17.131.81",
+        host="mail",
+        short="W-Sys-Cav",
+        time_label="false_positive",
+        event_label="-",
+    )
+
+    with pytest.raises(ValueError):
+        parse_alert_row(alert=alert, scenario="fox")
+
+
+def test_incoming_alert_missing_time_raises_type_error():
+    with pytest.raises(TypeError):
+        IncomingAlert(
+            name="Wazuh: ClamAV database update",
+            ip="172.17.131.81",
+            host="mail",
+            short="W-Sys-Cav",
+            time_label="false_positive",
+            event_label="-",
+        )

@@ -1,42 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from typing import Any
 import hashlib
 import pandas as pd
-
-
-@dataclass(slots=True)
-class ParsedAlert:
-    """
-    Canonical parsed representation of one incoming alert.
-
-    This object should contain only normalized alert-level fields.
-    The alert_id is assigned by the parser and is unique for each alert.
-    """
-
-    alert_id: str
-    ts: float
-    window_id: int
-
-    name: str | None = None
-    ip: str | None = None
-    host: str | None = None
-    short: str | None = None
-
-    raw: dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "alert_id": self.alert_id,
-            "ts": self.ts,
-            "window_id": self.window_id,
-            "name": self.name,
-            "ip": self.ip,
-            "host": self.host,
-            "short": self.short,
-            "raw": self.raw,
-        }
+from thesis.schemas.preprocessing import IncomingAlert, ParsedAlert
 
 
 def normalize_missing_value(value: Any) -> str | None:
@@ -55,27 +22,16 @@ def normalize_missing_value(value: Any) -> str | None:
     return value_str
 
 
-def normalize_row_timestamp(
-    row: dict[str, Any] | pd.Series,
-    time_col: str = "time",
-) -> tuple[int, pd.Timestamp]:
-    """
-    Normalize one row timestamp to integer epoch seconds and UTC datetime.
-    """
-    if time_col not in row:
-        raise ValueError(
-            f"normalize_row_timestamp() missing required field: '{time_col}'"
-        )
-
-    ts = pd.to_numeric(row[time_col], errors="coerce")
+def normalize_row_timestamp(value: object) -> tuple[int, pd.Timestamp]:
+    ts = pd.to_numeric(value, errors="coerce")
     if pd.isna(ts):
-        raise ValueError(f"Invalid timestamp in field '{time_col}': {row[time_col]!r}")
+        raise ValueError(f"Invalid timestamp: {value!r}")
 
     ts_int = int(ts)
     time_norm = pd.to_datetime(ts_int, unit="s", utc=True, errors="coerce")
 
     if pd.isna(time_norm):
-        raise ValueError(f"Could not normalize timestamp: {row[time_col]!r}")
+        raise ValueError(f"Could not normalize timestamp: {value!r}")
 
     return ts_int, time_norm
 
@@ -92,36 +48,21 @@ def assign_window_id(ts: int, window_size_seconds: int = 2) -> int:
 
 def make_alert_id(
     ts: int,
-    row: dict[str, Any] | pd.Series,
+    alert: IncomingAlert,
     scenario: str,
 ) -> str:
     """
-    Build a stable alert ID for one parsed incoming alert row (dict object) and scenario name.
+    Build a stable alert ID for IncomingAlert object and scenario name.
     Returns a SHA-1 hash of the concatenated scenario and alert fields.
-
-    Expected row keys:
-    - time
-    - name
-    - ip
-    - host
-    - short
     """
-    required = ["time", "name", "ip", "host", "short"]
-    missing = [c for c in required if c not in row]
-    if missing:
-        raise ValueError(
-            f"make_alert_id() missing required fields: {missing}. "
-            f"Available fields: {list(row.keys())}"
-        )
-
     key = "|".join(
         [
             str(scenario),
-            str(ts),  # use normalized timestamp
-            str(row.get("name", "")),
-            str(row.get("ip", "")),
-            str(row.get("host", "")),
-            str(row.get("short", "")),
+            str(ts),
+            "" if alert.name is None else str(alert.name),
+            "" if alert.ip is None else str(alert.ip),
+            "" if alert.host is None else str(alert.host),
+            "" if alert.short is None else str(alert.short),
         ]
     )
 
@@ -129,40 +70,34 @@ def make_alert_id(
 
 
 def parse_alert_row(
-    row: dict[str, Any] | pd.Series,
+    alert: IncomingAlert,
     scenario: str,
-    time_col: str = "time",
     window_size_seconds: int = 2,
     keep_raw: bool = True,
 ) -> ParsedAlert:
     """
-    Parse one incoming alert row into a ParsedAlert object.
-
-    Expected fields:
-    - time
-    - name
-    - ip
-    - host
-    - short
+    Parse one incoming alert into a ParsedAlert object.
     """
-    required = [time_col, "name", "ip", "host", "short"]
-    missing = [c for c in required if c not in row]
-    if missing:
-        available = list(row.index) if hasattr(row, "index") else list(row.keys())
-        raise ValueError(
-            f"parse_alert_row() missing required fields: {missing}. "
-            f"Available fields: {available}"
-        )
-
-    ts, time_norm = normalize_row_timestamp(row=row, time_col=time_col)
+    ts, time_norm = normalize_row_timestamp(alert.time)
     window_id = assign_window_id(ts=ts, window_size_seconds=window_size_seconds)
-
-    ts, time_norm = normalize_row_timestamp(row, time_col)
 
     alert_id = make_alert_id(
         ts=ts,
-        row=row,
+        alert=alert,
         scenario=scenario,
+    )
+    raw = (
+        {
+            "time": alert.time,
+            "name": alert.name,
+            "ip": alert.ip,
+            "host": alert.host,
+            "short": alert.short,
+            "time_label": alert.time_label,
+            "event_label": alert.event_label,
+        }
+        if keep_raw
+        else {}
     )
 
     parsed = ParsedAlert(
@@ -170,11 +105,11 @@ def parse_alert_row(
         ts=ts,
         time_norm=time_norm,
         window_id=window_id,
-        name=normalize_missing_value(row["name"]),
-        ip=normalize_missing_value(row["ip"]),
-        host=normalize_missing_value(row["host"]),
-        short=normalize_missing_value(row["short"]),
-        raw=dict(row) if keep_raw else {},
+        name=normalize_missing_value(alert.name),
+        ip=normalize_missing_value(alert.ip),
+        host=normalize_missing_value(alert.host),
+        short=normalize_missing_value(alert.short),
+        raw=raw,
     )
 
     return parsed
