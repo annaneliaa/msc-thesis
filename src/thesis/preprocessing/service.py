@@ -1,4 +1,4 @@
-from thesis.schemas.parsing import IncomingAlert, ParsedAlert
+from thesis.schemas.preprocessing import IncomingAlert, ParsedAlert
 from thesis.preprocessing.parsing import parse_alert_row
 
 

@@ -84,3 +84,25 @@ class ParsedAlert:
             "short": self.short,
             "raw": self.raw,
         }
+
+
+@dataclass(slots=True)
+class TokenizedAlert:
+    """
+    Parsed alert enriched with token views for downstream use.
+    """
+
+    alert_id: str
+    ts: int
+    time_norm: Any
+    window_id: int
+
+    name: str | None
+    ip: str | None
+    host: str | None
+    short: str | None
+
+    repr_tokens: set[str] = field(default_factory=set)
+    mining_tokens: set[str] = field(default_factory=set)
+
+    raw: dict[str, Any] = field(default_factory=dict)
