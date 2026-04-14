@@ -108,6 +108,24 @@ def extract_signature_tokens(
     return tokens
 
 
+def extract_short_tokens(short_value: str) -> set[str]:
+    """
+    Split alert descriptor on '-' and keep non-empty parts as separate items.
+
+    Example:
+        'W-Acc-Req'
+        -> {'W', 'Acc', 'Req'}
+
+        'A-Acc-Http'
+        -> {'A', 'Acc', 'Http'}
+    """
+    if pd.isna(short_value):
+        return set()
+
+    parts = [part.strip() for part in str(short_value).split("-")]
+    return {part for part in parts if part}
+
+
 def time_of_day_bucket(ts):
     if pd.isna(ts):
         return "unknown"
@@ -156,6 +174,9 @@ def build_labeled_window_transactions(
     out["detector_item"] = out[detector_col].astype(str)
     out["host_item"] = out[host_col].astype(str)
 
+    # Alert descriptor ("short") items
+    out["detector_subtokens"] = out[detector_col].apply(extract_short_tokens)
+
     # Signature-derived items
     if signature_col in out.columns:
         out["signature_tokens"] = out[signature_col].apply(extract_signature_tokens)
@@ -177,10 +198,15 @@ def build_labeled_window_transactions(
     def _build_items(g: pd.DataFrame) -> set[str]:
         items = set(g["detector_item"]).union(set(g["host_item"]))
 
+        detector_subtokens = set()
+        for toks in g["detector_subtokens"]:
+            detector_subtokens.update(toks)
+
         sig_items = set()
         for toks in g["signature_tokens"]:
             sig_items.update(toks)
 
+        items.update(detector_subtokens)
         items.update(sig_items)
         return items
 
@@ -563,4 +589,4 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
-    main(args.dataset_name, args.output_dir)
+    main(args.dataset_name, args.scenario)
