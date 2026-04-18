@@ -174,6 +174,8 @@ def tokenize_alert(alert: ParsedAlert) -> TokenizedAlert:
         ip=alert.ip,
         host=alert.host,
         short=alert.short,
+        time_label=alert.time_label,
+        event_label=alert.event_label,
         repr_tokens=repr_tokens,
         mining_tokens=mining_tokens,
         raw=alert.raw.copy() if alert.raw else {},

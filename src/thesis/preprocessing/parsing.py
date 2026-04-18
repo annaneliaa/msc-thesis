@@ -109,6 +109,8 @@ def parse_alert_row(
         ip=normalize_missing_value(alert.ip),
         host=normalize_missing_value(alert.host),
         short=normalize_missing_value(alert.short),
+        time_label=normalize_missing_value(alert.time_label),
+        event_label=normalize_missing_value(alert.event_label),
         raw=raw,
     )
 

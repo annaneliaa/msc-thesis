@@ -7,6 +7,7 @@ from thesis.preprocessing.cache import TokenCache
 
 
 runner = CliRunner()
+SCENARIO = "test_scenario"
 
 
 def test_preprocess_single_alert_cli_runs_full_pipeline(tmp_path):
@@ -42,7 +43,7 @@ def test_preprocess_single_alert_cli_runs_full_pipeline(tmp_path):
     assert "Processed alert_id=" in result.stdout
     assert "Window ID=821106976" in result.stdout
 
-    cache = TokenCache(cache_dir=cache_dir)
+    cache = TokenCache(cache_dir=cache_dir, scenario=SCENARIO)
 
     alert_files = list((cache_dir / "alerts").glob("*.json"))
     window_files = list((cache_dir / "windows").glob("*.json"))
@@ -111,7 +112,7 @@ def test_preprocess_alert_batch_cli_runs_full_pipeline(tmp_path):
     assert result.exit_code == 0
     assert "Processed 2 alerts." in result.stdout
 
-    cache = TokenCache(cache_dir=cache_dir)
+    cache = TokenCache(cache_dir=cache_dir, scenario=SCENARIO)
 
     alert_files = list((cache_dir / "alerts").glob("*.json"))
     window_files = list((cache_dir / "windows").glob("*.json"))
@@ -174,7 +175,7 @@ def test_duplicate_alert_ingestion_does_not_duplicate_window_entries(tmp_path):
     assert result.exit_code == 0
     assert "Processed 2 alerts." in result.stdout
 
-    cache = TokenCache(cache_dir=cache_dir)
+    cache = TokenCache(cache_dir=cache_dir, scenario=SCENARIO)
 
     # Only ONE alert file should exist (same alert_id overwritten)
     alert_files = list((cache_dir / "alerts").glob("*.json"))

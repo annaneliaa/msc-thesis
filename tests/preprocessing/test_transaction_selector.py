@@ -8,6 +8,8 @@ from thesis.preprocessing.transaction_selector import (
 from thesis.schemas.cache import CacheQuery, CacheResponse, WindowCacheEntry
 from thesis.schemas.preprocessing import WindowTransaction
 
+SCENARIO = "test_scenario"
+
 
 def make_window_entry(
     *,
@@ -37,7 +39,7 @@ def make_window_entry(
 
 
 def test_cache_query_returns_matching_windows_only(tmp_path):
-    cache = TokenCache(cache_dir=tmp_path)
+    cache = TokenCache(cache_dir=tmp_path, scenario=SCENARIO)
 
     w1 = make_window_entry(
         window_id=100,
@@ -81,7 +83,7 @@ def test_cache_query_returns_matching_windows_only(tmp_path):
 
 
 def test_cache_query_returns_only_closed_windows_when_requested(tmp_path):
-    cache = TokenCache(cache_dir=tmp_path)
+    cache = TokenCache(cache_dir=tmp_path, scenario=SCENARIO)
 
     open_window = make_window_entry(
         window_id=100,
@@ -109,7 +111,7 @@ def test_cache_query_returns_only_closed_windows_when_requested(tmp_path):
 
 
 def test_cache_query_returns_empty_response_when_no_windows_match(tmp_path):
-    cache = TokenCache(cache_dir=tmp_path)
+    cache = TokenCache(cache_dir=tmp_path, scenario=SCENARIO)
 
     w1 = make_window_entry(
         window_id=100,
@@ -301,7 +303,7 @@ def test_select_transactions_returns_empty_list_for_empty_response():
 
 
 def test_select_transactions_queries_cache_and_returns_transactions(tmp_path):
-    cache = TokenCache(cache_dir=tmp_path)
+    cache = TokenCache(cache_dir=tmp_path, scenario=SCENARIO)
 
     w1 = make_window_entry(
         window_id=100,

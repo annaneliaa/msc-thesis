@@ -6,6 +6,8 @@ from thesis.preprocessing.cache_ingestor import ingest_tokenized_alert
 from thesis.schemas.preprocessing import TokenizedAlert
 from thesis.schemas.cache import AlertCacheEntry, WindowCacheEntry
 
+SCENARIO = "test_scenario"
+
 
 def make_tokenized_alert() -> TokenizedAlert:
     return TokenizedAlert(
@@ -42,7 +44,7 @@ def make_tokenized_alert() -> TokenizedAlert:
 
 
 def test_single_alert_ingestion_writes_cache_files(tmp_path):
-    cache = TokenCache(cache_dir=tmp_path)
+    cache = TokenCache(cache_dir=tmp_path, scenario=SCENARIO)
     alert = make_tokenized_alert()
 
     ingest_tokenized_alert(cache, alert)
@@ -55,7 +57,7 @@ def test_single_alert_ingestion_writes_cache_files(tmp_path):
 
 
 def test_single_alert_ingestion_writes_expected_alert_json(tmp_path):
-    cache = TokenCache(cache_dir=tmp_path)
+    cache = TokenCache(cache_dir=tmp_path, scenario=SCENARIO)
     alert = make_tokenized_alert()
 
     ingest_tokenized_alert(cache, alert)
@@ -76,7 +78,7 @@ def test_single_alert_ingestion_writes_expected_alert_json(tmp_path):
 
 
 def test_single_alert_ingestion_writes_expected_window_json(tmp_path):
-    cache = TokenCache(cache_dir=tmp_path)
+    cache = TokenCache(cache_dir=tmp_path, scenario=SCENARIO)
     alert = make_tokenized_alert()
 
     ingest_tokenized_alert(cache, alert)
@@ -97,7 +99,7 @@ def test_single_alert_ingestion_writes_expected_window_json(tmp_path):
 
 
 def test_read_alert_entry_reconstructs_alert_cache_entry(tmp_path):
-    cache = TokenCache(cache_dir=tmp_path)
+    cache = TokenCache(cache_dir=tmp_path, scenario=SCENARIO)
     alert = make_tokenized_alert()
 
     ingest_tokenized_alert(cache, alert)
@@ -116,8 +118,8 @@ def test_read_alert_entry_reconstructs_alert_cache_entry(tmp_path):
     assert entry.short == alert.short
 
 
-def test_read_window_entry_reconstructs_window_cache_entry(tmp_path):
-    cache = TokenCache(cache_dir=tmp_path)
+def test_read_window_entry_reconstructs_window_cache_entry(tmp_path, scenario=SCENARIO):
+    cache = TokenCache(cache_dir=tmp_path, scenario=SCENARIO)
     alert = make_tokenized_alert()
 
     ingest_tokenized_alert(cache, alert)
@@ -137,7 +139,7 @@ def test_read_window_entry_reconstructs_window_cache_entry(tmp_path):
 
 
 def test_read_alert_entry_returns_none_for_missing_file(tmp_path):
-    cache = TokenCache(cache_dir=tmp_path)
+    cache = TokenCache(cache_dir=tmp_path, scenario=SCENARIO)
 
     entry = cache.read_alert_entry("does_not_exist")
 
@@ -145,7 +147,7 @@ def test_read_alert_entry_returns_none_for_missing_file(tmp_path):
 
 
 def test_read_window_entry_returns_none_for_missing_file(tmp_path):
-    cache = TokenCache(cache_dir=tmp_path)
+    cache = TokenCache(cache_dir=tmp_path, scenario=SCENARIO)
 
     entry = cache.read_window_entry(999999)
 

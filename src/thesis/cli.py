@@ -203,6 +203,7 @@ def select_transactions(
     cache_dir: str = typer.Option(
         "artifacts/cache", help="Directory where cache files are stored."
     ),
+    scenario: str = typer.Option(..., help="Scenario name."),
     min_window_id: int | None = typer.Option(None, help="Minimum window id."),
     max_window_id: int | None = typer.Option(None, help="Maximum window id."),
     only_closed: bool = typer.Option(False, help="Select only closed windows."),
@@ -217,7 +218,7 @@ def select_transactions(
     Query cache and build window transactions ready to pass to miner.
     """
     try:
-        cache = TokenCache(cache_dir=Path(cache_dir))
+        cache = TokenCache(cache_dir=Path(cache_dir), scenario=scenario)
 
         query = CacheQuery(
             min_window_id=min_window_id,
@@ -233,7 +234,7 @@ def select_transactions(
         )
 
         typer.echo(f"Selected {len(transactions)} transactions.")
-        for tx in transactions:
+        for tx in transactions[:5]:  # print first 5 transactions as sample
             typer.echo(
                 f"window_id={tx.window_id} "
                 f"n_alerts={tx.n_alerts} "
@@ -241,11 +242,11 @@ def select_transactions(
                 f"items={sorted(tx.items)}"
             )
 
-        out_dir = Path("artifacts/cache/transactions")
+        out_dir = Path(f"artifacts/cache/{scenario}/transactions")
         out_dir.mkdir(parents=True, exist_ok=True)
         out_path = (
             out_dir / "transactions.json"
-        )  # TODO: check if this means there is always one transactions file in cache
+        )  # TODO: check if this means there is always one transactions file in cache per scenario
 
         # convert to serializable format
         serialized = [
@@ -284,11 +285,7 @@ def mine_dummy(run_name: str = "debug") -> None:
 
 @app.command()
 def mine_transactions(
-    transactions_path: str = typer.Argument(
-        "artifacts/cache/transactions/transactions.json",
-        help="Path to cached transactions JSON file.",
-    ),
-    scenario_name: str = typer.Option(
+    scenario: str = typer.Option(
         "debug_scenario",
         help="Dataset scenario name for logging and artifacts.",
     ),
@@ -312,13 +309,16 @@ def mine_transactions(
     """
     Load cached MiningTransactions and run transaction-level Eclat mining.
     """
+    transactions_path = Path(
+        f"artifacts/cache/{scenario}/transactions/transactions.json"
+    )
     try:
         typer.echo(f"Loading transactions from {transactions_path}...")
         tx_path = Path(transactions_path)
 
         path = run_transaction_eclat_job(
             transactions_path=tx_path,
-            scenario_name=scenario_name,
+            scenario_name=scenario,
             run_name=run_name,
             min_support=min_support,
             max_len=max_len,
