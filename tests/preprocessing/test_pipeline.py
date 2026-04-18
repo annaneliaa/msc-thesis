@@ -243,3 +243,66 @@ def test_empty_alerts_are_not_added_to_cache(tmp_path):
     # Nothing should be written
     assert len(alert_files) == 0
     assert len(window_files) == 0
+
+
+def test_alerts_json_to_transaction_selection_full_pipeline(tmp_path):
+    alerts_payload = [
+        {
+            "time": 1642213952,
+            "name": "Wazuh: ClamAV database update",
+            "ip": "172.17.131.81",
+            "host": "mail",
+            "short": "W-Sys-Cav",
+            "time_label": "false_positive",
+            "event_label": "-",
+        },
+        {
+            "time": 1642213953,
+            "name": "Suricata: TLS invalid handshake",
+            "ip": "172.17.131.90",
+            "host": "web",
+            "short": "A-Network-Tls",
+            "time_label": "true_positive",
+            "event_label": "attack_1",
+        },
+    ]
+
+    alerts_file = tmp_path / "alerts.json"
+    cache_dir = tmp_path / "cache"
+
+    with alerts_file.open("w", encoding="utf-8") as f:
+        json.dump(alerts_payload, f)
+
+    preprocess_result = runner.invoke(
+        app,
+        [
+            "preprocess-alert-batch",
+            str(alerts_file),
+            "--scenario",
+            "fox",
+            "--cache-dir",
+            str(cache_dir),
+        ],
+    )
+
+    assert preprocess_result.exit_code == 0
+    assert "Processed 2 alerts." in preprocess_result.stdout
+
+    select_result = runner.invoke(
+        app,
+        [
+            "select-transactions",
+            "--cache-dir",
+            str(cache_dir),
+        ],
+    )
+
+    assert select_result.exit_code == 0
+    assert "Selected 1 transactions." in select_result.stdout
+    assert "window_id=821106976" in select_result.stdout
+    assert "n_alerts=2" in select_result.stdout
+    assert "sig:database" in select_result.stdout
+    assert "sig:update" in select_result.stdout
+    assert "sig:tls" in select_result.stdout
+    assert "sig:invalid" in select_result.stdout
+    assert "sig:handshake" in select_result.stdout

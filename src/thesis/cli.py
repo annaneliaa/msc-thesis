@@ -4,6 +4,7 @@ from pathlib import Path
 import json
 
 from thesis.schemas.dataframe_schemas import SCHEMAS
+from thesis.schemas.cache import CacheQuery
 from thesis.config import load_settings
 from thesis.mining.dummy_job import run_dummy_mining_job
 from thesis.mining.transaction_mining_job import run_transaction_eclat_job
@@ -13,7 +14,9 @@ from thesis.registry.models import list_all_models
 from thesis.registry.encoders import list_all_encoders
 from thesis.preprocessing.cache import TokenCache
 from thesis.preprocessing.service import process_one_alert
-
+from thesis.preprocessing.transaction_selector import (
+    select_transactions as select_transactions_from_cache,
+)
 
 """
 Entry point to the system
@@ -192,4 +195,52 @@ def preprocess_alert_batch(
 
     except Exception as e:
         typer.echo(f"Batch preprocessing failed: {e}")
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def select_transactions(
+    cache_dir: str = typer.Option(
+        "artifacts/cache", help="Directory where cache files are stored."
+    ),
+    min_window_id: int | None = typer.Option(None, help="Minimum window id."),
+    max_window_id: int | None = typer.Option(None, help="Maximum window id."),
+    only_closed: bool = typer.Option(False, help="Select only closed windows."),
+    retention_windows: int | None = typer.Option(
+        None, help="How many most recent windows to keep."
+    ),
+    decay_factor: float = typer.Option(
+        1.0, help="Decay factor for transaction weights."
+    ),
+) -> None:
+    """
+    Query cache and build window transactions ready to pass to miner.
+    """
+    try:
+        cache = TokenCache(cache_dir=Path(cache_dir))
+
+        query = CacheQuery(
+            min_window_id=min_window_id,
+            max_window_id=max_window_id,
+            only_closed=only_closed,
+        )
+
+        transactions = select_transactions_from_cache(
+            cache=cache,
+            query=query,
+            retention_windows=retention_windows,
+            decay_factor=decay_factor,
+        )
+
+        typer.echo(f"Selected {len(transactions)} transactions.")
+        for tx in transactions:
+            typer.echo(
+                f"window_id={tx.window_id} "
+                f"n_alerts={tx.n_alerts} "
+                f"weight={tx.weight} "
+                f"items={sorted(tx.items)}"
+            )
+
+    except Exception as e:
+        typer.echo(f"Transaction selection failed: {e}")
         raise typer.Exit(code=1)
