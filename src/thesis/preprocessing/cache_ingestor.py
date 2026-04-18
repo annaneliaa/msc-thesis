@@ -4,7 +4,7 @@ from thesis.schemas.preprocessing import TokenizedAlert
 
 
 def ingest_tokenized_alert(cache: TokenCache, alert: TokenizedAlert) -> None:
-    cache.alert_store[alert.alert_id] = AlertCacheEntry(
+    alert_entry = AlertCacheEntry(
         alert_id=alert.alert_id,
         ts=alert.ts,
         window_id=alert.window_id,
@@ -14,15 +14,16 @@ def ingest_tokenized_alert(cache: TokenCache, alert: TokenizedAlert) -> None:
         host=alert.host,
         short=alert.short,
     )
+    cache.write_alert_entry(alert_entry)
 
-    if alert.window_id not in cache.window_store:
-        cache.window_store[alert.window_id] = WindowCacheEntry(
+    window = cache.read_window_entry(alert.window_id)
+    if window is None:
+        window = WindowCacheEntry(
             window_id=alert.window_id,
             start_ts=alert.window_id * 2,
             end_ts=alert.window_id * 2 + 1,
         )
 
-    window = cache.window_store[alert.window_id]
     window.alert_ids.append(alert.alert_id)
     window.items |= set(alert.mining_tokens)
 
@@ -30,3 +31,5 @@ def ingest_tokenized_alert(cache: TokenCache, alert: TokenizedAlert) -> None:
         window.hosts.add(alert.host)
     if alert.short:
         window.signatures.add(alert.short)
+
+    cache.write_window_entry(window)
