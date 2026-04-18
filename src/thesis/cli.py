@@ -6,8 +6,8 @@ import json
 from thesis.schemas.dataframe_schemas import SCHEMAS
 from thesis.schemas.cache import CacheQuery
 from thesis.config import load_settings
-from thesis.mining.dummy_job import run_dummy_mining_job
-from thesis.mining.transaction_mining_job import run_transaction_eclat_job
+from thesis.mining.mining_dummy_job import run_dummy_mining_job
+from thesis.mining.mining_transaction_csv_job import run_transaction_eclat_job
 from thesis.paths import ensure_artifact_dirs
 from thesis.schemas.validation import validate_dataframe
 from thesis.registry.models import list_all_models
@@ -44,7 +44,7 @@ def mine_dummy(run_name: str = "debug") -> None:
 
 
 @app.command()
-def mine_transactions(
+def mine_transactions_csv(
     scenario_csv: str = typer.Argument(
         ..., help="Path to one scenario transaction CSV."
     ),
@@ -240,6 +240,36 @@ def select_transactions(
                 f"weight={tx.weight} "
                 f"items={sorted(tx.items)}"
             )
+
+        out_dir = Path("artifacts/cache/transactions")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = (
+            out_dir / "transactions.json"
+        )  # TODO: check if this means there is always one transactions file in cache
+
+        # convert to serializable format
+        serialized = [
+            {
+                "transaction_id": tx.window_id,  # transaction_id is just window_id for now
+                "window_start": tx.window_start,
+                "window_end": tx.window_end,
+                "n_alerts": tx.n_alerts,
+                "items": sorted(list(tx.items)),
+                "tx_label": tx.tx_label,
+                "alert_labels": (
+                    sorted(list(tx.alert_labels))
+                    if tx.alert_labels is not None
+                    else None
+                ),
+                "weight": tx.weight,
+            }
+            for tx in transactions
+        ]
+
+        with open(out_path, "w") as f:
+            json.dump(serialized, f, indent=2)
+
+        typer.echo(f"Saved transactions to {out_path}")
 
     except Exception as e:
         typer.echo(f"Transaction selection failed: {e}")

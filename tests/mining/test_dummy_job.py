@@ -1,4 +1,4 @@
-from thesis.mining.dummy_job import run_dummy_mining_job
+from thesis.mining.mining_dummy_job import run_dummy_mining_job
 
 
 def test_dummy_job_creates_file():
