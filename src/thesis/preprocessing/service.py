@@ -35,13 +35,17 @@ def process_one_alert(row: dict, scenario: str, cache: TokenCache) -> None:
 
 
 def process_alert_batch(rows: list[dict], scenario: str, cache: TokenCache) -> None:
-    tokenize_alerts = []
+    tokenize_alerts: list[TokenizedAlert] = []
     for row in rows:
-        alert = IncomingAlert.from_row(row)
-        parsed = parse_alert_row(alert=alert, scenario=scenario)
-        tokenized = tokenize_alert(parsed)
-        tokenize_alerts.append(tokenized)
+        try:
+            alert = IncomingAlert.from_row(row)
+            parsed = parse_alert_row(alert=alert, scenario=scenario)
+            tokenized = tokenize_alert(parsed)
+            tokenize_alerts.append(tokenized)
+        except Exception:
+            continue
 
-    ingest_tokenized_alert_batch(
-        cache=cache, alerts=tokenize_alerts, alert_batch_name=scenario
-    )
+    if tokenize_alerts:
+        ingest_tokenized_alert_batch(
+            cache=cache, alerts=tokenize_alerts, alert_batch_name=scenario
+        )

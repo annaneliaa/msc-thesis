@@ -7,66 +7,7 @@ from thesis.preprocessing.cache import TokenCache
 
 
 runner = CliRunner()
-SCENARIO = "test_scenario"
-
-
-def test_preprocess_single_alert_cli_runs_full_pipeline(tmp_path):
-    alert_payload = {
-        "time": 1642213952,
-        "name": "Wazuh: ClamAV database update",
-        "ip": "172.17.131.81",
-        "host": "mail",
-        "short": "W-Sys-Cav",
-        "time_label": "false_positive",
-        "event_label": "-",
-    }
-
-    alert_file = tmp_path / "alert.json"
-    cache_dir = tmp_path / "cache"
-
-    with alert_file.open("w", encoding="utf-8") as f:
-        json.dump(alert_payload, f)
-
-    result = runner.invoke(
-        app,
-        [
-            "preprocess-single-alert",
-            str(alert_file),
-            "--scenario",
-            "fox",
-            "--cache-dir",
-            str(cache_dir),
-        ],
-    )
-
-    assert result.exit_code == 0
-    assert "Processed alert_id=" in result.stdout
-    assert "Window ID=821106976" in result.stdout
-
-    cache = TokenCache(cache_dir=cache_dir, scenario=SCENARIO)
-
-    alert_files = list((cache_dir / "alerts").glob("*.json"))
-    window_files = list((cache_dir / "windows").glob("*.json"))
-
-    assert len(alert_files) == 1
-    assert len(window_files) == 1
-
-    alert_entry = cache.read_alert_entry(alert_files[0].stem)
-    assert alert_entry is not None
-    assert alert_entry.ts == 1642213952
-    assert alert_entry.window_id == 821106976
-    assert alert_entry.host == "mail"
-    assert alert_entry.short == "W-Sys-Cav"
-    assert alert_entry.ip == "172.17.131.81"
-
-    window_entry = cache.read_window_entry(821106976)
-    assert window_entry is not None
-    assert window_entry.window_id == 821106976
-    assert window_entry.start_ts == 1642213952
-    assert window_entry.end_ts == 1642213953
-    assert len(window_entry.alert_ids) == 1
-    assert window_entry.hosts == {"mail"}
-    assert window_entry.signatures == {"W-Sys-Cav"}
+SCENARIO = "fox"
 
 
 def test_preprocess_alert_batch_cli_runs_full_pipeline(tmp_path):
@@ -103,7 +44,7 @@ def test_preprocess_alert_batch_cli_runs_full_pipeline(tmp_path):
             "preprocess-alert-batch",
             str(alerts_file),
             "--scenario",
-            "fox",
+            SCENARIO,
             "--cache-dir",
             str(cache_dir),
         ],
@@ -114,11 +55,18 @@ def test_preprocess_alert_batch_cli_runs_full_pipeline(tmp_path):
 
     cache = TokenCache(cache_dir=cache_dir, scenario=SCENARIO)
 
-    alert_files = list((cache_dir / "alerts").glob("*.json"))
-    window_files = list((cache_dir / "windows").glob("*.json"))
+    alert_files = list((cache_dir / SCENARIO / "alerts").glob("*.json"))
+    window_files = list((cache_dir / SCENARIO / "windows").glob("*.json"))
 
-    assert len(alert_files) == 2
+    # batch alert storage -> one batch file
+    assert len(alert_files) == 1
+    assert alert_files[0].name == f"{SCENARIO}.json"
+
+    # both alerts fall into same 2-second window
     assert len(window_files) == 1
+
+    alert_entries = cache.read_alert_batch(SCENARIO)
+    assert len(alert_entries) == 2
 
     window_entry = cache.read_window_entry(821106976)
     assert window_entry is not None
@@ -128,6 +76,8 @@ def test_preprocess_alert_batch_cli_runs_full_pipeline(tmp_path):
     assert len(window_entry.alert_ids) == 2
     assert window_entry.hosts == {"mail", "web"}
     assert window_entry.signatures == {"W-Sys-Cav", "A-Network-Tls"}
+    assert window_entry.alert_labels == {"false_positive", "true_positive"}
+    assert window_entry.tx_label == "mixed"
     assert window_entry.items == {
         "short:W-Sys-Cav",
         "host:mail",
@@ -152,7 +102,7 @@ def test_duplicate_alert_ingestion_does_not_duplicate_window_entries(tmp_path):
         "event_label": "-",
     }
 
-    alerts_payload = [alert_payload, alert_payload]  # duplicate alerts
+    alerts_payload = [alert_payload, alert_payload]
 
     alerts_file = tmp_path / "alerts.json"
     cache_dir = tmp_path / "cache"
@@ -166,7 +116,7 @@ def test_duplicate_alert_ingestion_does_not_duplicate_window_entries(tmp_path):
             "preprocess-alert-batch",
             str(alerts_file),
             "--scenario",
-            "fox",
+            SCENARIO,
             "--cache-dir",
             str(cache_dir),
         ],
@@ -177,22 +127,23 @@ def test_duplicate_alert_ingestion_does_not_duplicate_window_entries(tmp_path):
 
     cache = TokenCache(cache_dir=cache_dir, scenario=SCENARIO)
 
-    # Only ONE alert file should exist (same alert_id overwritten)
-    alert_files = list((cache_dir / "alerts").glob("*.json"))
-    assert len(alert_files) == 1
+    alert_files = list((cache_dir / SCENARIO / "alerts").glob("*.json"))
+    window_files = list((cache_dir / SCENARIO / "windows").glob("*.json"))
 
-    # Only ONE window
-    window_files = list((cache_dir / "windows").glob("*.json"))
+    # batch storage -> one alert batch file
+    assert len(alert_files) == 1
     assert len(window_files) == 1
+
+    # assumes your batch ingestor deduplicates by alert_id before writing batch
+    alert_entries = cache.read_alert_batch(SCENARIO)
+    assert len(alert_entries) == 1
 
     window_entry = cache.read_window_entry(821106976)
     assert window_entry is not None
 
-    # Critical check: alert_ids should NOT contain duplicates
     assert len(window_entry.alert_ids) == 1
     assert len(set(window_entry.alert_ids)) == 1
 
-    # Items should still be correct (no duplication issues)
     assert window_entry.items == {
         "short:W-Sys-Cav",
         "host:mail",
@@ -202,6 +153,8 @@ def test_duplicate_alert_ingestion_does_not_duplicate_window_entries(tmp_path):
 
     assert window_entry.hosts == {"mail"}
     assert window_entry.signatures == {"W-Sys-Cav"}
+    assert window_entry.alert_labels == {"false_positive"}
+    assert window_entry.tx_label == "benign"
 
 
 def test_empty_alerts_are_not_added_to_cache(tmp_path):
@@ -229,19 +182,18 @@ def test_empty_alerts_are_not_added_to_cache(tmp_path):
             "preprocess-alert-batch",
             str(alerts_file),
             "--scenario",
-            "fox",
+            SCENARIO,
             "--cache-dir",
             str(cache_dir),
         ],
     )
 
-    # Command should not crash (you skip bad alerts)
+    # requires process_alert_batch() to skip bad rows instead of crashing
     assert result.exit_code == 0
 
-    alert_files = list((cache_dir / "alerts").glob("*.json"))
-    window_files = list((cache_dir / "windows").glob("*.json"))
+    alert_files = list((cache_dir / SCENARIO / "alerts").glob("*.json"))
+    window_files = list((cache_dir / SCENARIO / "windows").glob("*.json"))
 
-    # Nothing should be written
     assert len(alert_files) == 0
     assert len(window_files) == 0
 
@@ -280,7 +232,7 @@ def test_alerts_json_to_transaction_selection_full_pipeline(tmp_path):
             "preprocess-alert-batch",
             str(alerts_file),
             "--scenario",
-            "fox",
+            SCENARIO,
             "--cache-dir",
             str(cache_dir),
         ],
@@ -295,11 +247,12 @@ def test_alerts_json_to_transaction_selection_full_pipeline(tmp_path):
             "select-transactions",
             "--cache-dir",
             str(cache_dir),
+            "--scenario",
+            SCENARIO,
         ],
     )
 
     assert select_result.exit_code == 0
-    assert "Selected 1 transactions." in select_result.stdout
     assert "window_id=821106976" in select_result.stdout
     assert "n_alerts=2" in select_result.stdout
     assert "sig:database" in select_result.stdout

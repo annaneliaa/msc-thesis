@@ -74,7 +74,7 @@ def ingest_tokenized_alert_batch(
     alert_batch_name: str,
     benign_label: str = "false_positive",
 ) -> None:
-    alert_entries: list[AlertCacheEntry] = []
+    alert_entries_by_id: dict[str, AlertCacheEntry] = {}
     windows_by_id: dict[int, WindowCacheEntry] = {}
 
     for alert in alerts:
@@ -90,7 +90,7 @@ def ingest_tokenized_alert_batch(
             time_label=alert.time_label,
             event_label=alert.event_label,
         )
-        alert_entries.append(alert_entry)
+        alert_entries_by_id[alert.alert_id] = alert_entry
 
         if alert.window_id not in windows_by_id:
             window = cache.read_window_entry(alert.window_id)
@@ -123,7 +123,9 @@ def ingest_tokenized_alert_batch(
                 benign_label=benign_label,
             )
 
-    cache.write_alert_batch(alert_entries, batch_name=alert_batch_name)
+    cache.write_alert_batch(
+        list(alert_entries_by_id.values()), batch_name=alert_batch_name
+    )
 
     for window in windows_by_id.values():
         cache.write_window_entry(window)
