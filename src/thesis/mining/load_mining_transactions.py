@@ -9,6 +9,47 @@ import pandas as pd
 from thesis.schemas.mining import MiningTransaction
 
 
+def load_mining_transactions_from_cache(
+    path: str | Path = "artifacts/cache/transactions/transactions.json",
+) -> list[MiningTransaction]:
+    """
+    Load MiningTransaction objects from cached JSON file.
+
+    Expected format:
+    - list of dicts
+    - items: list[str] -> converted to set[str]
+    - alert_labels: list[str] | None -> set[str] | None
+    """
+    path = Path(path)
+
+    if not path.exists():
+        raise FileNotFoundError(f"Transactions file not found: {path}")
+
+    with open(path, "r") as f:
+        raw = json.load(f)
+
+    transactions: list[MiningTransaction] = []
+
+    for row in raw:
+        tx = MiningTransaction(
+            transaction_id=row["transaction_id"],
+            window_start=row.get("window_start"),
+            window_end=row.get("window_end"),
+            n_alerts=row.get("n_alerts"),
+            items=set(row.get("items", [])),
+            tx_label=row.get("tx_label"),
+            alert_labels=(
+                set(row["alert_labels"])
+                if row.get("alert_labels") is not None
+                else None
+            ),
+            weight=row.get("weight", 1.0),
+        )
+        transactions.append(tx)
+
+    return transactions
+
+
 def prepare_transactions(
     transactions: Sequence[MiningTransaction],
     run_dir: Path | None = None,
@@ -66,6 +107,17 @@ def prepare_transactions(
         prepared_df.to_csv(run_dir / "prepared_transactions.csv", index=False)
 
     return prepared
+
+
+def load_and_prepare_mining_transactions(
+    path: str | Path = "artifacts/cache/transactions/transactions.json",
+    run_dir: Path | None = None,
+) -> list[MiningTransaction]:
+    """
+    Load cached MiningTransaction records and prepare them for mining.
+    """
+    transactions = load_mining_transactions_from_cache(path)
+    return prepare_transactions(transactions, run_dir=run_dir)
 
 
 def build_tidsets(
