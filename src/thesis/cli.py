@@ -1,6 +1,7 @@
 import typer
 import pandas as pd
 from pathlib import Path
+import json
 
 from thesis.schemas.dataframe_schemas import SCHEMAS
 from thesis.config import load_settings
@@ -10,8 +11,12 @@ from thesis.paths import ensure_artifact_dirs
 from thesis.schemas.validation import validate_dataframe
 from thesis.registry.models import list_all_models
 from thesis.registry.encoders import list_all_encoders
+from thesis.preprocessing.cache import TokenCache
+from thesis.preprocessing.parsing import parse_alert_row
+from thesis.preprocessing.tokenization import tokenize_alert
+from thesis.preprocessing.cache_ingestor import ingest_tokenized_alert
+from thesis.schemas.preprocessing import IncomingAlert
 
-# from thesis.experiments.runner import run_experiment
 
 """
 Entry point to the system
@@ -118,3 +123,39 @@ def list_encoders():
 def list_schemas() -> None:
     for name, schema in SCHEMAS.items():
         typer.echo(f"{name}: {list(schema.keys())}")
+
+
+@app.command()
+def preprocess_single_alert(
+    alert_file: str = typer.Argument(..., help="Path to a single alert JSON file."),
+    scenario: str = typer.Option(..., help="Scenario name."),
+    cache_dir: str = typer.Option(
+        "artifacts/cache", help="Directory where cache files are stored."
+    ),
+) -> None:
+    """
+    Run parsing -> tokenization -> cache ingestion for one alert.
+    """
+    try:
+        alert_path = Path(alert_file)
+        cache_path = Path(cache_dir)
+
+        with alert_path.open("r", encoding="utf-8") as f:
+            payload = json.load(f)
+
+        alert = IncomingAlert.from_row(payload)
+
+        parsed = parse_alert_row(alert=alert, scenario=scenario)
+        tokenized = tokenize_alert(parsed)
+
+        cache = TokenCache(cache_dir=cache_path)
+        ingest_tokenized_alert(cache=cache, alert=tokenized)
+
+        typer.echo(f"Processed alert_id={tokenized.alert_id}")
+        typer.echo(f"Window ID={tokenized.window_id}")
+        typer.echo(f"repr_tokens={sorted(tokenized.repr_tokens)}")
+        typer.echo(f"mining_tokens={sorted(tokenized.mining_tokens)}")
+
+    except Exception as e:
+        typer.echo(f"Preprocessing failed: {e}")
+        raise typer.Exit(code=1)
