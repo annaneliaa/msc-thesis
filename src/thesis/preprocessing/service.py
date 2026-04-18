@@ -21,3 +21,11 @@ def run_preprocessing_pipeline(
     tokenized = tokenize_alert(parsed)
     ingest_tokenized_alert(cache=cache, alert=tokenized)
     return tokenized
+
+
+def process_one_alert(row: dict, scenario: str, cache: TokenCache) -> None:
+    alert = IncomingAlert.from_row(row)
+    parsed = parse_alert_row(alert=alert, scenario=scenario)
+    tokenized = tokenize_alert(parsed)
+    ingest_tokenized_alert(cache=cache, alert=tokenized)
+    return tokenized

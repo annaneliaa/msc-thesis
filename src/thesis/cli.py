@@ -12,10 +12,7 @@ from thesis.schemas.validation import validate_dataframe
 from thesis.registry.models import list_all_models
 from thesis.registry.encoders import list_all_encoders
 from thesis.preprocessing.cache import TokenCache
-from thesis.preprocessing.parsing import parse_alert_row
-from thesis.preprocessing.tokenization import tokenize_alert
-from thesis.preprocessing.cache_ingestor import ingest_tokenized_alert
-from thesis.schemas.preprocessing import IncomingAlert
+from thesis.preprocessing.service import process_one_alert
 
 
 """
@@ -143,13 +140,8 @@ def preprocess_single_alert(
         with alert_path.open("r", encoding="utf-8") as f:
             payload = json.load(f)
 
-        alert = IncomingAlert.from_row(payload)
-
-        parsed = parse_alert_row(alert=alert, scenario=scenario)
-        tokenized = tokenize_alert(parsed)
-
         cache = TokenCache(cache_dir=cache_path)
-        ingest_tokenized_alert(cache=cache, alert=tokenized)
+        tokenized = process_one_alert(row=payload, scenario=scenario, cache=cache)
 
         typer.echo(f"Processed alert_id={tokenized.alert_id}")
         typer.echo(f"Window ID={tokenized.window_id}")
@@ -158,4 +150,46 @@ def preprocess_single_alert(
 
     except Exception as e:
         typer.echo(f"Preprocessing failed: {e}")
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def preprocess_alert_batch(
+    alerts_file: str = typer.Argument(
+        ..., help="Path to a JSON file with multiple alerts."
+    ),
+    scenario: str = typer.Option(..., help="Scenario name."),
+    cache_dir: str = typer.Option(
+        "artifacts/cache", help="Directory where cache files are stored."
+    ),
+) -> None:
+    """
+    Run parsing -> tokenization -> cache ingestion for multiple alerts
+    from one input JSON file.
+    """
+    try:
+        alerts_path = Path(alerts_file)
+        cache_path = Path(cache_dir)
+
+        with alerts_path.open("r", encoding="utf-8") as f:
+            payload = json.load(f)
+
+        if not isinstance(payload, list):
+            raise ValueError("Input file must contain a JSON list of alert objects.")
+
+        cache = TokenCache(cache_dir=cache_path)
+
+        processed_count = 0
+        for row in payload:
+            try:
+                process_one_alert(row=row, scenario=scenario, cache=cache)
+                processed_count += 1
+            except Exception:
+                continue  # skip bad alert
+
+        typer.echo(f"Processed {processed_count} alerts.")
+        typer.echo(f"Cache written to: {cache_path}")
+
+    except Exception as e:
+        typer.echo(f"Batch preprocessing failed: {e}")
         raise typer.Exit(code=1)

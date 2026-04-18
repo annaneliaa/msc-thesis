@@ -24,7 +24,9 @@ def ingest_tokenized_alert(cache: TokenCache, alert: TokenizedAlert) -> None:
             end_ts=alert.window_id * 2 + 1,
         )
 
-    window.alert_ids.append(alert.alert_id)
+    if alert.alert_id not in window.alert_ids:
+        window.alert_ids.append(alert.alert_id)
+
     window.items |= set(alert.mining_tokens)
 
     if alert.host:
