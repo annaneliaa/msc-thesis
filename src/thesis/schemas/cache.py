@@ -22,4 +22,18 @@ class WindowCacheEntry:
     items: set[str] = field(default_factory=set)
     hosts: set[str] = field(default_factory=set)
     signatures: set[str] = field(default_factory=set)
+    alert_labels: set[str] | None = None
+    tx_label: str | None = None
     closed: bool = False
+
+
+@dataclass(slots=True)
+class CacheQuery:
+    min_window_id: int | None = None
+    max_window_id: int | None = None
+    only_closed: bool = True
+
+
+@dataclass(slots=True)
+class CacheResponse:
+    windows: list["WindowCacheEntry"] = field(default_factory=list)

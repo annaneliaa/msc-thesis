@@ -1,5 +1,5 @@
 import pandas as pd
-from typing import Any
+from typing import Any, Optional
 from dataclasses import dataclass, field
 
 
@@ -106,3 +106,15 @@ class TokenizedAlert:
     mining_tokens: set[str] = field(default_factory=set)
 
     raw: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class WindowTransaction:
+    window_id: int
+    window_start: int
+    window_end: int
+    n_alerts: int
+    items: set[str] = field(default_factory=set)
+    alert_labels: Optional[set[str]] = None
+    tx_label: Optional[str] = None
+    weight: float = 1.0

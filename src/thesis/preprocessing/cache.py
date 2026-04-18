@@ -4,7 +4,12 @@ from pathlib import Path
 import json
 from dataclasses import asdict
 
-from thesis.schemas.cache import AlertCacheEntry, WindowCacheEntry
+from thesis.schemas.cache import (
+    AlertCacheEntry,
+    WindowCacheEntry,
+    CacheQuery,
+    CacheResponse,
+)
 
 
 class TokenCache:
@@ -34,6 +39,9 @@ class TokenCache:
         payload["hosts"] = sorted(payload["hosts"])
         payload["signatures"] = sorted(payload["signatures"])
 
+        if payload["alert_labels"] is not None:
+            payload["alert_labels"] = sorted(payload["alert_labels"])
+
         with path.open("w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2, sort_keys=True)
 
@@ -62,4 +70,40 @@ class TokenCache:
         payload["hosts"] = set(payload["hosts"])
         payload["signatures"] = set(payload["signatures"])
 
+        if payload.get("alert_labels") is not None:
+            payload["alert_labels"] = set(payload["alert_labels"])
+
         return WindowCacheEntry(**payload)
+
+        return WindowCacheEntry(**payload)
+
+    def list_window_ids(self) -> list[int]:
+        window_ids: list[int] = []
+
+        for path in self.window_store_dir.glob("*.json"):
+            try:
+                window_ids.append(int(path.stem))
+            except ValueError:
+                continue
+
+        return sorted(window_ids)
+
+    def query(self, query: CacheQuery) -> CacheResponse:
+        windows: list[WindowCacheEntry] = []
+
+        for window_id in self.list_window_ids():
+            if query.min_window_id is not None and window_id < query.min_window_id:
+                continue
+            if query.max_window_id is not None and window_id > query.max_window_id:
+                continue
+
+            window = self.read_window_entry(window_id)
+            if window is None:
+                continue
+
+            if query.only_closed and not window.closed:
+                continue
+
+            windows.append(window)
+
+        return CacheResponse(windows=windows)
