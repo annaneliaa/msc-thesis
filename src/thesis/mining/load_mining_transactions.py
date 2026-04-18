@@ -117,7 +117,11 @@ def load_and_prepare_mining_transactions(
     Load cached MiningTransaction records and prepare them for mining.
     """
     transactions = load_mining_transactions_from_cache(path)
-    return prepare_transactions(transactions, run_dir=run_dir)
+    prepared_transactions = prepare_transactions(transactions, run_dir=run_dir)
+    print(
+        f"Loaded {len(transactions)} transactions, prepared {len(prepared_transactions)} for mining."
+    )
+    return prepared_transactions
 
 
 def build_tidsets(

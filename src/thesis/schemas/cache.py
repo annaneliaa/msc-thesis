@@ -11,6 +11,8 @@ class AlertCacheEntry:
     ip: str | None = None
     host: str | None = None
     short: str | None = None
+    event_label: str | None = None
+    time_label: str | None = None
 
 
 @dataclass(slots=True)

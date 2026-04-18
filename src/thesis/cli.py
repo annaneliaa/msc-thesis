@@ -2,18 +2,19 @@ import typer
 import pandas as pd
 from pathlib import Path
 import json
+import csv
 
 from thesis.schemas.dataframe_schemas import SCHEMAS
 from thesis.schemas.cache import CacheQuery
 from thesis.config import load_settings
 from thesis.mining.mining_dummy_job import run_dummy_mining_job
-from thesis.mining.mining_transaction_csv_job import run_transaction_eclat_job
+from thesis.mining.mining_transaction_job import run_transaction_eclat_job
 from thesis.paths import ensure_artifact_dirs
 from thesis.schemas.validation import validate_dataframe
 from thesis.registry.models import list_all_models
 from thesis.registry.encoders import list_all_encoders
 from thesis.preprocessing.cache import TokenCache
-from thesis.preprocessing.service import process_one_alert
+from thesis.preprocessing.service import process_one_alert, process_alert_batch
 from thesis.preprocessing.transaction_selector import (
     select_transactions as select_transactions_from_cache,
 )
@@ -35,36 +36,6 @@ def init() -> None:
 def show_config(config_name: str = "base.yaml") -> None:
     settings = load_settings(config_name)
     typer.echo(settings.model_dump_json(indent=2))
-
-
-@app.command()
-def mine_dummy(run_name: str = "debug") -> None:
-    path = run_dummy_mining_job(run_name=run_name)
-    typer.echo(f"Dummy mining output written to: {path}")
-
-
-@app.command()
-def mine_transactions_csv(
-    scenario_csv: str = typer.Argument(
-        ..., help="Path to one scenario transaction CSV."
-    ),
-    run_name: str = typer.Option("debug", help="MLflow run name."),
-    min_support: float = typer.Option(0.05, help="Minimum support threshold."),
-    max_len: int = typer.Option(3, help="Maximum itemset size."),
-    target_label: str = typer.Option("benign", help="Label to mine from."),
-    label_col: str = typer.Option("tx_label", help="Transaction label column."),
-    items_col: str = typer.Option("items", help="Items column."),
-) -> None:
-    path = run_transaction_eclat_job(
-        scenario_csv=Path(scenario_csv),
-        run_name=run_name,
-        min_support=min_support,
-        max_len=max_len,
-        target_label=target_label,
-        label_col=label_col,
-        items_col=items_col,
-    )
-    typer.echo(f"Transaction mining output written to: {path}")
 
 
 @app.command()
@@ -157,6 +128,40 @@ def preprocess_single_alert(
 
 
 @app.command()
+def convert_alerts_to_json(scenario: str) -> None:
+    input_path = Path(f"data/alerts_csv/{scenario}_alerts.txt")
+    output_dir = Path(f"artifacts/processed-data/{scenario}")
+    output_path = output_dir / "alerts.json"
+
+    if not input_path.exists():
+        raise FileNotFoundError(f"Input file not found: {input_path}")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    alerts: list[dict] = []
+
+    with input_path.open("r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+
+        for row in reader:
+            alert = {
+                "time": int(row["time"]),
+                "name": row["name"],
+                "ip": row["ip"],
+                "host": row["host"],
+                "short": row["short"],
+                "time_label": row["time_label"],
+                "event_label": row["event_label"],
+            }
+            alerts.append(alert)
+
+    with output_path.open("w", encoding="utf-8") as f:
+        json.dump(alerts, f, indent=2)
+
+    print(f"Wrote {len(alerts)} alerts to {output_path}")
+
+
+@app.command()
 def preprocess_alert_batch(
     alerts_file: str = typer.Argument(
         ..., help="Path to a JSON file with multiple alerts."
@@ -180,18 +185,13 @@ def preprocess_alert_batch(
         if not isinstance(payload, list):
             raise ValueError("Input file must contain a JSON list of alert objects.")
 
-        cache = TokenCache(cache_dir=cache_path)
+        cache = TokenCache(cache_dir=cache_path, scenario=scenario)
 
-        processed_count = 0
-        for row in payload:
-            try:
-                process_one_alert(row=row, scenario=scenario, cache=cache)
-                processed_count += 1
-            except Exception:
-                continue  # skip bad alert
+        process_alert_batch(rows=payload, scenario=scenario, cache=cache)
+        processed_count = len(payload)
 
         typer.echo(f"Processed {processed_count} alerts.")
-        typer.echo(f"Cache written to: {cache_path}")
+        typer.echo(f"Cache written to: {cache_path}/{scenario}")
 
     except Exception as e:
         typer.echo(f"Batch preprocessing failed: {e}")
@@ -273,4 +273,60 @@ def select_transactions(
 
     except Exception as e:
         typer.echo(f"Transaction selection failed: {e}")
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def mine_dummy(run_name: str = "debug") -> None:
+    path = run_dummy_mining_job(run_name=run_name)
+    typer.echo(f"Dummy mining output written to: {path}")
+
+
+@app.command()
+def mine_transactions(
+    transactions_path: str = typer.Argument(
+        "artifacts/cache/transactions/transactions.json",
+        help="Path to cached transactions JSON file.",
+    ),
+    scenario_name: str = typer.Option(
+        "debug_scenario",
+        help="Dataset scenario name for logging and artifacts.",
+    ),
+    run_name: str = typer.Option(
+        "debug",
+        help="MLflow run name.",
+    ),
+    min_support: float = typer.Option(
+        0.05,
+        help="Minimum support threshold.",
+    ),
+    max_len: int = typer.Option(
+        3,
+        help="Maximum itemset size.",
+    ),
+    target_label: str = typer.Option(
+        "benign",
+        help="Label to mine from.",
+    ),
+) -> None:
+    """
+    Load cached MiningTransactions and run transaction-level Eclat mining.
+    """
+    try:
+        typer.echo(f"Loading transactions from {transactions_path}...")
+        tx_path = Path(transactions_path)
+
+        path = run_transaction_eclat_job(
+            transactions_path=tx_path,
+            scenario_name=scenario_name,
+            run_name=run_name,
+            min_support=min_support,
+            max_len=max_len,
+            target_label=target_label,
+        )
+
+        typer.echo(f"Transaction mining output written to: {path}")
+
+    except Exception as e:
+        typer.echo(f"Transaction mining failed: {e}")
         raise typer.Exit(code=1)

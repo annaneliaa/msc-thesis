@@ -3,12 +3,11 @@ from __future__ import annotations
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Sequence
 
 import pandas as pd
 
 from thesis.paths import ensure_artifact_dirs
-from thesis.schemas.mining import MiningMetadata, MiningTransaction
+from thesis.schemas.mining import MiningMetadata
 from thesis.utils.mlflow_utils import (
     log_artifact,
     log_metrics,
@@ -22,13 +21,13 @@ from thesis.utils.runs import (
     write_manifest,
 )
 
-from thesis.mining.load_mining_transactions import prepare_transactions
 from thesis.mining.eclat_mining import run_eclat
 from thesis.mining.util import add_cross_label_supports
+from thesis.mining.load_mining_transactions import load_and_prepare_mining_transactions
 
 
 def run_transaction_eclat_job(
-    transactions: Sequence[MiningTransaction],
+    transactions_path: str | Path,
     scenario_name: str,
     run_name: str = "debug",
     min_support: float = 0.05,
@@ -73,10 +72,14 @@ def run_transaction_eclat_job(
             }
         )
 
-        prepared_transactions = prepare_transactions(transactions, run_dir=run_dir)
+        transactions = load_and_prepare_mining_transactions(
+            path=transactions_path,
+            run_dir=run_dir,
+        )
+        print(f"Loaded + prepared {len(transactions)} transactions for mining.")
 
         all_labels = sorted(
-            {tx.tx_label for tx in prepared_transactions if tx.tx_label is not None}
+            {tx.tx_label for tx in transactions if tx.tx_label is not None}
         )
         other_labels = [label for label in all_labels if label != target_label]
 
@@ -87,16 +90,12 @@ def run_transaction_eclat_job(
 
         other_label = other_labels[0] if other_labels else "other"
 
-        target_group = [
-            tx for tx in prepared_transactions if tx.tx_label == target_label
-        ]
-        other_group = [
-            tx for tx in prepared_transactions if tx.tx_label != target_label
-        ]
+        target_group = [tx for tx in transactions if tx.tx_label == target_label]
+        other_group = [tx for tx in transactions if tx.tx_label != target_label]
 
         target_baskets = [frozenset(tx.items) for tx in target_group]
         other_baskets = [frozenset(tx.items) for tx in other_group]
-        all_baskets = [frozenset(tx.items) for tx in prepared_transactions]
+        all_baskets = [frozenset(tx.items) for tx in transactions]
 
         mined_df = run_eclat(
             transactions=target_baskets,
@@ -119,7 +118,7 @@ def run_transaction_eclat_job(
             [
                 {
                     "scenario_name": scenario_name,
-                    "n_transactions_total": len(prepared_transactions),
+                    "n_transactions_total": len(transactions),
                     f"n_transactions_{target_label}": len(target_group),
                     f"n_transactions_{other_label}": len(other_group),
                     "n_unique_items": (
@@ -146,7 +145,7 @@ def run_transaction_eclat_job(
             n_candidates=len(mined_df),
             run_id=run_dir.name,
             artifact_path=str(run_dir),
-            n_transactions=len(prepared_transactions),
+            n_transactions=len(transactions),
         )
 
         write_manifest(
@@ -164,7 +163,7 @@ def run_transaction_eclat_job(
 
         log_metrics(
             {
-                "n_transactions_total": float(len(prepared_transactions)),
+                "n_transactions_total": float(len(transactions)),
                 f"n_transactions_{target_label}": float(len(target_group)),
                 f"n_transactions_{other_label}": float(len(other_group)),
                 "n_itemsets": float(len(mined_df)),

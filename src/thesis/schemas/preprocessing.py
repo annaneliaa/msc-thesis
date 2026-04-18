@@ -69,6 +69,8 @@ class ParsedAlert:
     ip: str | None = None
     host: str | None = None
     short: str | None = None
+    time_label: str | None = None
+    event_label: str | None = None
 
     raw: dict[str, Any] = field(default_factory=dict)
 
@@ -82,6 +84,8 @@ class ParsedAlert:
             "ip": self.ip,
             "host": self.host,
             "short": self.short,
+            "time_label": self.time_label,
+            "event_label": self.event_label,
             "raw": self.raw,
         }
 
@@ -104,6 +108,9 @@ class TokenizedAlert:
 
     repr_tokens: set[str] = field(default_factory=set)
     mining_tokens: set[str] = field(default_factory=set)
+
+    time_label: str | None = None
+    event_label: str | None = None
 
     raw: dict[str, Any] = field(default_factory=dict)
 
