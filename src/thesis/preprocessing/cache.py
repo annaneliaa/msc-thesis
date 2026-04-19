@@ -39,7 +39,10 @@ class TokenCache:
         payload = asdict(entry)
 
         # simple set fields
-        for key in ("alert_labels",):
+        for key in (
+            "items",
+            "alert_labels",
+        ):
             if key in payload and payload[key] is not None:
                 payload[key] = sorted(payload[key])
 
@@ -60,11 +63,6 @@ class TokenCache:
         ):
             payload["embedding_centroid"] = list(payload["embedding_centroid"])
 
-        # mining_token_sources may be:
-        # - list[str]
-        # - list[set[str]]
-        # - list[dict]
-        # We normalize nested sets to sorted lists
         if (
             "mining_token_sources" in payload
             and payload["mining_token_sources"] is not None
@@ -89,6 +87,9 @@ class TokenCache:
     @staticmethod
     def _group_from_payload(payload: dict) -> GroupCacheEntry:
         payload = dict(payload)
+
+        if payload.get("items") is not None:
+            payload["items"] = set(payload["items"])
 
         if payload.get("alert_labels") is not None:
             payload["alert_labels"] = set(payload["alert_labels"])

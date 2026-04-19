@@ -8,6 +8,7 @@ from thesis.preprocessing.group_selector import (
     select_group_snapshots_from_response,
     create_cache_query,
 )
+from thesis.preprocessing.group_alerts import group_alerts
 
 """"
 Set up pipeline methods here for the module.
@@ -16,21 +17,27 @@ To be called from CLI commands to expose as less as possible.
 
 
 def process_alert_batch(rows: list[dict], scenario: str, ingestor: CacheIngestor):
-    tokenize_alerts: list[TokenizedAlert] = []
+    tokenized_alerts: list[TokenizedAlert] = []
     for row in rows:
         try:
             alert = IncomingAlert.from_row(row)
             parsed = parse_incoming_alert(alert=alert, scenario=scenario)
             tokenized = tokenize_alert(parsed)
-            tokenize_alerts.append(tokenized)
+            tokenized_alerts.append(tokenized)
         except Exception as e:
             print(f"Skipping row due to parsing/tokenization error: {e}")
             continue
 
-    if tokenize_alerts:
-        ingestor.ingest_alert_batch(tokenize_alerts, batch_name=scenario)
+    # apply grouping to the batch
+    alert_groups = group_alerts(tokenized_alerts)
 
-    return len(tokenize_alerts)
+    if tokenized_alerts:
+        ingestor.ingest_alert_batch(tokenized_alerts, batch_name=scenario)
+
+    if alert_groups:
+        ingestor.ingest_groups(tokenized_alerts, alert_groups)
+
+    return len(tokenized_alerts)
 
 
 def select_groups_from_cache(

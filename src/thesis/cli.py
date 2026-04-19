@@ -168,7 +168,8 @@ def preprocess_alert_batch(
     ),
 ) -> None:
     """
-    Run parsing -> tokenization -> cache ingestion for multiple alerts
+    Run parsing -> tokenization -> cache ingestion for multiple alerts.
+    Also runs grouping on the batch and ingests groups into cache.
     from one input JSON file.
     """
     try:

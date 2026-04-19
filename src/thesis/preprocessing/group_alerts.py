@@ -55,3 +55,18 @@ def group_alerts_fixed_2s_by_group(
         groups[group_id].append(alert)
 
     return dict(groups)
+
+
+def group_alerts(
+    alerts: list[TokenizedAlert],
+    method: str = FIXED_WINDOW_METHOD,
+    **kwargs,
+) -> list[GroupingRecord]:
+    """
+    Main entry point for alert grouping.
+    Dispatches to specific grouping methods based on the 'method' argument.
+    """
+    if method == FIXED_WINDOW_METHOD:
+        return group_alerts_fixed_2s(alerts, **kwargs)
+    else:
+        raise ValueError(f"Unsupported grouping method: {method}")
