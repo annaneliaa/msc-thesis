@@ -1,4 +1,4 @@
-from thesis.preprocessing.parsing import parse_alert_row
+from thesis.preprocessing.parsing import parse_incoming_alert
 from thesis.preprocessing.tokenization import tokenize_alert
 from thesis.preprocessing.cache import TokenCache
 
@@ -12,7 +12,7 @@ __all__ = [
     "IncomingAlert",
     "ParsedAlert",
     "TokenizedAlert",
-    "parse_alert_row",
+    "parse_incoming_alert",
     "tokenize_alert",
     "TokenCache",
 ]

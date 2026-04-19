@@ -1,13 +1,11 @@
 from dataclasses import dataclass, field
+from typing import Optional
 
 
 @dataclass(slots=True)
 class AlertCacheEntry:
     alert_id: str
     ts: int
-    window_id: int
-    repr_tokens: set[str] = field(default_factory=set)
-    mining_tokens: set[str] = field(default_factory=set)
     ip: str | None = None
     host: str | None = None
     short: str | None = None
@@ -16,26 +14,49 @@ class AlertCacheEntry:
 
 
 @dataclass(slots=True)
-class WindowCacheEntry:
-    window_id: int
+class GroupCacheEntry:
+    group_id: str
+    method: str  # "fixed_2s" | "alertbert"
+    status: str  # "open" | "stale" | "closed" | "mined"
+
+    last_update_ts: int
     start_ts: int
     end_ts: int
+
     alert_ids: list[str] = field(default_factory=list)
-    items: set[str] = field(default_factory=set)
-    hosts: set[str] = field(default_factory=set)
-    signatures: set[str] = field(default_factory=set)
-    alert_labels: set[str] | None = None
-    tx_label: str | None = None
-    closed: bool = False
+    n_alerts: int = 0
+
+    items: set[str] = field(
+        default_factory=set
+    )  # union of raw mining items from member alerts
+
+    # group_features_summary: dict[str, set[str]] = field(default_factory=dict)
+    # embedding_centroid: Optional[list[float]] = None
+
+    alert_labels: Optional[set[str]] = None
+    tx_label: Optional[str] = None
+
+    version: int = 1
+    mined_at: Optional[int] = None
 
 
 @dataclass(slots=True)
 class CacheQuery:
-    min_window_id: int | None = None
-    max_window_id: int | None = None
+    # grouping / experiment control
+    allowed_methods: Optional[set[str]] = None  # {"fixed_2s", "alertbert"}
+
+    # lifecycle filtering
     only_closed: bool = True
+    allowed_statuses: Optional[set[str]] = None  # {"open", "stale", "closed", "mined"}
+
+    # time-based filtering
+    min_start_ts: Optional[int] = None
+    max_end_ts: Optional[int] = None
+
+    # optional limits
+    limit: Optional[int] = None  # max number of groups to return
 
 
 @dataclass(slots=True)
 class CacheResponse:
-    windows: list["WindowCacheEntry"] = field(default_factory=list)
+    groups: list["GroupCacheEntry"] = field(default_factory=list)

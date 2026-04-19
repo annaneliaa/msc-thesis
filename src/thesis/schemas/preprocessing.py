@@ -63,7 +63,6 @@ class ParsedAlert:
     alert_id: str
     ts: float
     time_norm: pd.Timestamp
-    window_id: int
 
     name: str | None = None
     ip: str | None = None
@@ -79,7 +78,6 @@ class ParsedAlert:
             "alert_id": self.alert_id,
             "ts": self.ts,
             "time_norm": self.time_norm,
-            "window_id": self.window_id,
             "name": self.name,
             "ip": self.ip,
             "host": self.host,
@@ -99,7 +97,6 @@ class TokenizedAlert:
     alert_id: str
     ts: int
     time_norm: Any
-    window_id: int
 
     name: str | None
     ip: str | None
@@ -116,12 +113,51 @@ class TokenizedAlert:
 
 
 @dataclass(slots=True)
-class WindowTransaction:
-    window_id: int
-    window_start: int
-    window_end: int
-    n_alerts: int
-    items: set[str] = field(default_factory=set)
+class GroupingRecord:
+    alert_id: str
+    group_id: str
+    method: str  # "fixed_2s"
+
+
+@dataclass(slots=True)
+class GroupSnapshot:  # stable snapshot
+    # identity
+    group_id: str
+    method: str  # "fixed_2s" | "alertbert"
+    version: int
+
+    # temporal scope
+    start_ts: int
+    end_ts: int
+
+    # membership
+    alert_ids: list[str] = field(default_factory=list)
+    n_alerts: int = 0
+    items: set[str] = field(default_factory=set)  # raw group items, pre-abstraction
+
+    # labels (for evaluation)
     alert_labels: Optional[set[str]] = None
     tx_label: Optional[str] = None
+
+    # lifecycle
+    status: str = "closed"  # expected: "closed" when emitted
+
+
+@dataclass(slots=True)
+class Transaction:  # mining input (with weight)
+    transaction_id: str
+    group_id: str
+    method: str  # "fixed_2s" | "alertbert"
+
+    start_ts: int
+    end_ts: int
+
+    n_alerts: int
+    alert_ids: Optional[list[str]] = None
+    abs_items: set[str] = field(default_factory=set)  # mining-ready abstracted itemset
+    raw_items: Optional[set[str]] = None  # pre-abstraction mining items
+
+    tx_label: Optional[str] = None
+    alert_labels: Optional[set[str]] = None
+
     weight: float = 1.0

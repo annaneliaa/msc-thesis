@@ -1,4 +1,8 @@
-from thesis.schemas.cache import AlertCacheEntry, WindowCacheEntry
+from pathlib import Path
+from typing import Iterable, Dict
+
+from thesis.schemas.cache import AlertCacheEntry, GroupCacheEntry
+from thesis.schemas.preprocessing import GroupingRecord
 from thesis.preprocessing.cache import TokenCache
 from thesis.schemas.preprocessing import TokenizedAlert
 
@@ -19,113 +23,121 @@ def label_window_from_alert_labels(
     return "benign"
 
 
-def ingest_tokenized_alert(
-    cache: TokenCache,
-    alert: TokenizedAlert,
-    benign_label: str = "false_positive",
-) -> None:
-    alert_entry = AlertCacheEntry(
-        alert_id=alert.alert_id,
-        ts=alert.ts,
-        window_id=alert.window_id,
-        repr_tokens=set(alert.repr_tokens),
-        mining_tokens=set(alert.mining_tokens),
-        ip=alert.ip,
-        host=alert.host,
-        short=alert.short,
-        time_label=alert.time_label,
-        event_label=alert.event_label,
-    )
-    cache.write_alert_entry(alert_entry)
+class CacheIngestor:
+    """
+    Writes tokenized alerts into the alert store of the cache.
 
-    window = cache.read_window_entry(alert.window_id)
-    if window is None:
-        window = WindowCacheEntry(
-            window_id=alert.window_id,
-            start_ts=alert.window_id * 2,
-            end_ts=alert.window_id * 2 + 1,
-        )
+    Group ingestion is intentionally left out for now.
+    """
 
-    if alert.alert_id not in window.alert_ids:
-        window.alert_ids.append(alert.alert_id)
+    def __init__(self, cache: TokenCache) -> None:
+        self.cache = cache
 
-    window.items |= set(alert.mining_tokens)
+    # -------------------------
+    # alert ingestion
+    # -------------------------
 
-    if alert.host:
-        window.hosts.add(alert.host)
-    if alert.short:
-        window.signatures.add(alert.short)
-
-    if alert.time_label is not None:
-        if window.alert_labels is None:
-            window.alert_labels = set()
-        window.alert_labels.add(str(alert.time_label))
-        window.tx_label = label_window_from_alert_labels(
-            window.alert_labels,
-            benign_label=benign_label,
-        )
-
-    cache.write_window_entry(window)
-
-
-def ingest_tokenized_alert_batch(
-    cache: TokenCache,
-    alerts: list[TokenizedAlert],
-    alert_batch_name: str,
-    benign_label: str = "false_positive",
-) -> None:
-    alert_entries_by_id: dict[str, AlertCacheEntry] = {}
-    windows_by_id: dict[int, WindowCacheEntry] = {}
-
-    for alert in alerts:
-        alert_entry = AlertCacheEntry(
+    @staticmethod
+    def _to_alert_cache_entry(alert: TokenizedAlert) -> AlertCacheEntry:
+        """
+        Convert a TokenizedAlert into an AlertCacheEntry.
+        """
+        return AlertCacheEntry(
             alert_id=alert.alert_id,
             ts=alert.ts,
-            window_id=alert.window_id,
-            repr_tokens=set(alert.repr_tokens),
-            mining_tokens=set(alert.mining_tokens),
             ip=alert.ip,
             host=alert.host,
             short=alert.short,
-            time_label=alert.time_label,
             event_label=alert.event_label,
+            time_label=alert.time_label,
         )
-        alert_entries_by_id[alert.alert_id] = alert_entry
 
-        if alert.window_id not in windows_by_id:
-            window = cache.read_window_entry(alert.window_id)
-            if window is None:
-                window = WindowCacheEntry(
-                    window_id=alert.window_id,
-                    start_ts=alert.window_id * 2,
-                    end_ts=alert.window_id * 2 + 1,
+    def ingest_alert(self, alert: TokenizedAlert) -> None:
+        """
+        Ingest a single tokenized alert into the alert store.
+        """
+        entry = self._to_alert_cache_entry(alert)
+        self.cache.write_alert_entry(entry)
+
+    def ingest_alert_batch(
+        self,
+        alerts: Iterable[TokenizedAlert],
+        batch_name: str,
+    ) -> Path:
+        """
+        Ingest a batch of tokenized alerts into the alert store.
+        Returns the written batch file path.
+        """
+        entries = [self._to_alert_cache_entry(alert) for alert in alerts]
+        return self.cache.write_alert_batch(entries, batch_name=batch_name)
+
+    # -------------------------
+    # group ingestion
+    # -------------------------
+    def ingest_groups(
+        self,
+        alerts: list[TokenizedAlert],
+        grouping_records: list[GroupingRecord],
+        benign_label: str = "false_positive",
+    ) -> None:
+        """
+        Build GroupCacheEntry objects from alerts + grouping records
+        and write them to the cache.
+        """
+
+        # index alerts by id
+        alerts_by_id: Dict[str, TokenizedAlert] = {a.alert_id: a for a in alerts}
+
+        groups: Dict[str, GroupCacheEntry] = {}
+
+        for record in grouping_records:
+            alert = alerts_by_id.get(record.alert_id)
+            if alert is None:
+                continue
+
+            if record.group_id not in groups:
+                groups[record.group_id] = GroupCacheEntry(
+                    group_id=record.group_id,
+                    method=record.method,
+                    status="open",
+                    start_ts=alert.ts,
+                    end_ts=alert.ts,
+                    last_update_ts=alert.ts,
+                    alert_ids=[],
+                    n_alerts=0,
+                    items=set(),
+                    alert_labels=None,
+                    tx_label=None,
+                    version=1,
                 )
-            windows_by_id[alert.window_id] = window
 
-        window = windows_by_id[alert.window_id]
+            group = groups[record.group_id]
 
-        if alert.alert_id not in window.alert_ids:
-            window.alert_ids.append(alert.alert_id)
+            # update group
+            group.alert_ids.append(alert.alert_id)
+            group.n_alerts += 1
 
-        window.items |= set(alert.mining_tokens)
+            group.items |= set(alert.mining_tokens)
 
-        if alert.host:
-            window.hosts.add(alert.host)
-        if alert.short:
-            window.signatures.add(alert.short)
+            group.start_ts = min(group.start_ts, alert.ts)
+            group.end_ts = max(group.end_ts, alert.ts)
+            group.last_update_ts = max(group.last_update_ts, alert.ts)
 
-        if alert.time_label is not None:
-            if window.alert_labels is None:
-                window.alert_labels = set()
-            window.alert_labels.add(str(alert.time_label))
-            window.tx_label = label_window_from_alert_labels(
-                window.alert_labels,
-                benign_label=benign_label,
-            )
+            # labels
+            if alert.time_label is not None:
+                if group.alert_labels is None:
+                    group.alert_labels = set()
+                group.alert_labels.add(str(alert.time_label))
 
-    cache.write_alert_batch(
-        list(alert_entries_by_id.values()), batch_name=alert_batch_name
-    )
+                group.tx_label = label_window_from_alert_labels(
+                    group.alert_labels,
+                    benign_label=benign_label,
+                )
 
-    for window in windows_by_id.values():
-        cache.write_window_entry(window)
+        # mark all as closed (since fixed windows are complete)
+        for group in groups.values():
+            group.status = "closed"
+
+        # write to cache
+        for group in groups.values():
+            self.cache.write_group_entry(group)

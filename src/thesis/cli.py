@@ -5,7 +5,6 @@ import json
 import csv
 
 from thesis.schemas.dataframe_schemas import SCHEMAS
-from thesis.schemas.cache import CacheQuery
 from thesis.config import load_settings
 from thesis.mining.mining_dummy_job import run_dummy_mining_job
 from thesis.mining.mining_transaction_job import run_transaction_eclat_job
@@ -14,10 +13,8 @@ from thesis.schemas.validation import validate_dataframe
 from thesis.registry.models import list_all_models
 from thesis.registry.encoders import list_all_encoders
 from thesis.preprocessing.cache import TokenCache
-from thesis.preprocessing.service import process_one_alert, process_alert_batch
-from thesis.preprocessing.transaction_selector import (
-    select_transactions as select_transactions_from_cache,
-)
+from thesis.preprocessing.cache_ingestor import CacheIngestor
+from thesis.preprocessing.service import process_alert_batch, select_groups_from_cache
 
 """
 Entry point to the system
@@ -96,39 +93,41 @@ def list_schemas() -> None:
         typer.echo(f"{name}: {list(schema.keys())}")
 
 
+# @app.command()
+# def preprocess_single_alert(
+#     alert_file: str = typer.Argument(..., help="Path to a single alert JSON file."),
+#     scenario: str = typer.Option(..., help="Scenario name."),
+#     cache_dir: str = typer.Option(
+#         "artifacts/cache", help="Directory where cache files are stored."
+#     ),
+# ) -> None:
+#     """
+#     Run parsing -> tokenization -> cache ingestion for one alert.
+#     """
+#     try:
+#         alert_path = Path(alert_file)
+#         cache_path = Path(cache_dir)
+
+#         with alert_path.open("r", encoding="utf-8") as f:
+#             payload = json.load(f)
+
+#         cache = TokenCache(cache_dir=cache_path)
+#         tokenized = process_one_alert(row=payload, scenario=scenario, cache=cache)
+
+#         typer.echo(f"Processed alert_id={tokenized.alert_id}")
+#         typer.echo(f"Window ID={tokenized.window_id}")
+#         typer.echo(f"repr_tokens={sorted(tokenized.repr_tokens)}")
+#         typer.echo(f"mining_tokens={sorted(tokenized.mining_tokens)}")
+
+#     except Exception as e:
+#         typer.echo(f"Preprocessing failed: {e}")
+#         raise typer.Exit(code=1)
+
+
 @app.command()
-def preprocess_single_alert(
-    alert_file: str = typer.Argument(..., help="Path to a single alert JSON file."),
-    scenario: str = typer.Option(..., help="Scenario name."),
-    cache_dir: str = typer.Option(
-        "artifacts/cache", help="Directory where cache files are stored."
-    ),
+def convert_alerts_to_json(
+    scenario: str = typer.Option(..., "--scenario", "-s", help="Scenario name"),
 ) -> None:
-    """
-    Run parsing -> tokenization -> cache ingestion for one alert.
-    """
-    try:
-        alert_path = Path(alert_file)
-        cache_path = Path(cache_dir)
-
-        with alert_path.open("r", encoding="utf-8") as f:
-            payload = json.load(f)
-
-        cache = TokenCache(cache_dir=cache_path)
-        tokenized = process_one_alert(row=payload, scenario=scenario, cache=cache)
-
-        typer.echo(f"Processed alert_id={tokenized.alert_id}")
-        typer.echo(f"Window ID={tokenized.window_id}")
-        typer.echo(f"repr_tokens={sorted(tokenized.repr_tokens)}")
-        typer.echo(f"mining_tokens={sorted(tokenized.mining_tokens)}")
-
-    except Exception as e:
-        typer.echo(f"Preprocessing failed: {e}")
-        raise typer.Exit(code=1)
-
-
-@app.command()
-def convert_alerts_to_json(scenario: str) -> None:
     input_path = Path(f"data/alerts_csv/{scenario}_alerts.txt")
     output_dir = Path(f"artifacts/processed-data/{scenario}")
     output_path = output_dir / "alerts.json"
@@ -163,10 +162,7 @@ def convert_alerts_to_json(scenario: str) -> None:
 
 @app.command()
 def preprocess_alert_batch(
-    alerts_file: str = typer.Argument(
-        ..., help="Path to a JSON file with multiple alerts."
-    ),
-    scenario: str = typer.Option(..., help="Scenario name."),
+    scenario: str = typer.Option(..., "--scenario", "-s", help="Scenario name"),
     cache_dir: str = typer.Option(
         "artifacts/cache", help="Directory where cache files are stored."
     ),
@@ -176,7 +172,7 @@ def preprocess_alert_batch(
     from one input JSON file.
     """
     try:
-        alerts_path = Path(alerts_file)
+        alerts_path = Path(f"artifacts/processed-data/{scenario}/alerts.json")
         cache_path = Path(cache_dir)
 
         with alerts_path.open("r", encoding="utf-8") as f:
@@ -186,9 +182,11 @@ def preprocess_alert_batch(
             raise ValueError("Input file must contain a JSON list of alert objects.")
 
         cache = TokenCache(cache_dir=cache_path, scenario=scenario)
+        cache_ingestor = CacheIngestor(cache=cache)
 
-        process_alert_batch(rows=payload, scenario=scenario, cache=cache)
-        processed_count = len(payload)
+        processed_count = process_alert_batch(
+            rows=payload, scenario=scenario, ingestor=cache_ingestor
+        )
 
         typer.echo(f"Processed {processed_count} alerts.")
         typer.echo(f"Cache written to: {cache_path}/{scenario}")
@@ -199,13 +197,13 @@ def preprocess_alert_batch(
 
 
 @app.command()
-def select_transactions(
+def select_groups(
+    scenario: str = typer.Option(..., "--scenario", "-s", help="Scenario name"),
     cache_dir: str = typer.Option(
         "artifacts/cache", help="Directory where cache files are stored."
     ),
-    scenario: str = typer.Option(..., help="Scenario name."),
-    min_window_id: int | None = typer.Option(None, help="Minimum window id."),
-    max_window_id: int | None = typer.Option(None, help="Maximum window id."),
+    min_start_ts: int | None = typer.Option(None, help="Minimum window id."),
+    max_end_ts: int | None = typer.Option(None, help="Maximum window id."),
     only_closed: bool = typer.Option(False, help="Select only closed windows."),
     retention_windows: int | None = typer.Option(
         None, help="How many most recent windows to keep."
@@ -215,65 +213,61 @@ def select_transactions(
     ),
 ) -> None:
     """
-    Query cache and build window transactions ready to pass to miner.
+    Query cache and build group snapshots ready to pass to mining preparation layer.
     """
     try:
         cache = TokenCache(cache_dir=Path(cache_dir), scenario=scenario)
 
-        query = CacheQuery(
-            min_window_id=min_window_id,
-            max_window_id=max_window_id,
-            only_closed=only_closed,
-        )
-
-        transactions = select_transactions_from_cache(
+        snapshots = select_groups_from_cache(
             cache=cache,
-            query=query,
-            retention_windows=retention_windows,
-            decay_factor=decay_factor,
+            allowed_methods=None,  # TODO: add option to filter by method
+            limit=retention_windows,
+            min_start_ts=min_start_ts,  # TODO: add option to filter by time range
+            max_end_ts=max_end_ts,
+            require_closed=only_closed,
         )
 
-        typer.echo(f"Selected {len(transactions)} transactions.")
-        for tx in transactions[:5]:  # print first 5 transactions as sample
+        typer.echo(f"Selected {len(snapshots)} groups.")
+        for s in snapshots[:5]:  # print first 5 transactions as sample
             typer.echo(
-                f"window_id={tx.window_id} "
-                f"n_alerts={tx.n_alerts} "
-                f"weight={tx.weight} "
-                f"items={sorted(tx.items)}"
+                f"n_alerts={s.n_alerts} "
+                f"statis={s.status} "
+                f"items={sorted(s.items)}"
             )
 
-        out_dir = Path(f"artifacts/cache/{scenario}/transactions")
+        out_dir = Path(f"artifacts/cache/{scenario}/snapshots")
         out_dir.mkdir(parents=True, exist_ok=True)
         out_path = (
-            out_dir / "transactions.json"
+            out_dir / "groupsnapshots.json"
         )  # TODO: check if this means there is always one transactions file in cache per scenario
 
         # convert to serializable format
         serialized = [
             {
-                "transaction_id": tx.window_id,  # transaction_id is just window_id for now
-                "window_start": tx.window_start,
-                "window_end": tx.window_end,
-                "n_alerts": tx.n_alerts,
-                "items": sorted(list(tx.items)),
-                "tx_label": tx.tx_label,
+                "group_id": s.group_id,  # transaction_id is just window_id for now
+                "method": s.method,
+                "version": s.version,
+                "start_ts": s.start_ts,
+                "end_ts": s.end_ts,
+                "alert_ids": s.alert_ids,
+                "n_alerts": s.n_alerts,
+                "items": sorted(list(s.items)),
+                "tx_label": s.tx_label,
                 "alert_labels": (
-                    sorted(list(tx.alert_labels))
-                    if tx.alert_labels is not None
-                    else None
+                    sorted(list(s.alert_labels)) if s.alert_labels is not None else None
                 ),
-                "weight": tx.weight,
+                "status": s.weight,
             }
-            for tx in transactions
+            for s in snapshots
         ]
 
         with open(out_path, "w") as f:
             json.dump(serialized, f, indent=2)
 
-        typer.echo(f"Saved transactions to {out_path}")
+        typer.echo(f"Saved group snapshots to {out_path}")
 
     except Exception as e:
-        typer.echo(f"Transaction selection failed: {e}")
+        typer.echo(f"Group selection failed: {e}")
         raise typer.Exit(code=1)
 
 

@@ -1,7 +1,7 @@
 import math
 
 from thesis.preprocessing.cache import TokenCache
-from thesis.preprocessing.transaction_selector import (
+from thesis.preprocessing.group_selector import (
     select_transactions,
     select_transactions_from_response,
 )

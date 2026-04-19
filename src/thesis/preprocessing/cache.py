@@ -1,13 +1,11 @@
-from __future__ import annotations
-
 from pathlib import Path
 import json
 from dataclasses import asdict
-from typing import Iterable
+from typing import Iterable, Any
 
 from thesis.schemas.cache import (
     AlertCacheEntry,
-    WindowCacheEntry,
+    GroupCacheEntry,
     CacheQuery,
     CacheResponse,
 )
@@ -17,10 +15,10 @@ class TokenCache:
     def __init__(self, cache_dir: Path, scenario: str) -> None:
         self.cache_dir = cache_dir
         self.alert_store_dir = cache_dir / scenario / "alerts"
-        self.window_store_dir = cache_dir / scenario / "windows"
+        self.group_store_dir = cache_dir / scenario / "groups"
 
         self.alert_store_dir.mkdir(parents=True, exist_ok=True)
-        self.window_store_dir.mkdir(parents=True, exist_ok=True)
+        self.group_store_dir.mkdir(parents=True, exist_ok=True)
 
     # -------------------------
     # serialization helpers
@@ -29,40 +27,95 @@ class TokenCache:
     @staticmethod
     def _alert_to_payload(entry: AlertCacheEntry) -> dict:
         payload = asdict(entry)
-        payload["repr_tokens"] = sorted(payload["repr_tokens"])
-        payload["mining_tokens"] = sorted(payload["mining_tokens"])
         return payload
 
     @staticmethod
     def _alert_from_payload(payload: dict) -> AlertCacheEntry:
         payload = dict(payload)
-        payload["repr_tokens"] = set(payload["repr_tokens"])
-        payload["mining_tokens"] = set(payload["mining_tokens"])
         return AlertCacheEntry(**payload)
 
     @staticmethod
-    def _window_to_payload(entry: WindowCacheEntry) -> dict:
+    def _group_to_payload(entry: GroupCacheEntry) -> dict:
         payload = asdict(entry)
-        payload["items"] = sorted(payload["items"])
-        payload["hosts"] = sorted(payload["hosts"])
-        payload["signatures"] = sorted(payload["signatures"])
 
-        if payload["alert_labels"] is not None:
-            payload["alert_labels"] = sorted(payload["alert_labels"])
+        # simple set fields
+        for key in ("alert_labels",):
+            if key in payload and payload[key] is not None:
+                payload[key] = sorted(payload[key])
+
+        # group_features_summary: dict[str, set[str]]
+        if (
+            "group_features_summary" in payload
+            and payload["group_features_summary"] is not None
+        ):
+            payload["group_features_summary"] = {
+                k: sorted(v) if isinstance(v, set) else v
+                for k, v in payload["group_features_summary"].items()
+            }
+
+        # embedding_centroid may be numpy array / tuple etc.; store as JSON list
+        if (
+            "embedding_centroid" in payload
+            and payload["embedding_centroid"] is not None
+        ):
+            payload["embedding_centroid"] = list(payload["embedding_centroid"])
+
+        # mining_token_sources may be:
+        # - list[str]
+        # - list[set[str]]
+        # - list[dict]
+        # We normalize nested sets to sorted lists
+        if (
+            "mining_token_sources" in payload
+            and payload["mining_token_sources"] is not None
+        ):
+            normalized_sources: list[Any] = []
+            for src in payload["mining_token_sources"]:
+                if isinstance(src, set):
+                    normalized_sources.append(sorted(src))
+                elif isinstance(src, dict):
+                    normalized_sources.append(
+                        {
+                            k: sorted(v) if isinstance(v, set) else v
+                            for k, v in src.items()
+                        }
+                    )
+                else:
+                    normalized_sources.append(src)
+            payload["mining_token_sources"] = normalized_sources
 
         return payload
 
     @staticmethod
-    def _window_from_payload(payload: dict) -> WindowCacheEntry:
+    def _group_from_payload(payload: dict) -> GroupCacheEntry:
         payload = dict(payload)
-        payload["items"] = set(payload["items"])
-        payload["hosts"] = set(payload["hosts"])
-        payload["signatures"] = set(payload["signatures"])
 
         if payload.get("alert_labels") is not None:
             payload["alert_labels"] = set(payload["alert_labels"])
 
-        return WindowCacheEntry(**payload)
+        if payload.get("group_features_summary") is not None:
+            payload["group_features_summary"] = {
+                k: set(v) if isinstance(v, list) else v
+                for k, v in payload["group_features_summary"].items()
+            }
+
+        if payload.get("mining_token_sources") is not None:
+            restored_sources: list[Any] = []
+            for src in payload["mining_token_sources"]:
+                if isinstance(src, list):
+                    restored_sources.append(set(src))
+                elif isinstance(src, dict):
+                    restored_sources.append(
+                        {
+                            k: set(v) if isinstance(v, list) else v
+                            for k, v in src.items()
+                        }
+                    )
+                else:
+                    restored_sources.append(src)
+            payload["mining_token_sources"] = restored_sources
+
+        return GroupCacheEntry(**payload)
 
     # -------------------------
     # single-entry writes
@@ -75,9 +128,9 @@ class TokenCache:
         with path.open("w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2, sort_keys=True)
 
-    def write_window_entry(self, entry: WindowCacheEntry) -> None:
-        path = self.window_store_dir / f"{entry.window_id}.json"
-        payload = self._window_to_payload(entry)
+    def write_group_entry(self, entry: GroupCacheEntry) -> None:
+        path = self.group_store_dir / f"{entry.group_id}.json"
+        payload = self._group_to_payload(entry)
 
         with path.open("w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2, sort_keys=True)
@@ -99,13 +152,13 @@ class TokenCache:
 
         return path
 
-    def write_window_batch(
+    def write_group_batch(
         self,
-        entries: Iterable[WindowCacheEntry],
+        entries: Iterable[GroupCacheEntry],
         batch_name: str,
     ) -> Path:
-        path = self.window_store_dir / f"{batch_name}.json"
-        payload = [self._window_to_payload(entry) for entry in entries]
+        path = self.group_store_dir / f"{batch_name}.json"
+        payload = [self._group_to_payload(entry) for entry in entries]
 
         with path.open("w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2, sort_keys=True)
@@ -126,15 +179,15 @@ class TokenCache:
 
         return self._alert_from_payload(payload)
 
-    def read_window_entry(self, window_id: int) -> WindowCacheEntry | None:
-        path = self.window_store_dir / f"{window_id}.json"
+    def read_group_entry(self, group_id: str) -> GroupCacheEntry | None:
+        path = self.group_store_dir / f"{group_id}.json"
         if not path.exists():
             return None
 
         with path.open("r", encoding="utf-8") as f:
             payload = json.load(f)
 
-        return self._window_from_payload(payload)
+        return self._group_from_payload(payload)
 
     # -------------------------
     # batch reads
@@ -150,79 +203,108 @@ class TokenCache:
 
         return [self._alert_from_payload(payload) for payload in payloads]
 
-    def read_window_batch(self, batch_name: str) -> list[WindowCacheEntry]:
-        path = self.window_store_dir / f"{batch_name}.json"
+    def read_group_batch(self, batch_name: str) -> list[GroupCacheEntry]:
+        path = self.group_store_dir / f"{batch_name}.json"
         if not path.exists():
             return []
 
         with path.open("r", encoding="utf-8") as f:
             payloads = json.load(f)
 
-        return [self._window_from_payload(payload) for payload in payloads]
+        return [self._group_from_payload(payload) for payload in payloads]
 
     # -------------------------
     # listing helpers
     # -------------------------
 
-    def list_window_ids(self) -> list[int]:
-        window_ids: list[int] = []
-
-        for path in self.window_store_dir.glob("*.json"):
-            try:
-                window_ids.append(int(path.stem))
-            except ValueError:
-                continue
-
-        return sorted(window_ids)
+    def list_group_ids(self) -> list[str]:
+        return sorted(path.stem for path in self.group_store_dir.glob("*.json"))
 
     def list_alert_batch_names(self) -> list[str]:
         return sorted(path.stem for path in self.alert_store_dir.glob("*.json"))
 
-    def list_window_batch_names(self) -> list[str]:
-        return sorted(path.stem for path in self.window_store_dir.glob("*.json"))
+    def list_group_batch_names(self) -> list[str]:
+        return sorted(path.stem for path in self.group_store_dir.glob("*.json"))
 
     # -------------------------
     # query
     # -------------------------
 
     def query(self, query: CacheQuery) -> CacheResponse:
-        windows: list[WindowCacheEntry] = []
+        groups: list[GroupCacheEntry] = []
 
-        for window_id in self.list_window_ids():
-            if query.min_window_id is not None and window_id < query.min_window_id:
-                continue
-            if query.max_window_id is not None and window_id > query.max_window_id:
-                continue
-
-            window = self.read_window_entry(window_id)
-            if window is None:
+        for group_id in self.list_group_ids():
+            group = self.read_group_entry(group_id)
+            if group is None:
                 continue
 
-            if query.only_closed and not window.closed:
-                continue
+            # optional filters; only apply if present on query schema
+            if hasattr(query, "only_closed") and query.only_closed:
+                if (
+                    getattr(group, "closed", False) is False
+                    and getattr(group, "status", None) != "closed"
+                ):
+                    continue
 
-            windows.append(window)
+            if hasattr(query, "allowed_methods") and query.allowed_methods is not None:
+                if group.method not in query.allowed_methods:
+                    continue
 
-        return CacheResponse(windows=windows)
+            if hasattr(query, "min_start_ts") and query.min_start_ts is not None:
+                if group.start_ts < query.min_start_ts:
+                    continue
+
+            if hasattr(query, "max_end_ts") and query.max_end_ts is not None:
+                if group.end_ts > query.max_end_ts:
+                    continue
+
+            if (
+                hasattr(query, "allowed_statuses")
+                and query.allowed_statuses is not None
+            ):
+                if group.status not in query.allowed_statuses:
+                    continue
+
+            groups.append(group)
+
+        groups.sort(key=lambda g: (g.end_ts, g.start_ts, g.group_id))
+        return CacheResponse(groups=groups)
 
     def query_from_batches(self, query: CacheQuery) -> CacheResponse:
-        windows: list[WindowCacheEntry] = []
+        groups: list[GroupCacheEntry] = []
 
-        for batch_name in self.list_window_batch_names():
-            for window in self.read_window_batch(batch_name):
-                if (
-                    query.min_window_id is not None
-                    and window.window_id < query.min_window_id
-                ):
-                    continue
-                if (
-                    query.max_window_id is not None
-                    and window.window_id > query.max_window_id
-                ):
-                    continue
-                if query.only_closed and not window.closed:
-                    continue
-                windows.append(window)
+        for batch_name in self.list_group_batch_names():
+            for group in self.read_group_batch(batch_name):
+                if hasattr(query, "only_closed") and query.only_closed:
+                    if (
+                        getattr(group, "closed", False) is False
+                        and getattr(group, "status", None) != "closed"
+                    ):
+                        continue
 
-        windows.sort(key=lambda w: w.window_id)
-        return CacheResponse(windows=windows)
+                if (
+                    hasattr(query, "allowed_methods")
+                    and query.allowed_methods is not None
+                ):
+                    if group.method not in query.allowed_methods:
+                        continue
+
+                if hasattr(query, "min_start_ts") and query.min_start_ts is not None:
+                    if group.start_ts < query.min_start_ts:
+                        continue
+
+                if hasattr(query, "max_end_ts") and query.max_end_ts is not None:
+                    if group.end_ts > query.max_end_ts:
+                        continue
+
+                if (
+                    hasattr(query, "allowed_statuses")
+                    and query.allowed_statuses is not None
+                ):
+                    if group.status not in query.allowed_statuses:
+                        continue
+
+                groups.append(group)
+
+        groups.sort(key=lambda g: (g.end_ts, g.start_ts, g.group_id))
+        return CacheResponse(groups=groups)

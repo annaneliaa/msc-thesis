@@ -36,16 +36,6 @@ def normalize_row_timestamp(value: object) -> tuple[int, pd.Timestamp]:
     return ts_int, time_norm
 
 
-def assign_window_id(ts: int, window_size_seconds: int = 2) -> int:
-    """
-    Assign a fixed window ID based on epoch seconds.
-    """
-    if window_size_seconds <= 0:
-        raise ValueError("window_size_seconds must be > 0")
-
-    return ts // window_size_seconds
-
-
 def make_alert_id(
     ts: int,
     alert: IncomingAlert,
@@ -69,7 +59,7 @@ def make_alert_id(
     return hashlib.sha1(key.encode("utf-8")).hexdigest()
 
 
-def parse_alert_row(
+def parse_incoming_alert(
     alert: IncomingAlert,
     scenario: str,
     window_size_seconds: int = 2,
@@ -79,7 +69,6 @@ def parse_alert_row(
     Parse one incoming alert into a ParsedAlert object.
     """
     ts, time_norm = normalize_row_timestamp(alert.time)
-    window_id = assign_window_id(ts=ts, window_size_seconds=window_size_seconds)
 
     alert_id = make_alert_id(
         ts=ts,
@@ -104,7 +93,6 @@ def parse_alert_row(
         alert_id=alert_id,
         ts=ts,
         time_norm=time_norm,
-        window_id=window_id,
         name=normalize_missing_value(alert.name),
         ip=normalize_missing_value(alert.ip),
         host=normalize_missing_value(alert.host),

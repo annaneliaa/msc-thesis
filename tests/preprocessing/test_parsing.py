@@ -1,6 +1,6 @@
 import pytest
 
-from thesis.preprocessing.parsing import parse_alert_row
+from thesis.preprocessing.parsing import parse_incoming_alert
 from thesis.schemas.preprocessing import IncomingAlert, ParsedAlert
 
 
@@ -15,7 +15,7 @@ def test_parse_alert_row_returns_parsed_alert_with_expected_values():
         event_label="-",
     )
 
-    parsed = parse_alert_row(
+    parsed = parse_incoming_alert(
         alert=alert,
         scenario="fox",
         window_size_seconds=2,
@@ -57,7 +57,7 @@ def test_parse_alert_row_normalizes_missing_values():
         event_label="-",
     )
 
-    parsed = parse_alert_row(alert=alert, scenario="fox")
+    parsed = parse_incoming_alert(alert=alert, scenario="fox")
 
     assert parsed.name is None
     assert parsed.ip is None
@@ -77,7 +77,7 @@ def test_parse_alert_row_raises_on_invalid_timestamp():
     )
 
     with pytest.raises(ValueError):
-        parse_alert_row(alert=alert, scenario="fox")
+        parse_incoming_alert(alert=alert, scenario="fox")
 
 
 def test_incoming_alert_missing_time_raises_type_error():

@@ -169,7 +169,6 @@ def tokenize_alert(alert: ParsedAlert) -> TokenizedAlert:
         alert_id=alert.alert_id,
         ts=alert.ts,
         time_norm=alert.time_norm,
-        window_id=alert.window_id,
         name=alert.name,
         ip=alert.ip,
         host=alert.host,
