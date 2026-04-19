@@ -257,7 +257,7 @@ def select_groups(
                 "alert_labels": (
                     sorted(list(s.alert_labels)) if s.alert_labels is not None else None
                 ),
-                "status": s.weight,
+                "status": s.status,
             }
             for s in snapshots
         ]

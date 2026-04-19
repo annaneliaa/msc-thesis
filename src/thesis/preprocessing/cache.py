@@ -230,45 +230,45 @@ class TokenCache:
     # -------------------------
     # query
     # -------------------------
-
     def query(self, query: CacheQuery) -> CacheResponse:
         groups: list[GroupCacheEntry] = []
 
         for group_id in self.list_group_ids():
-            group = self.read_group_entry(group_id)
+            try:
+                group = self.read_group_entry(group_id)
+            except Exception as e:
+                print(f"Failed to read group file: {group_id}.json -> {e}")
+                raise
+
             if group is None:
                 continue
 
-            # optional filters; only apply if present on query schema
-            if hasattr(query, "only_closed") and query.only_closed:
-                if (
-                    getattr(group, "closed", False) is False
-                    and getattr(group, "status", None) != "closed"
-                ):
-                    continue
-
-            if hasattr(query, "allowed_methods") and query.allowed_methods is not None:
-                if group.method not in query.allowed_methods:
-                    continue
-
-            if hasattr(query, "min_start_ts") and query.min_start_ts is not None:
-                if group.start_ts < query.min_start_ts:
-                    continue
-
-            if hasattr(query, "max_end_ts") and query.max_end_ts is not None:
-                if group.end_ts > query.max_end_ts:
-                    continue
+            if query.only_closed and group.status != "closed":
+                continue
 
             if (
-                hasattr(query, "allowed_statuses")
-                and query.allowed_statuses is not None
+                query.allowed_methods is not None
+                and group.method not in query.allowed_methods
             ):
-                if group.status not in query.allowed_statuses:
-                    continue
+                continue
+
+            if query.min_start_ts is not None and group.start_ts < query.min_start_ts:
+                continue
+
+            if query.max_end_ts is not None and group.end_ts > query.max_end_ts:
+                continue
+
+            if (
+                query.allowed_statuses is not None
+                and group.status not in query.allowed_statuses
+            ):
+                continue
 
             groups.append(group)
 
         groups.sort(key=lambda g: (g.end_ts, g.start_ts, g.group_id))
+        print("Cache query returned {} groups".format(len(groups)))
+
         return CacheResponse(groups=groups)
 
     def query_from_batches(self, query: CacheQuery) -> CacheResponse:
