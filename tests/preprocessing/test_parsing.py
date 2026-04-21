@@ -18,14 +18,12 @@ def test_parse_alert_row_returns_parsed_alert_with_expected_values():
     parsed = parse_incoming_alert(
         alert=alert,
         scenario="fox",
-        window_size_seconds=2,
         keep_raw=True,
     )
 
     assert isinstance(parsed, ParsedAlert)
 
     assert parsed.ts == 1642213952
-    assert parsed.window_id == 821106976
 
     assert parsed.name == "Wazuh: ClamAV database update"
     assert parsed.ip == "172.17.131.81"

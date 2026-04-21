@@ -22,7 +22,6 @@ def make_parsed_alert(
         alert_id="abc123",
         ts=1642213952,
         time_norm=pd.Timestamp("2022-01-15 09:12:32+00:00"),
-        window_id=821106976,
         name=name,
         ip=ip,
         host=host,
@@ -114,7 +113,6 @@ def test_tokenize_alert_returns_tokenized_alert_with_expected_values():
     assert tokenized.alert_id == alert.alert_id
     assert tokenized.ts == alert.ts
     assert tokenized.time_norm == alert.time_norm
-    assert tokenized.window_id == alert.window_id
     assert tokenized.name == alert.name
     assert tokenized.ip == alert.ip
     assert tokenized.host == alert.host

@@ -62,7 +62,6 @@ def make_alert_id(
 def parse_incoming_alert(
     alert: IncomingAlert,
     scenario: str,
-    window_size_seconds: int = 2,
     keep_raw: bool = True,
 ) -> ParsedAlert:
     """
