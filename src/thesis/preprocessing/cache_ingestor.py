@@ -117,7 +117,7 @@ class CacheIngestor:
             group.alert_ids.append(alert.alert_id)
             group.n_alerts += 1
 
-            group.items |= set(alert.mining_tokens)
+            group.items |= set(alert.tokens)
 
             group.start_ts = min(group.start_ts, alert.ts)
             group.end_ts = max(group.end_ts, alert.ts)

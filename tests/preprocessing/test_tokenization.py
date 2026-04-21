@@ -1,8 +1,7 @@
 import pandas as pd
 
 from thesis.preprocessing.tokenization import (
-    build_mining_tokens,
-    build_repr_tokens,
+    build_feature_tokens,
     extract_signature_tokens,
     normalize_text,
     tokenize_alert,
@@ -61,44 +60,24 @@ def test_tokenize_name_to_signature_substrings():
     assert tokens == {"sig:database", "sig:update"}
 
 
-def test_build_repr_tokens():
+def test_build_feature_tokens():
     alert = make_parsed_alert()
 
-    tokens = build_repr_tokens(alert)
+    tokens = build_feature_tokens(alert)
 
     assert tokens == {
         "short:W-Sys-Cav",
         "host:mail",
         "name:wazuh clamav database update",
-        "ip:172.17.131.81",
-    }
-
-
-def test_build_mining_tokens():
-    alert = make_parsed_alert()
-
-    tokens = build_mining_tokens(alert)
-
-    assert tokens == {
-        "short:W-Sys-Cav",
-        "host:mail",
         "sig:database",
         "sig:update",
     }
 
 
-def test_build_repr_tokens_omits_missing_fields():
-    alert = make_parsed_alert(name=None, ip=None, host="mail", short=None)
-
-    tokens = build_repr_tokens(alert)
-
-    assert tokens == {"host:mail"}
-
-
-def test_build_mining_tokens_omits_missing_fields():
+def test_build_feature_tokens_omits_missing_fields():
     alert = make_parsed_alert(name=None, host="mail", short=None)
 
-    tokens = build_mining_tokens(alert)
+    tokens = build_feature_tokens(alert)
 
     assert tokens == {"host:mail"}
 
@@ -118,15 +97,10 @@ def test_tokenize_alert_returns_tokenized_alert_with_expected_values():
     assert tokenized.host == alert.host
     assert tokenized.short == alert.short
 
-    assert tokenized.repr_tokens == {
+    assert tokenized.tokens == {
         "short:W-Sys-Cav",
         "host:mail",
         "name:wazuh clamav database update",
-        "ip:172.17.131.81",
-    }
-    assert tokenized.mining_tokens == {
-        "short:W-Sys-Cav",
-        "host:mail",
         "sig:database",
         "sig:update",
     }

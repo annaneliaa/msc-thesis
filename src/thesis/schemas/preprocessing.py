@@ -103,8 +103,7 @@ class TokenizedAlert:
     host: str | None
     short: str | None
 
-    repr_tokens: set[str] = field(default_factory=set)
-    mining_tokens: set[str] = field(default_factory=set)
+    tokens: set[str] = field(default_factory=set)
 
     time_label: str | None = None
     event_label: str | None = None

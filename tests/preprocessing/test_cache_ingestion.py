@@ -18,15 +18,11 @@ def make_tokenized_alert() -> TokenizedAlert:
         ip="172.17.131.81",
         host="mail",
         short="W-Sys-Cav",
-        repr_tokens={
+        tokens={
             "short:W-Sys-Cav",
             "host:mail",
             "name:wazuh clamav database update",
             "ip:172.17.131.81",
-        },
-        mining_tokens={
-            "short:W-Sys-Cav",
-            "host:mail",
             "database",
             "update",
         },
@@ -121,7 +117,7 @@ def test_group_ingestion_writes_expected_group_json(tmp_path):
     assert payload["last_update_ts"] == alert.ts
     assert payload["alert_ids"] == [alert.alert_id]
     assert payload["n_alerts"] == 1
-    assert set(payload["items"]) == alert.mining_tokens
+    assert set(payload["items"]) == alert.tokens
     assert set(payload["alert_labels"]) == {"false_positive"}
     assert payload["tx_label"] == "benign"
     assert payload["version"] == 1
@@ -176,7 +172,7 @@ def test_read_group_entry_reconstructs_group_cache_entry(tmp_path):
     assert entry.last_update_ts == alert.ts
     assert entry.alert_ids == [alert.alert_id]
     assert entry.n_alerts == 1
-    assert entry.items == alert.mining_tokens
+    assert entry.items == alert.tokens
     assert entry.alert_labels == {"false_positive"}
     assert entry.tx_label == "benign"
     assert entry.version == 1

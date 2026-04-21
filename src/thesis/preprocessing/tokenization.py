@@ -124,9 +124,9 @@ def tokenize_name_to_signature_substrings(name: str | None) -> set[str]:
     return {f"sig:{tok}" for tok in tokens}
 
 
-def build_repr_tokens(alert: ParsedAlert) -> set[str]:
+def build_feature_tokens(alert: ParsedAlert) -> set[str]:
     """
-    Tokens for representation / embedding / similarity.
+    Tokens for grouping of alerts.
     """
     tokens: set[str] = set()
 
@@ -136,24 +136,10 @@ def build_repr_tokens(alert: ParsedAlert) -> set[str]:
         tokens.add(f"host:{alert.host}")
     if alert.name:
         tokens.add(f"name:{normalize_text(alert.name)}")
-    if alert.ip:
-        tokens.add(f"ip:{alert.ip}")
+        tokens |= tokenize_name_to_signature_substrings(alert.name)
 
-    return tokens
-
-
-def build_mining_tokens(alert: ParsedAlert) -> set[str]:
-    """
-    Tokens for frequent itemset mining.
-    """
-    tokens: set[str] = set()
-
-    if alert.short:
-        tokens.add(f"short:{alert.short}")
-    if alert.host:
-        tokens.add(f"host:{alert.host}")
-
-    tokens |= tokenize_name_to_signature_substrings(alert.name)
+    # if alert.ip:
+    #     tokens.add(f"ip:{alert.ip}")
 
     return tokens
 
@@ -162,8 +148,7 @@ def tokenize_alert(alert: ParsedAlert) -> TokenizedAlert:
     """
     Convert a ParsedAlert into a TokenizedAlert.
     """
-    repr_tokens = build_repr_tokens(alert)
-    mining_tokens = build_mining_tokens(alert)
+    tokens = build_feature_tokens(alert)
 
     return TokenizedAlert(
         alert_id=alert.alert_id,
@@ -175,7 +160,6 @@ def tokenize_alert(alert: ParsedAlert) -> TokenizedAlert:
         short=alert.short,
         time_label=alert.time_label,
         event_label=alert.event_label,
-        repr_tokens=repr_tokens,
-        mining_tokens=mining_tokens,
+        tokens=tokens,
         raw=alert.raw.copy() if alert.raw else {},
     )
