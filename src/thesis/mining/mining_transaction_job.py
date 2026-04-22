@@ -22,8 +22,25 @@ from thesis.utils.runs import (
 )
 
 from thesis.mining.eclat_mining import run_eclat
-from thesis.mining.util import add_cross_label_supports
+from thesis.mining.util import (
+    add_cross_label_supports,
+    add_confidence_scores,
+    sort_itemsets_for_class,
+    save_filtered_views,
+)
 from thesis.mining.load_mining_transactions import load_and_prepare_mining_transactions
+
+
+def sort_frequent_itemsets(
+    df: pd.DataFrame, sort_by: str = "support_target"
+) -> pd.DataFrame:
+    """
+    Sort frequent itemsets DataFrame by specified column (default: target support).
+    """
+    if sort_by not in df.columns:
+        raise ValueError(f"Column {sort_by} not found in DataFrame")
+
+    return df.sort_values(by=sort_by, ascending=False).reset_index(drop=True)
 
 
 def run_transaction_eclat_job(
@@ -76,7 +93,6 @@ def run_transaction_eclat_job(
             path=transactions_path,
             run_dir=run_dir,
         )
-        print(f"Loaded + prepared {len(transactions)} transactions for mining.")
 
         all_labels = sorted(
             {tx.tx_label for tx in transactions if tx.tx_label is not None}
@@ -112,7 +128,26 @@ def run_transaction_eclat_job(
             other_label=other_label,
         )
 
+        mined_df = add_confidence_scores(mined_df)
+
         save_dataframe_artifact(mined_df, run_dir, "frequent_itemsets")
+
+        benign_sorted_df = sort_itemsets_for_class(mined_df, "benign")
+        save_dataframe_artifact(
+            benign_sorted_df, run_dir, "frequent_itemsets_sorted_by_benign"
+        )
+
+        attack_sorted_df = sort_itemsets_for_class(mined_df, "attack")
+        save_dataframe_artifact(
+            attack_sorted_df, run_dir, "frequent_itemsets_sorted_by_attack"
+        )
+
+        print("Generating filtered views for top itemsets...")
+        save_filtered_views(mined_df, run_dir)
+
+        print(f"Mining completed. Saved filtered itemset views to {run_dir}.")
+
+        print("Generating summary statistics and metadata...")
 
         summary_df = pd.DataFrame(
             [

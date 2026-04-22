@@ -15,6 +15,7 @@ from thesis.registry.encoders import list_all_encoders
 from thesis.preprocessing.cache import TokenCache
 from thesis.preprocessing.cache_ingestor import CacheIngestor
 from thesis.preprocessing.service import process_alert_batch, select_groups_from_cache
+from thesis.preprocessing.mining_prep import build_transactions
 
 """
 Entry point to the system
@@ -93,37 +94,6 @@ def list_schemas() -> None:
         typer.echo(f"{name}: {list(schema.keys())}")
 
 
-# @app.command()
-# def preprocess_single_alert(
-#     alert_file: str = typer.Argument(..., help="Path to a single alert JSON file."),
-#     scenario: str = typer.Option(..., help="Scenario name."),
-#     cache_dir: str = typer.Option(
-#         "artifacts/cache", help="Directory where cache files are stored."
-#     ),
-# ) -> None:
-#     """
-#     Run parsing -> tokenization -> cache ingestion for one alert.
-#     """
-#     try:
-#         alert_path = Path(alert_file)
-#         cache_path = Path(cache_dir)
-
-#         with alert_path.open("r", encoding="utf-8") as f:
-#             payload = json.load(f)
-
-#         cache = TokenCache(cache_dir=cache_path)
-#         tokenized = process_one_alert(row=payload, scenario=scenario, cache=cache)
-
-#         typer.echo(f"Processed alert_id={tokenized.alert_id}")
-#         typer.echo(f"Window ID={tokenized.window_id}")
-#         typer.echo(f"repr_tokens={sorted(tokenized.repr_tokens)}")
-#         typer.echo(f"mining_tokens={sorted(tokenized.mining_tokens)}")
-
-#     except Exception as e:
-#         typer.echo(f"Preprocessing failed: {e}")
-#         raise typer.Exit(code=1)
-
-
 @app.command()
 def convert_alerts_to_json(
     scenario: str = typer.Option(..., "--scenario", "-s", help="Scenario name"),
@@ -172,6 +142,7 @@ def preprocess_alert_batch(
     Also runs grouping on the batch and ingests groups into cache.
     from one input JSON file.
     """
+    print(f"Preprocessing alert batch for scenario '{scenario}'...")
     try:
         alerts_path = Path(f"artifacts/processed-data/{scenario}/alerts.json")
         cache_path = Path(cache_dir)
@@ -273,6 +244,65 @@ def select_groups(
 
 
 @app.command()
+def prepare_transactions(
+    scenario: str = typer.Option(..., "--scenario", "-s", help="Scenario name"),
+    cache_dir: str = typer.Option(
+        "artifacts/cache", help="Directory where cache files are stored."
+    ),
+) -> None:
+    """
+    Load group snapshots from cache, convert to transactions and save back to cache.
+    """
+    try:
+        cache = TokenCache(cache_dir=Path(cache_dir), scenario=scenario)
+
+        snapshots = select_groups_from_cache(
+            cache=cache,
+            allowed_methods=None,
+            limit=None,
+            min_start_ts=None,
+            max_end_ts=None,
+            require_closed=True,
+        )
+
+        transactions = build_transactions(snapshots)
+
+        out_dir = Path(f"artifacts/cache/{scenario}/transactions")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / "transactions.json"
+
+        # convert to serializable format
+        serialized = [
+            {
+                "transaction_id": t.transaction_id,
+                "group_id": t.group_id,
+                "method": t.method,
+                "start_ts": t.start_ts,
+                "end_ts": t.end_ts,
+                "n_alerts": t.n_alerts,
+                "alert_ids": t.alert_ids,
+                "abs_items": sorted(list(t.abs_items)),
+                "raw_items": sorted(list(t.raw_items)),
+                "tx_label": t.tx_label,
+                "alert_labels": (
+                    sorted(list(t.alert_labels)) if t.alert_labels is not None else None
+                ),
+                "weight": t.weight,
+            }
+            for t in transactions
+        ]
+
+        with open(out_path, "w") as f:
+            json.dump(serialized, f, indent=2)
+
+        typer.echo(f"Saved transactions to {out_path}")
+
+    except Exception as e:
+        typer.echo(f"Transaction preparation failed: {e}")
+        raise typer.Exit(code=1)
+
+
+@app.command()
 def mine_dummy(run_name: str = "debug") -> None:
     path = run_dummy_mining_job(run_name=run_name)
     typer.echo(f"Dummy mining output written to: {path}")
@@ -302,7 +332,7 @@ def mine_transactions(
     ),
 ) -> None:
     """
-    Load cached MiningTransactions and run transaction-level Eclat mining.
+    Load cached Transactions and run transaction-level Eclat mining.
     """
     transactions_path = Path(
         f"artifacts/cache/{scenario}/transactions/transactions.json"
