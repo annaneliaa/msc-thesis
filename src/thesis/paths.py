@@ -13,6 +13,10 @@ RUNS_DIR = ARTIFACTS_DIR / "runs"
 CACHE_DIR = ARTIFACTS_DIR / "cache"
 
 
+MODEL_FILENAME = "model.joblib"
+METADATA_FILENAME = "metadata.json"
+
+
 def ensure_artifact_dirs() -> None:
     for path in [
         ARTIFACTS_DIR,

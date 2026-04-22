@@ -18,7 +18,7 @@ def train_model_for_schema(
     model_version: str,
     output_dir: Path,
     test_frac: float = 0.3,
-) -> dict:
+) -> TrainedModelSummary:
     """
     Train, evaluate, and persist a model for a given feature schema.
 
