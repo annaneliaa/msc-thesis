@@ -355,3 +355,14 @@ def mine_transactions(
     except Exception as e:
         typer.echo(f"Transaction mining failed: {e}")
         raise typer.Exit(code=1)
+
+
+@app.command()
+def train_model():
+    typer.echo("Training model...")
+    # load feature dataset
+    # load labels
+    # resolve schema
+    # call training service
+    # save artifact under artifacts/models/...
+    # print metrics and save path

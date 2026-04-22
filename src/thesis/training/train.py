@@ -3,7 +3,7 @@ import pandas as pd
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
-from mining.classes import FeatureSchema
+from thesis.schemas.features import FeatureSchema
 
 
 def train_lr_l1(X_train, y_train):
