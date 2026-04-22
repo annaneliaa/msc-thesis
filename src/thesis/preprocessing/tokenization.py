@@ -135,7 +135,6 @@ def build_feature_tokens(alert: ParsedAlert) -> set[str]:
     if alert.host:
         tokens.add(f"host:{alert.host}")
     if alert.name:
-        tokens.add(f"name:{normalize_text(alert.name)}")
         tokens |= tokenize_name_to_signature_substrings(alert.name)
 
     # if alert.ip:

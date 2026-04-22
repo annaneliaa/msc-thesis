@@ -68,7 +68,6 @@ def test_build_feature_tokens():
     assert tokens == {
         "short:W-Sys-Cav",
         "host:mail",
-        "name:wazuh clamav database update",
         "sig:database",
         "sig:update",
     }
@@ -100,7 +99,6 @@ def test_tokenize_alert_returns_tokenized_alert_with_expected_values():
     assert tokenized.tokens == {
         "short:W-Sys-Cav",
         "host:mail",
-        "name:wazuh clamav database update",
         "sig:database",
         "sig:update",
     }
