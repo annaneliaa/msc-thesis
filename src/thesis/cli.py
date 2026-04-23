@@ -6,16 +6,16 @@ import csv
 
 from thesis.schemas.dataframe_schemas import SCHEMAS
 from thesis.config import load_settings
-from thesis.mining.mining_dummy_job import run_dummy_mining_job
 from thesis.mining.mining_transaction_job import run_transaction_eclat_job
 from thesis.paths import ensure_artifact_dirs
 from thesis.schemas.validation import validate_dataframe
-from thesis.registry.models import list_all_models
+from thesis.registry.models import list_all_models, get_model_path
 from thesis.registry.encoders import list_all_encoders
 from thesis.preprocessing.cache import TokenCache
 from thesis.preprocessing.cache_ingestor import CacheIngestor
 from thesis.preprocessing.service import process_alert_batch, select_groups_from_cache
 from thesis.preprocessing.mining_prep import build_transactions
+from thesis.training.service import train_model_for_schema
 
 """
 Entry point to the system
@@ -303,12 +303,6 @@ def prepare_transactions(
 
 
 @app.command()
-def mine_dummy(run_name: str = "debug") -> None:
-    path = run_dummy_mining_job(run_name=run_name)
-    typer.echo(f"Dummy mining output written to: {path}")
-
-
-@app.command()
 def mine_transactions(
     scenario: str = typer.Option(
         "debug_scenario",
@@ -357,12 +351,58 @@ def mine_transactions(
         raise typer.Exit(code=1)
 
 
-@app.command()
-def train_model():
-    typer.echo("Training model...")
-    # load feature dataset
-    # load labels
-    # resolve schema
-    # call training service
-    # save artifact under artifacts/models/...
-    # print metrics and save path
+@app.command("train-model")
+def train_model_cmd(
+    dataset_path: Path = typer.Argument(..., help="Path to dataset (csv/parquet)"),
+    label_col: str = typer.Option(..., help="Name of label column"),
+    schema_name: str = typer.Option(..., help="Feature schema name"),
+    model_name: str = typer.Option("logreg", help="Model name"),
+    model_version: str = typer.Option("0.1.0", help="Model version"),
+    test_frac: float = typer.Option(0.3, help="Test split fraction"),
+):
+    """
+    Train a model for a given feature schema and persist it.
+    """
+
+    if not dataset_path.exists():
+        raise typer.BadParameter(f"Dataset not found: {dataset_path}")
+
+    # load dataset
+    if dataset_path.suffix == ".parquet":
+        df = pd.read_parquet(dataset_path)
+    elif dataset_path.suffix == ".csv":
+        df = pd.read_csv(dataset_path)
+    else:
+        raise typer.BadParameter("Only .csv and .parquet are supported")
+
+    if label_col not in df.columns:
+        raise typer.BadParameter(f"Label column '{label_col}' not in dataset")
+
+    y = df[label_col]
+    X = df.drop(columns=[label_col])
+
+    # resolve output dir for model
+    output_dir = get_model_path(model_name, model_version)
+
+    if output_dir.exists():
+        raise typer.BadParameter(f"Model version already exists: {output_dir}")
+
+    # train
+    summary = train_model_for_schema(
+        X=X,
+        y=y,
+        schema_name=schema_name,
+        model_name=model_name,
+        model_version=model_version,
+        output_dir=output_dir,
+        test_frac=test_frac,
+    )
+
+    typer.echo("\nTraining completed:")
+    typer.echo(f"  Model: {summary.model_name}")
+    typer.echo(f"  Version: {summary.model_version}")
+    typer.echo(f"  Schema: {summary.schema_name}")
+    typer.echo(f"  Feature names: {summary.feature_names}")
+    typer.echo(f"  AUC: {summary.auc:.4f}")
+    typer.echo(f"  Features: {summary.n_features}")
+    typer.echo(f"  Output dir: {summary.output_dir}")

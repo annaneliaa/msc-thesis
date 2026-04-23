@@ -2,13 +2,10 @@ from pathlib import Path
 import json
 import joblib
 
-from thesis.paths import MODELS_DIR, ensure_artifact_dirs
+from thesis.paths import ensure_artifact_dirs
 from thesis.schemas.models import ModelArtifact, ModelMetadata
 from thesis.schemas.features import FeatureSchema
-
-MODEL_FILENAME = "model.joblib"
-METADATA_FILENAME = "metadata.json"
-FEATURE_SCHEMA_FILENAME = "feature_schema.json"
+from thesis.registry.models import resolve_model_paths
 
 
 def save_model_artifact(
@@ -20,9 +17,10 @@ def save_model_artifact(
     ensure_artifact_dirs()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    model_path = output_dir / MODEL_FILENAME
-    metadata_path = output_dir / METADATA_FILENAME
-    feature_schema_path = output_dir / FEATURE_SCHEMA_FILENAME
+    model_path, metadata_path, feature_schema_path = resolve_model_paths(
+        name=metadata.model_name,
+        version=metadata.model_version,
+    )
 
     joblib.dump(artifact.model, model_path)
 
@@ -36,18 +34,13 @@ def save_model_artifact(
 
 
 def load_model_artifact(model_name: str, model_version: str) -> ModelArtifact:
-    model_dir = MODELS_DIR / model_name / model_version
-    model_path = model_dir / MODEL_FILENAME
-    metadata_path = model_dir / METADATA_FILENAME
-
-    if not model_dir.exists():
-        raise FileNotFoundError(f"Model directory does not exist: {model_dir}")
-
-    if not model_path.exists():
-        raise FileNotFoundError(f"Model file does not exist: {model_path}")
-
-    if not metadata_path.exists():
-        raise FileNotFoundError(f"Metadata file does not exist: {metadata_path}")
+    (
+        model_path,
+        metadata_path,
+    ) = resolve_model_paths(
+        name=model_name,
+        version=model_version,
+    )
 
     model = joblib.load(model_path)
 

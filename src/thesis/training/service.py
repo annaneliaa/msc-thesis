@@ -1,19 +1,29 @@
-from thesis.schemas.features import FeatureSchema
 import pandas as pd
 from pathlib import Path
-from thesis.schemas.models import ModelArtifact, ModelMetadata, TrainedModelSummary
+
+from thesis.registry.feature_schemas import get_schema_by_name
+
+
+from thesis.schemas.models import (
+    ModelArtifact,
+    ModelMetadata,
+    TrainedModelSummary,
+)
 from thesis.training.persistence import save_model_artifact
-from thesis.training.train import train_eval_holdout
-
-
-def get_feature_schema(name: str) -> FeatureSchema:
-    return FeatureSchema(name=name)
+from thesis.training.train import (
+    train_eval_holdout,
+)
+from thesis.training.util import (
+    prepare_training_frame,
+    make_holdout_split,
+)
+from thesis.training.model_factory import get_model_factory
 
 
 def train_model_for_schema(
     X: pd.DataFrame,
     y,
-    schema: FeatureSchema,
+    schema_name: str,
     model_name: str,
     model_version: str,
     output_dir: Path,
@@ -21,25 +31,38 @@ def train_model_for_schema(
 ) -> TrainedModelSummary:
     """
     Train, evaluate, and persist a model for a given feature schema.
-
-    Steps:
-    - validate schema columns exist in X
-    - train/evaluate using holdout split
-    - persist trained model + metadata + schema snapshot
-    - return a compact training summary
     """
     if not isinstance(X, pd.DataFrame):
         raise TypeError("X must be a pandas DataFrame.")
+
+    schema = get_schema_by_name(schema_name)
 
     missing = [col for col in schema.features if col not in X.columns]
     if missing:
         raise KeyError(f"Schema '{schema.name}' is missing columns in X: {missing}")
 
-    result = train_eval_holdout(
+    model_factory = get_model_factory(model_name)
+
+    X_used, y_used = prepare_training_frame(
         X_full=X,
         y=y,
         schema=schema,
+    )
+
+    X_train, X_test, y_train, y_test, split = make_holdout_split(
+        X=X_used,
+        y=y_used,
         test_frac=test_frac,
+    )
+
+    result = train_eval_holdout(
+        X_train=X_train,
+        X_test=X_test,
+        y_train=y_train,
+        y_test=y_test,
+        schema=schema,
+        model_factory=model_factory,
+        test_idx_start=split,
     )
 
     if result["model"] is None:
@@ -57,9 +80,10 @@ def train_model_for_schema(
         training_config={
             "test_frac": test_frac,
             "schema_name": schema.name,
+            "model_name": model_name,
             "n_features": len(result["feature_names"]),
-            "train_rows": int(result["test_idx_start"]),
-            "test_rows": int(len(result["y_test"])),
+            "train_rows": len(X_train),
+            "test_rows": len(X_test),
         },
         metrics={
             "auc": float(result["auc"]),
@@ -72,7 +96,7 @@ def train_model_for_schema(
         model_version=model_version,
         schema_name=schema.name,
         features=result["feature_names"],
-        model_type=type(result["model"]).__name__,
+        model_type=artifact.model_type,
         training_config=artifact.training_config,
         metrics=artifact.metrics,
     )

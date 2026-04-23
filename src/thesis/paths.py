@@ -15,6 +15,7 @@ CACHE_DIR = ARTIFACTS_DIR / "cache"
 
 MODEL_FILENAME = "model.joblib"
 METADATA_FILENAME = "metadata.json"
+FEATURE_SCHEMA_FILENAME = "feature_schema.json"
 
 
 def ensure_artifact_dirs() -> None:
