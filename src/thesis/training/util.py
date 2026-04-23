@@ -1,13 +1,13 @@
 import numpy as np
-from thesis.schemas.features import FeatureSchema
 import pandas as pd
+
+from thesis.schemas.features import FeatureSchema
 
 
 def find_valid_time_split(y, test_frac=0.3):
     n = len(y)
     split0 = int((1 - test_frac) * n)
 
-    # search nearby split points until both sides have both classes
     for delta in range(0, n):
         for s in (split0 - delta, split0 + delta):
             if s <= 1 or s >= n - 1:
@@ -34,7 +34,8 @@ def prepare_training_frame(
     if time_col in df.columns:
         df = df.sort_values(time_col, kind="stable").reset_index(drop=True)
 
-    X = df[schema.features].fillna(0)
+    feature_names = schema.feature_names()
+    X = df[feature_names].fillna(0)
     y_arr = df["__y__"].to_numpy()
 
     return X, y_arr

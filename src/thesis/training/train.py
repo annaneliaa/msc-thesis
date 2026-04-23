@@ -1,7 +1,8 @@
 import numpy as np
-from sklearn.metrics import roc_auc_score
-from thesis.schemas.features import FeatureSchema
 import pandas as pd
+from sklearn.metrics import roc_auc_score
+
+from thesis.schemas.features import FeatureSchema
 
 
 def train_eval_holdout(
@@ -17,7 +18,7 @@ def train_eval_holdout(
 
     if np.unique(y_train).size < 2 or np.unique(y_test).size < 2:
         return {
-            "schema": schema.name,
+            "schema": schema.schema_name,
             "model": None,
             "auc": np.nan,
             "y_test": y_test,
@@ -33,7 +34,7 @@ def train_eval_holdout(
     auc = float(roc_auc_score(y_test, proba_test))
 
     return {
-        "schema": schema.name,
+        "schema": schema.schema_name,
         "model": model,
         "auc": auc,
         "y_test": y_test,

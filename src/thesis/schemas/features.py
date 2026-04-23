@@ -1,14 +1,18 @@
-from dataclasses import dataclass
-from typing import List, Literal
+from dataclasses import dataclass, field
+from typing import Literal
 
 
-@dataclass(frozen=True)
-class FeatureSchema:
-    name: str
-    features: List[str]
+@dataclass(frozen=True, slots=True)
+class BaseFeatureSchema:
+    features: list[str] = field(default_factory=list)
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
+class DynamicFeatureSchema:
+    features: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True, slots=True)
 class SymbolicFeature:
     feature_name: str
     itemset: tuple[str, ...]
@@ -18,8 +22,29 @@ class SymbolicFeature:
     confidence_benign: float | None = None
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class SymbolicFeatureSchema:
+    features: list[SymbolicFeature] = field(default_factory=list)
+
+
+@dataclass(frozen=True, slots=True)
+class FeatureSchema:
     schema_name: str
     schema_version: str
-    features: list[SymbolicFeature]
+    base: BaseFeatureSchema | None = None
+    dynamic: DynamicFeatureSchema | None = None
+    symbolic: SymbolicFeatureSchema | None = None
+
+    def feature_names(self) -> list[str]:
+        names: list[str] = []
+
+        if self.base is not None:
+            names.extend(self.base.features)
+
+        if self.dynamic is not None:
+            names.extend(self.dynamic.features)
+
+        if self.symbolic is not None:
+            names.extend(f.feature_name for f in self.symbolic.features)
+
+        return names

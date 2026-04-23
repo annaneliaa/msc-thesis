@@ -1,18 +1,14 @@
 import pandas as pd
 from pathlib import Path
 
-from thesis.registry.feature_schemas import get_schema_by_name
-
-
 from thesis.schemas.models import (
     ModelArtifact,
     ModelMetadata,
     TrainedModelSummary,
 )
+from thesis.schemas.features import FeatureSchema
 from thesis.training.persistence import save_model_artifact
-from thesis.training.train import (
-    train_eval_holdout,
-)
+from thesis.training.train import train_eval_holdout
 from thesis.training.util import (
     prepare_training_frame,
     make_holdout_split,
@@ -23,7 +19,7 @@ from thesis.training.model_factory import get_model_factory
 def train_model_for_schema(
     X: pd.DataFrame,
     y,
-    schema_name: str,
+    schema: FeatureSchema,
     model_name: str,
     model_version: str,
     output_dir: Path,
@@ -35,11 +31,13 @@ def train_model_for_schema(
     if not isinstance(X, pd.DataFrame):
         raise TypeError("X must be a pandas DataFrame.")
 
-    schema = get_schema_by_name(schema_name)
+    feature_names = schema.feature_names()
 
-    missing = [col for col in schema.features if col not in X.columns]
+    missing = [col for col in feature_names if col not in X.columns]
     if missing:
-        raise KeyError(f"Schema '{schema.name}' is missing columns in X: {missing}")
+        raise KeyError(
+            f"Schema '{schema.schema_name}' is missing columns in X: {missing}"
+        )
 
     print("Creating new model instance...")
     model_factory = get_model_factory(model_name)
@@ -70,20 +68,20 @@ def train_model_for_schema(
 
     if result["model"] is None:
         raise ValueError(
-            f"Training for schema '{schema.name}' produced no fitted model "
+            f"Training for schema '{schema.schema_name}' produced no fitted model "
             f"(single-class split)."
         )
 
     print("Saving model artifact...")
     artifact = ModelArtifact(
         model=result["model"],
-        schema_name=schema.name,
+        schema_name=schema.schema_name,
         features=result["feature_names"],
         model_type=type(result["model"]).__name__,
         model_version=model_version,
         training_config={
             "test_frac": test_frac,
-            "schema_name": schema.name,
+            "schema_name": schema.schema_name,
             "model_name": model_name,
             "n_features": len(result["feature_names"]),
             "train_rows": len(X_train),
@@ -99,7 +97,7 @@ def train_model_for_schema(
     metadata = ModelMetadata(
         model_name=model_name,
         model_version=model_version,
-        schema_name=schema.name,
+        schema_name=schema.schema_name,
         features=result["feature_names"],
         model_type=artifact.model_type,
         training_config=artifact.training_config,
@@ -116,7 +114,7 @@ def train_model_for_schema(
     return TrainedModelSummary(
         model_name=model_name,
         model_version=model_version,
-        schema_name=schema.name,
+        schema_name=schema.schema_name,
         output_dir=str(output_dir),
         auc=float(result["auc"]),
         n_features=len(result["feature_names"]),
