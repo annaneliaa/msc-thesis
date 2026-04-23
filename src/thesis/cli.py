@@ -130,7 +130,7 @@ def convert_alerts_to_json(
     print(f"Wrote {len(alerts)} alerts to {output_path}")
 
 
-@app.command()
+@app.command("process-batch")
 def preprocess_alert_batch(
     scenario: str = typer.Option(..., "--scenario", "-s", help="Scenario name"),
     cache_dir: str = typer.Option(
@@ -224,6 +224,7 @@ def select_groups(
                 "alert_ids": s.alert_ids,
                 "n_alerts": s.n_alerts,
                 "items": sorted(list(s.items)),
+                "alert_ips": sorted(list(s.alert_ips)),
                 "tx_label": s.tx_label,
                 "alert_labels": (
                     sorted(list(s.alert_labels)) if s.alert_labels is not None else None
@@ -283,6 +284,8 @@ def prepare_transactions(
                 "alert_ids": t.alert_ids,
                 "abs_items": sorted(list(t.abs_items)),
                 "raw_items": sorted(list(t.raw_items)),
+                "alert_ips": sorted(list(t.alert_ips)),
+                "baseline_features": t.baseline_features,
                 "tx_label": t.tx_label,
                 "alert_labels": (
                     sorted(list(t.alert_labels)) if t.alert_labels is not None else None
@@ -353,7 +356,7 @@ def mine_transactions(
 
 @app.command("train-model")
 def train_model_cmd(
-    dataset_path: Path = typer.Argument(..., help="Path to dataset (csv/parquet)"),
+    dataset_path: Path = typer.Argument(..., help="Path to dataset"),
     label_col: str = typer.Option(..., help="Name of label column"),
     schema_name: str = typer.Option(..., help="Feature schema name"),
     model_name: str = typer.Option("logreg", help="Model name"),
@@ -367,18 +370,22 @@ def train_model_cmd(
     if not dataset_path.exists():
         raise typer.BadParameter(f"Dataset not found: {dataset_path}")
 
+    typer.echo(f"Loading dataset from {dataset_path}...")
     # load dataset
     if dataset_path.suffix == ".parquet":
         df = pd.read_parquet(dataset_path)
     elif dataset_path.suffix == ".csv":
         df = pd.read_csv(dataset_path)
+    elif dataset_path.suffix == ".txt":
+        df = pd.read_csv(dataset_path)
     else:
-        raise typer.BadParameter("Only .csv and .parquet are supported")
+        raise typer.BadParameter("Only .csv, .txt, .parquet are supported")
 
     if label_col not in df.columns:
         raise typer.BadParameter(f"Label column '{label_col}' not in dataset")
 
-    y = df[label_col]
+    # map labels to 0 and 1
+    y = df[label_col].map({"false_positive": 0, "attack": 1})
     X = df.drop(columns=[label_col])
 
     # resolve output dir for model
@@ -387,6 +394,7 @@ def train_model_cmd(
     if output_dir.exists():
         raise typer.BadParameter(f"Model version already exists: {output_dir}")
 
+    typer.echo("Starting training process...")
     # train
     summary = train_model_for_schema(
         X=X,

@@ -106,6 +106,7 @@ class CacheIngestor:
                     alert_ids=[],
                     n_alerts=0,
                     items=set(),
+                    alert_ips=set(),
                     alert_labels=None,
                     tx_label=None,
                     version=1,
@@ -118,6 +119,7 @@ class CacheIngestor:
             group.n_alerts += 1
 
             group.items |= set(alert.tokens)
+            group.alert_ips |= {alert.ip} if alert.ip else set()
 
             group.start_ts = min(group.start_ts, alert.ts)
             group.end_ts = max(group.end_ts, alert.ts)

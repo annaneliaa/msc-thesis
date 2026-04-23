@@ -41,8 +41,10 @@ def train_model_for_schema(
     if missing:
         raise KeyError(f"Schema '{schema.name}' is missing columns in X: {missing}")
 
+    print("Creating new model instance...")
     model_factory = get_model_factory(model_name)
 
+    print("Preparing training frame...")
     X_used, y_used = prepare_training_frame(
         X_full=X,
         y=y,
@@ -55,6 +57,7 @@ def train_model_for_schema(
         test_frac=test_frac,
     )
 
+    print("Training and evaluating model...")
     result = train_eval_holdout(
         X_train=X_train,
         X_test=X_test,
@@ -71,6 +74,7 @@ def train_model_for_schema(
             f"(single-class split)."
         )
 
+    print("Saving model artifact...")
     artifact = ModelArtifact(
         model=result["model"],
         schema_name=schema.name,
@@ -91,6 +95,7 @@ def train_model_for_schema(
         },
     )
 
+    print("Creating model metadata...")
     metadata = ModelMetadata(
         model_name=model_name,
         model_version=model_version,

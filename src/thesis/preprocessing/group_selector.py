@@ -55,6 +55,9 @@ def select_group_snapshots_from_response(
                 alert_ids=list(group.alert_ids),
                 n_alerts=group.n_alerts,
                 items=set(group.items) if group.items is not None else set(),
+                alert_ips=set(group.alert_ips)
+                if group.alert_ips is not None
+                else set(),
                 alert_labels=(
                     set(group.alert_labels) if group.alert_labels is not None else None
                 ),

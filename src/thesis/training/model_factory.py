@@ -2,7 +2,7 @@ from sklearn.linear_model import LogisticRegression
 from typing import Callable, Any
 
 MODEL_FACTORIES = {
-    "lo" "logreg": lambda: LogisticRegression(
+    "logreg": lambda: LogisticRegression(
         max_iter=1000,
         class_weight="balanced",
     ),

@@ -4,12 +4,15 @@ FEATURE_SCHEMAS = {
     "baseline": FeatureSchema(
         name="baseline",  # directly derived from one alert
         features=[
-            "hour_of_day",
-            "day_of_week",
-            "is_internal_ip",
-            "ip_freq",
-            "host_freq",
-            "short_freq",
+            "duration_sec",
+            "n_alerts",
+            "n_items",
+            "n_hosts",
+            "n_shorts",
+            "n_sigs",
+            "n_internal_ips",
+            "n_external_ips",
+            "alerts_per_second",
         ],
     ),
     "dynamic": FeatureSchema(
@@ -39,5 +42,5 @@ FEATURE_SCHEMAS = {
 }
 
 
-def get_feature_schema(name: str) -> FeatureSchema:
+def get_schema_by_name(name: str) -> FeatureSchema:
     return FEATURE_SCHEMAS[name]

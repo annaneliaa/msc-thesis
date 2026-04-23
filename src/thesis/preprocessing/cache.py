@@ -42,6 +42,7 @@ class TokenCache:
         for key in (
             "items",
             "alert_labels",
+            "alert_ips",
         ):
             if key in payload and payload[key] is not None:
                 payload[key] = sorted(payload[key])
@@ -93,6 +94,9 @@ class TokenCache:
 
         if payload.get("alert_labels") is not None:
             payload["alert_labels"] = set(payload["alert_labels"])
+
+        if payload.get("alert_ips") is not None:
+            payload["alert_ips"] = set(payload["alert_ips"])
 
         if payload.get("group_features_summary") is not None:
             payload["group_features_summary"] = {

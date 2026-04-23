@@ -133,7 +133,7 @@ class GroupSnapshot:  # stable snapshot
     alert_ids: list[str] = field(default_factory=list)
     n_alerts: int = 0
     items: set[str] = field(default_factory=set)  # raw group items, pre-abstraction
-
+    alert_ips: set[str] = field(default_factory=set)
     # labels (for evaluation)
     alert_labels: Optional[set[str]] = None
     tx_label: Optional[str] = None
@@ -156,6 +156,9 @@ class Transaction:  # mining input (with weight)
     abs_items: set[str] = field(default_factory=set)  # mining-ready abstracted itemset
     raw_items: Optional[set[str]] = None  # pre-abstraction mining items
 
+    alert_ips: set[str] = field(default_factory=set)
+
+    baseline_features: Optional[dict[str, Any]] = None
     tx_label: Optional[str] = None
     alert_labels: Optional[set[str]] = None
 

@@ -30,6 +30,7 @@ class GroupCacheEntry:
         default_factory=set
     )  # union of raw mining items from member alerts
 
+    alert_ips: set[str] = field(default_factory=set)
     # group_features_summary: dict[str, set[str]] = field(default_factory=dict)
     # embedding_centroid: Optional[list[float]] = None
 
