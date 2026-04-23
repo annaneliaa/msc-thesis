@@ -8,14 +8,6 @@ def _count_items_with_prefix(items: set[str], prefix: str) -> int:
     return sum(1 for item in items if item.startswith(prefix))
 
 
-def _extract_item_values(items: set[str], prefix: str) -> list[str]:
-    values: list[str] = []
-    for item in items:
-        if item.startswith(prefix):
-            values.append(item[len(prefix) :])
-    return values
-
-
 def _is_internal_ip(ip: str) -> bool:
     try:
         return ipaddress.ip_address(ip).is_private

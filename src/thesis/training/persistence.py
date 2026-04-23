@@ -42,6 +42,11 @@ def load_model_artifact(model_name: str, model_version: str) -> ModelArtifact:
         version=model_version,
     )
 
+    if not model_path.exists():
+        raise FileNotFoundError(f"Model file does not exist: {model_path}")
+    if not metadata_path.exists():
+        raise FileNotFoundError(f"Metadata file does not exist: {metadata_path}")
+
     model = joblib.load(model_path)
 
     with metadata_path.open("r", encoding="utf-8") as f:

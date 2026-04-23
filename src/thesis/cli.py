@@ -245,7 +245,7 @@ def select_groups(
 
 
 @app.command()
-def prepare_transactions(
+def build_transactions_json(
     scenario: str = typer.Option(..., "--scenario", "-s", help="Scenario name"),
     cache_dir: str = typer.Option(
         "artifacts/cache", help="Directory where cache files are stored."
@@ -273,6 +273,7 @@ def prepare_transactions(
         out_path = out_dir / "transactions.json"
 
         # convert to serializable format
+        # TODO: put in format ready for training + inference
         serialized = [
             {
                 "transaction_id": t.transaction_id,
@@ -298,10 +299,68 @@ def prepare_transactions(
         with open(out_path, "w") as f:
             json.dump(serialized, f, indent=2)
 
-        typer.echo(f"Saved transactions to {out_path}")
+        typer.echo(f"Saved {len(transactions)} transactions to {out_path}")
 
     except Exception as e:
         typer.echo(f"Transaction preparation failed: {e}")
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def build_row_transactions(
+    scenario: str = typer.Option(..., "--scenario", "-s"),
+    cache_dir: str = typer.Option("artifacts/cache"),
+) -> None:
+    """
+    Load group snapshots from cache, convert to transactions,
+    and save in row-based format for training/inference.
+    """
+    try:
+        cache = TokenCache(cache_dir=Path(cache_dir), scenario=scenario)
+
+        snapshots = select_groups_from_cache(
+            cache=cache,
+            allowed_methods=None,
+            limit=None,
+            min_start_ts=None,
+            max_end_ts=None,
+            require_closed=True,
+        )
+
+        transactions = build_transactions(snapshots)
+
+        rows = []
+
+        for t in transactions:
+            row = {
+                "transaction_id": t.transaction_id,
+                "group_id": t.group_id,
+                "method": t.method,
+                "start_ts": t.start_ts,
+                "end_ts": t.end_ts,
+                "n_alerts": t.n_alerts,
+                "tx_label": t.tx_label,
+                "weight": t.weight,
+            }
+
+            # flatten baseline features
+            if t.baseline_features:
+                row.update(t.baseline_features)
+
+            rows.append(row)
+
+        df = pd.DataFrame(rows)
+
+        out_dir = Path(f"artifacts/cache/{scenario}/transactions")
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        out_path = out_dir / "transactions.parquet"
+        df.to_parquet(out_path, index=False)
+
+        typer.echo(f"Saved {len(transactions)} transactions (row format) to {out_path}")
+
+    except Exception as e:
+        typer.echo(f"Row transactions preparation failed: {e}")
         raise typer.Exit(code=1)
 
 
@@ -385,7 +444,7 @@ def train_model_cmd(
         raise typer.BadParameter(f"Label column '{label_col}' not in dataset")
 
     # map labels to 0 and 1
-    y = df[label_col].map({"false_positive": 0, "attack": 1})
+    y = df[label_col].map({"benign": 0, "attack": 1})
     X = df.drop(columns=[label_col])
 
     # resolve output dir for model
