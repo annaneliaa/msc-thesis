@@ -1,28 +1,31 @@
 from dataclasses import dataclass
+import pandas as pd
 
-from thesis.config import Settings
 from thesis.registry.encoders import get_encoder_path
 
 
 @dataclass
-class DummyEncoder:
+class BaselineEncoder:
     encoder_name: str
     encoder_version: str
 
-    def predict(self, text: str) -> tuple[int, float]:
-        score = 0.9 if "attack" in text.lower() else 0.1  # just a dummy set up for now
-        label = int(score > 0.5)
-        return label, score
+    def transform_row(self, row: dict) -> pd.DataFrame:
+        """
+        Convert one incoming transaction row into a 1-row DataFrame.
+        For now this is identity-style encoding for baseline features.
+        """
+        return pd.DataFrame([row])
 
 
-def load_model(settings: Settings) -> DummyEncoder:
+def load_encoder(encoder_name: str, encoder_version: str) -> BaselineEncoder:
     path = get_encoder_path(
-        settings.encoder.encoder_name, settings.encoder.encoder_version
+        encoder_name,
+        encoder_version,
     )
 
-    print("Loading model from path: ", path)
+    print("Loading encoder from path:", path)
 
-    return DummyEncoder(
-        encoder_name=settings.encoder.encoder_name,
-        model_version=settings.encoder.encoder_version,
+    return BaselineEncoder(
+        encoder_name=encoder_name,
+        encoder_version=encoder_version,
     )

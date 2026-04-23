@@ -16,6 +16,7 @@ from thesis.preprocessing.cache_ingestor import CacheIngestor
 from thesis.preprocessing.service import process_alert_batch, select_groups_from_cache
 from thesis.preprocessing.mining_prep import build_transactions
 from thesis.training.service import train_model_for_schema
+from thesis.encoder.service import encode_transactions
 
 """
 Entry point to the system
@@ -286,7 +287,6 @@ def build_transactions_json(
                 "abs_items": sorted(list(t.abs_items)),
                 "raw_items": sorted(list(t.raw_items)),
                 "alert_ips": sorted(list(t.alert_ips)),
-                "baseline_features": t.baseline_features,
                 "tx_label": t.tx_label,
                 "alert_labels": (
                     sorted(list(t.alert_labels)) if t.alert_labels is not None else None
@@ -309,11 +309,12 @@ def build_transactions_json(
 @app.command()
 def build_row_transactions(
     scenario: str = typer.Option(..., "--scenario", "-s"),
+    schema_name: str = typer.Option("baseline", "--schema-name"),
     cache_dir: str = typer.Option("artifacts/cache"),
 ) -> None:
     """
     Load group snapshots from cache, convert to transactions,
-    and save in row-based format for training/inference.
+    encode them under a schema, and save in row-based format.
     """
     try:
         cache = TokenCache(cache_dir=Path(cache_dir), scenario=scenario)
@@ -329,35 +330,46 @@ def build_row_transactions(
 
         transactions = build_transactions(snapshots)
 
-        rows = []
+        feature_df = encode_transactions(
+            transactions=transactions,
+            schema_name=schema_name,
+        )
 
+        meta_rows = []
         for t in transactions:
-            row = {
-                "transaction_id": t.transaction_id,
-                "group_id": t.group_id,
-                "method": t.method,
-                "start_ts": t.start_ts,
-                "end_ts": t.end_ts,
-                "n_alerts": t.n_alerts,
-                "tx_label": t.tx_label,
-                "weight": t.weight,
-            }
+            meta_rows.append(
+                {
+                    "transaction_id": t.transaction_id,
+                    "group_id": t.group_id,
+                    "method": t.method,
+                    "start_ts": t.start_ts,
+                    "end_ts": t.end_ts,
+                    "n_alerts": t.n_alerts,
+                    "tx_label": t.tx_label,
+                    "weight": t.weight,
+                }
+            )
 
-            # flatten baseline features
-            if t.baseline_features:
-                row.update(t.baseline_features)
+        meta_df = pd.DataFrame(meta_rows)
 
-            rows.append(row)
-
-        df = pd.DataFrame(rows)
+        df = pd.concat(
+            [meta_df.reset_index(drop=True), feature_df.reset_index(drop=True)],
+            axis=1,
+        )
 
         out_dir = Path(f"artifacts/cache/{scenario}/transactions")
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        out_path = out_dir / "transactions.parquet"
-        df.to_parquet(out_path, index=False)
+        parquet_path = out_dir / f"transactions_{schema_name}.parquet"
+        csv_path = out_dir / f"transactions_{schema_name}.csv"
 
-        typer.echo(f"Saved {len(transactions)} transactions (row format) to {out_path}")
+        df.to_parquet(parquet_path, index=False)
+        df.to_csv(csv_path, index=False)
+
+        typer.echo(
+            f"Saved {len(transactions)} encoded transactions under schema "
+            f"'{schema_name}' to {parquet_path} and {csv_path}"
+        )
 
     except Exception as e:
         typer.echo(f"Row transactions preparation failed: {e}")
