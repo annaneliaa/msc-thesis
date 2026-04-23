@@ -11,7 +11,7 @@ MINING_DIR = ARTIFACTS_DIR / "mining"
 LOGS_DIR = ARTIFACTS_DIR / "logs"
 RUNS_DIR = ARTIFACTS_DIR / "runs"
 CACHE_DIR = ARTIFACTS_DIR / "cache"
-
+FEATURE_DIR = ARTIFACTS_DIR / "features"
 
 MODEL_FILENAME = "model.joblib"
 METADATA_FILENAME = "metadata.json"
@@ -27,6 +27,7 @@ def ensure_artifact_dirs() -> None:
         LOGS_DIR,
         RUNS_DIR,
         CACHE_DIR,
+        FEATURE_DIR,
     ]:
         path.mkdir(parents=True, exist_ok=True)
 
@@ -34,5 +35,12 @@ def ensure_artifact_dirs() -> None:
 def get_mining_run_dir(run_name: str) -> Path:
     run_id = f"{run_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     run_dir = MINING_DIR / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    return run_dir
+
+
+def get_feature_run_dir(run_name: str) -> Path:
+    run_id = f"{run_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    run_dir = FEATURE_DIR / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     return run_dir

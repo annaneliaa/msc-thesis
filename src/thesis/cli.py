@@ -16,7 +16,7 @@ from thesis.preprocessing.cache_ingestor import CacheIngestor
 from thesis.preprocessing.service import process_alert_batch, select_groups_from_cache
 from thesis.preprocessing.mining_prep import build_transactions
 from thesis.training.service import train_model_for_schema
-from thesis.encoder.service import encode_transactions
+from thesis.encoders.service import encode_transactions
 
 """
 Entry point to the system
@@ -308,7 +308,7 @@ def build_transactions_json(
 
 @app.command()
 def build_row_transactions(
-    scenario: str = typer.Option(..., "--scenario", "-s"),
+    scenario_name: str = typer.Option(..., "--scenario", "-s"),
     schema_name: str = typer.Option("baseline", "--schema-name"),
     cache_dir: str = typer.Option("artifacts/cache"),
 ) -> None:
@@ -317,7 +317,7 @@ def build_row_transactions(
     encode them under a schema, and save in row-based format.
     """
     try:
-        cache = TokenCache(cache_dir=Path(cache_dir), scenario=scenario)
+        cache = TokenCache(cache_dir=Path(cache_dir), scenario=scenario_name)
 
         snapshots = select_groups_from_cache(
             cache=cache,
@@ -331,6 +331,7 @@ def build_row_transactions(
         transactions = build_transactions(snapshots)
 
         feature_df = encode_transactions(
+            scenario_name=scenario_name,
             transactions=transactions,
             schema_name=schema_name,
         )
@@ -357,7 +358,7 @@ def build_row_transactions(
             axis=1,
         )
 
-        out_dir = Path(f"artifacts/cache/{scenario}/transactions")
+        out_dir = Path(f"artifacts/cache/{scenario_name}/transactions")
         out_dir.mkdir(parents=True, exist_ok=True)
 
         parquet_path = out_dir / f"transactions_{schema_name}.parquet"
