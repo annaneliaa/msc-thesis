@@ -13,25 +13,53 @@ def encode_transactions_for_schema(
     schema: FeatureSchema,
     top_k: int | None = None,
 ) -> pd.DataFrame:
+    transactions_list = list(transactions)
+
     frames: list[pd.DataFrame] = []
 
     if schema.base is not None:
-        frames.append(BaselineFeatureEncoder().transform(transactions))
+        baseline_frame = BaselineFeatureEncoder().transform(transactions_list)
 
-    if schema.symbolic is not None:
-        encoder = SymbolicFeatureEncoder(
-            schema=schema.symbolic,
-            top_k=top_k,
+        baseline_frame = baseline_frame.reindex(
+            columns=schema.base.features,
+            fill_value=0,
         )
-        frames.append(encoder.transform(transactions))
+
+        frames.append(baseline_frame)
 
     if schema.dynamic is not None:
         raise NotImplementedError("DynamicFeatureEncoder not implemented yet.")
 
+    if schema.symbolic is not None:
+        symbolic_encoder = SymbolicFeatureEncoder(
+            feature_schema=schema.symbolic,
+            top_k=top_k,
+        )
+
+        symbolic_frame = symbolic_encoder.transform(transactions_list)
+
+        symbolic_feature_names = [
+            feature.feature_name
+            for feature in (
+                schema.symbolic.features[:top_k]
+                if top_k is not None
+                else schema.symbolic.features
+            )
+        ]
+
+        symbolic_frame = symbolic_frame.reindex(
+            columns=symbolic_feature_names,
+            fill_value=0,
+        )
+
+        frames.append(symbolic_frame)
+
     if not frames:
         raise ValueError(f"Schema '{schema.schema_name}' contains no feature groups.")
 
-    return pd.concat(
+    encoded = pd.concat(
         [frame.reset_index(drop=True) for frame in frames],
         axis=1,
     )
+
+    return encoded

@@ -14,7 +14,6 @@ from thesis.schemas.features import (
 
 BASE_FEATURES = [
     "duration_sec",
-    "n_alerts",
     "n_items",
     "n_hosts",
     "n_shorts",

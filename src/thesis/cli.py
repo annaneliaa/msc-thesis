@@ -248,7 +248,7 @@ def select_groups(
 
 
 @app.command()
-def build_transactions_json(
+def load_transactions(
     scenario: str = typer.Option(..., "--scenario", "-s", help="Scenario name"),
     cache_dir: str = typer.Option(
         "artifacts/cache", help="Directory where cache files are stored."
@@ -273,7 +273,7 @@ def build_transactions_json(
 
         out_dir = Path(f"artifacts/cache/{scenario}/transactions")
         out_dir.mkdir(parents=True, exist_ok=True)
-        out_path = out_dir / "transactions.json"
+        out_path = out_dir / "transactions_raw.json"
 
         # convert to serializable format
         # TODO: put in format ready for training + inference
@@ -311,12 +311,13 @@ def build_transactions_json(
 @app.command()
 def encode_transactions(
     scenario_name: str = typer.Option(..., "--scenario", "-s"),
-    schema_name: str = typer.Option("baseline", "--schema-name"),
+    schema_name: str = typer.Option("base", "--schema-name"),
     cache_dir: str = typer.Option("artifacts/cache"),
+    top_k: int | None = typer.Option(None, "--top-k"),
 ) -> None:
     """
     Load group snapshots from cache, convert to transactions,
-    encode them under a schema, and save in row-based format.
+    load a FeatureSchema, encode transactions, and save row-based features.
     """
     try:
         cache = TokenCache(cache_dir=Path(cache_dir), scenario=scenario_name)
@@ -330,21 +331,23 @@ def encode_transactions(
             require_closed=True,
         )
 
-        transactions = build_transactions(snapshots)
+        transactions = list(build_transactions(snapshots))
 
         schema = FEATURE_SCHEMAS.load(
             scenario_name=scenario_name,
             schema_name=schema_name,
         )
 
+        print(f"Loaded schema {schema_name} for scenario {scenario_name}.")
+
         feature_df = encode_transactions_for_schema(
             transactions=transactions,
             schema=schema,
+            top_k=top_k,
         )
 
-        meta_rows = []
-        for t in transactions:
-            meta_rows.append(
+        meta_df = pd.DataFrame(
+            [
                 {
                     "transaction_id": t.transaction_id,
                     "group_id": t.group_id,
@@ -355,31 +358,37 @@ def encode_transactions(
                     "tx_label": t.tx_label,
                     "weight": t.weight,
                 }
-            )
-
-        meta_df = pd.DataFrame(meta_rows)
+                for t in transactions
+            ]
+        )
 
         df = pd.concat(
-            [meta_df.reset_index(drop=True), feature_df.reset_index(drop=True)],
+            [
+                meta_df.reset_index(drop=True),
+                feature_df.reset_index(drop=True),
+            ],
             axis=1,
         )
+
+        safe_schema_name = schema_name.replace("+", "_").replace("/", "_")
 
         out_dir = Path(f"artifacts/cache/{scenario_name}/transactions")
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        parquet_path = out_dir / f"transactions_{schema_name}.parquet"
-        csv_path = out_dir / f"transactions_{schema_name}.csv"
+        parquet_path = out_dir / f"transactions_{safe_schema_name}.parquet"
+        csv_path = out_dir / f"transactions_{safe_schema_name}.csv"
 
         df.to_parquet(parquet_path, index=False)
         df.to_csv(csv_path, index=False)
 
         typer.echo(
             f"Saved {len(transactions)} encoded transactions under schema "
-            f"'{schema_name}' to {parquet_path} and {csv_path}"
+            f"'{schema_name}' version '{schema.schema_version}' to "
+            f"{parquet_path} and {csv_path}"
         )
 
     except Exception as e:
-        typer.echo(f"Row transactions preparation failed: {e}")
+        typer.echo(f"Transaction encoding failed: {e}")
         raise typer.Exit(code=1)
 
 

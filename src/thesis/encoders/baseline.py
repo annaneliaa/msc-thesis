@@ -17,9 +17,6 @@ def _is_internal_ip(ip: str) -> bool:
 
 
 def compute_baseline_features(tx: Transaction) -> dict[str, Any]:
-    """
-    Compute baseline features from a single MiningTransaction.
-    """
     items = set(tx.abs_items or tx.raw_items or [])
     ip_values = list(tx.alert_ips or [])
 
@@ -32,6 +29,7 @@ def compute_baseline_features(tx: Transaction) -> dict[str, Any]:
 
     return {
         "duration_sec": duration_sec,
+        # "n_alerts": n_alerts,
         "n_items": n_items,
         "n_hosts": _count_items_with_prefix(items, "host:"),
         "n_shorts": _count_items_with_prefix(items, "short:"),
