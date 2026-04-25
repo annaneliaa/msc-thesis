@@ -16,8 +16,6 @@ def load_symbolic_feature_schema(path: Path) -> SymbolicFeatureSchema:
         payload = json.load(f)
 
     return SymbolicFeatureSchema(
-        schema_name=payload["schema_name"],
-        schema_version=payload["schema_version"],
         features=[
             SymbolicFeature(
                 feature_name=x["feature_name"],

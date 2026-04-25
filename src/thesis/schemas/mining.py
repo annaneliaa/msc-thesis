@@ -2,8 +2,10 @@ from pydantic import BaseModel
 from datetime import datetime
 from typing import Optional
 from dataclasses import dataclass, field
+from pathlib import Path
+import pandas as pd
 
-# Pydantic object models used in mining module (API payloads and metadata objects)
+# Pydantic object models used in mining module (API payloads and metadata objects
 
 
 class MiningMetadata(BaseModel):
@@ -46,3 +48,11 @@ class MiningTransaction:
     n_alerts: int | None = None
     alert_labels: set[str] | None = None
     weight: float = 1.0
+
+
+@dataclass(slots=True)
+class MiningJobResult:
+    run_dir: Path
+    mined_df: pd.DataFrame
+    scenario_name: str
+    target_label: str

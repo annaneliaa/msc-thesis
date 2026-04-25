@@ -1,9 +1,6 @@
-from __future__ import annotations
-
 import ast
 import re
 import pandas as pd
-
 from thesis.schemas.features import SymbolicFeature, SymbolicFeatureSchema
 
 
@@ -43,9 +40,9 @@ def _make_feature_name(itemset: tuple[str, ...], prefix: str = "sym") -> str:
 
 def build_symbolic_feature_schema(
     df: pd.DataFrame,
+    source_label: str,
     schema_name: str,
     schema_version: str,
-    source_label: str,
     max_features: int | None = None,
 ) -> SymbolicFeatureSchema:
     """
@@ -65,15 +62,21 @@ def build_symbolic_feature_schema(
                 feature_name=_make_feature_name(itemset),
                 itemset=itemset,
                 source_label=source_label,
-                support=float(row["support"])
-                if "support" in row and pd.notna(row["support"])
-                else None,
-                confidence_attack=float(row["confidence_attack"])
-                if "confidence_attack" in row and pd.notna(row["confidence_attack"])
-                else None,
-                confidence_benign=float(row["confidence_benign"])
-                if "confidence_benign" in row and pd.notna(row["confidence_benign"])
-                else None,
+                support=(
+                    float(row["support"])
+                    if "support" in row and pd.notna(row["support"])
+                    else None
+                ),
+                confidence_attack=(
+                    float(row["confidence_attack"])
+                    if "confidence_attack" in row and pd.notna(row["confidence_attack"])
+                    else None
+                ),
+                confidence_benign=(
+                    float(row["confidence_benign"])
+                    if "confidence_benign" in row and pd.notna(row["confidence_benign"])
+                    else None
+                ),
             )
         )
 

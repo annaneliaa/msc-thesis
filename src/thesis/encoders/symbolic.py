@@ -4,7 +4,7 @@ import pandas as pd
 
 from thesis.schemas.preprocessing import Transaction
 from thesis.schemas.features import SymbolicFeatureSchema
-from thesis.mining.persistence import load_symbolic_feature_schema
+from thesis.features.persistence import load_symbolic_feature_schema
 
 
 def _transaction_items(tx: Transaction) -> set[str]:

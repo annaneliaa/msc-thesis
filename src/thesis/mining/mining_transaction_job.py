@@ -7,7 +7,7 @@ from pathlib import Path
 import pandas as pd
 
 from thesis.paths import ensure_artifact_dirs
-from thesis.schemas.mining import MiningMetadata
+from thesis.schemas.mining import MiningMetadata, MiningJobResult
 from thesis.utils.mlflow_utils import (
     log_artifact,
     log_metrics,
@@ -29,8 +29,6 @@ from thesis.mining.util import (
     save_filtered_views,
 )
 from thesis.mining.load_mining_transactions import load_and_prepare_mining_transactions
-from thesis.mining.persistence import save_symbolic_feature_schema
-from thesis.mining.schema_builder import build_symbolic_feature_schema
 
 
 def sort_frequent_itemsets(
@@ -232,33 +230,11 @@ def run_transaction_eclat_job(
 
         log_artifact(str(run_dir))
 
-        print("Building symbolic feature schema...")
-
-        symbolic_schema = build_symbolic_feature_schema(
-            df=mined_df,
-            schema_name=f"symbolic_{scenario_name}_{target_label}",
-            schema_version="0.1.0",
-            source_label=target_label,
-        )
-
-        symbolic_schema_path = run_dir / "symbolic_feature_schema.json"
-        save_symbolic_feature_schema(symbolic_schema, symbolic_schema_path)
-
-        print(f"Saved symbolic feature schema to {symbolic_schema_path}")
-
-        feature_registry_path = (
-            Path("artifacts")
-            / "features"
-            / scenario_name
-            / f"{symbolic_schema.schema_name}.json"
-        )
-
-        feature_registry_path.parent.mkdir(parents=True, exist_ok=True)
-
-        save_symbolic_feature_schema(symbolic_schema, feature_registry_path)
-
-        print(f"Saved symbolic feature schema to {feature_registry_path}")
-
         print(f"Finished mining job. Saved artifacts to {run_dir}")
 
-        return run_dir
+        return MiningJobResult(
+            run_dir=run_dir,
+            mined_df=mined_df,
+            scenario_name=scenario_name,
+            target_label=target_label,
+        )

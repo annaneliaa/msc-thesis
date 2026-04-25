@@ -24,6 +24,8 @@ class SymbolicFeature:
 
 @dataclass(frozen=True, slots=True)
 class SymbolicFeatureSchema:
+    schema_name: str
+    schema_version: str
     features: list[SymbolicFeature] = field(default_factory=list)
 
 

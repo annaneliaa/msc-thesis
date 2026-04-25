@@ -5,6 +5,7 @@ import json
 import csv
 
 from thesis.schemas.dataframe_schemas import SCHEMAS
+from thesis.features.feature_schemas import FEATURE_SCHEMAS
 from thesis.config import load_settings
 from thesis.mining.mining_transaction_job import run_transaction_eclat_job
 from thesis.paths import ensure_artifact_dirs
@@ -16,7 +17,8 @@ from thesis.preprocessing.cache_ingestor import CacheIngestor
 from thesis.preprocessing.service import process_alert_batch, select_groups_from_cache
 from thesis.preprocessing.mining_prep import build_transactions
 from thesis.training.service import train_model_for_schema
-from thesis.encoders.service import encode_transactions
+from thesis.encoders.service import encode_transactions_for_schema
+from thesis.features.service import build_persist_and_register_symbolic_schema
 
 """
 Entry point to the system
@@ -307,7 +309,7 @@ def build_transactions_json(
 
 
 @app.command()
-def build_row_transactions(
+def encode_transactions(
     scenario_name: str = typer.Option(..., "--scenario", "-s"),
     schema_name: str = typer.Option("baseline", "--schema-name"),
     cache_dir: str = typer.Option("artifacts/cache"),
@@ -330,10 +332,14 @@ def build_row_transactions(
 
         transactions = build_transactions(snapshots)
 
-        feature_df = encode_transactions(
+        schema = FEATURE_SCHEMAS.load(
             scenario_name=scenario_name,
-            transactions=transactions,
             schema_name=schema_name,
+        )
+
+        feature_df = encode_transactions_for_schema(
+            transactions=transactions,
+            schema=schema,
         )
 
         meta_rows = []
@@ -377,7 +383,7 @@ def build_row_transactions(
         raise typer.Exit(code=1)
 
 
-@app.command()
+@app.command("mine")
 def mine_transactions(
     scenario: str = typer.Option(
         "debug_scenario",
@@ -410,7 +416,7 @@ def mine_transactions(
         typer.echo(f"Loading transactions from {transactions_path}...")
         tx_path = Path(transactions_path)
 
-        path = run_transaction_eclat_job(
+        result = run_transaction_eclat_job(
             transactions_path=tx_path,
             scenario_name=scenario,
             run_name=run_name,
@@ -419,10 +425,21 @@ def mine_transactions(
             target_label=target_label,
         )
 
-        typer.echo(f"Transaction mining output written to: {path}")
-
     except Exception as e:
         typer.echo(f"Transaction mining failed: {e}")
+        raise typer.Exit(code=1)
+
+    try:
+        schema_path = build_persist_and_register_symbolic_schema(
+            df=result.mined_df,
+            scenario_name=result.scenario_name,
+            source_label=result.target_label,
+            schema_name="symbolic",
+        )
+        typer.echo(f"Symbolic feature schema written to: {schema_path}")
+
+    except Exception as e:
+        typer.echo(f"Schema building failed: {e}")
         raise typer.Exit(code=1)
 
 
