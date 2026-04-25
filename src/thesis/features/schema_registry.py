@@ -55,9 +55,9 @@ class FeatureSchemaRegistry:
         self,
         scenario_name: str,
         schema_name: str,
+        schema_version: str | None = None,
     ) -> FeatureSchema:
         manifest = self._load_manifest(scenario_name)
-
         schemas = manifest["schemas"]
 
         if schema_name not in schemas:
@@ -69,7 +69,10 @@ class FeatureSchemaRegistry:
         spec = schemas[schema_name]
 
         if spec["type"] == "symbolic":
-            symbolic_version_spec = self._resolve_symbolic_spec(spec)
+            symbolic_version_spec = self._resolve_symbolic_spec(
+                spec,
+                version=schema_version,
+            )
 
             symbolic = self._load_symbolic_from_spec(
                 scenario_name=scenario_name,
@@ -86,7 +89,9 @@ class FeatureSchemaRegistry:
 
         if spec["type"] == "composite":
             symbolic = None
-            symbolic_version = None
+            resolved_schema_version = schema_version or spec.get(
+                "schema_version", "0.1.0"
+            )
 
             symbolic_ref = spec.get("symbolic")
 
@@ -101,25 +106,29 @@ class FeatureSchemaRegistry:
 
                 symbolic_version_spec = self._resolve_symbolic_spec(
                     symbolic_spec,
-                    version=spec.get("symbolic_version"),
+                    version=schema_version or spec.get("symbolic_version"),
                 )
 
-                symbolic_version = symbolic_version_spec["schema_version"]
+                resolved_schema_version = symbolic_version_spec["schema_version"]
 
                 symbolic = self._load_symbolic_from_spec(
                     scenario_name=scenario_name,
                     spec=symbolic_version_spec,
                 )
 
+            elif schema_version is not None:
+                raise ValueError(
+                    f"Schema '{schema_name}' has no versioned component, "
+                    f"so schema_version='{schema_version}' cannot be applied."
+                )
+
             return FeatureSchema(
                 schema_name=schema_name,
-                schema_version=symbolic_version or spec.get("schema_version", "0.1.0"),
+                schema_version=resolved_schema_version,
                 base=BaseFeatureSchema(BASE_FEATURES) if spec.get("base") else None,
-                dynamic=(
-                    DynamicFeatureSchema(DYNAMIC_FEATURES)
-                    if spec.get("dynamic")
-                    else None
-                ),
+                dynamic=DynamicFeatureSchema(DYNAMIC_FEATURES)
+                if spec.get("dynamic")
+                else None,
                 symbolic=symbolic,
             )
 

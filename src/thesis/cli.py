@@ -5,7 +5,7 @@ import json
 import csv
 
 from thesis.schemas.dataframe_schemas import SCHEMAS
-from thesis.features.feature_schemas import FEATURE_SCHEMAS
+from thesis.features.schema_registry import FEATURE_SCHEMAS
 from thesis.config import load_settings
 from thesis.mining.mining_transaction_job import run_transaction_eclat_job
 from thesis.paths import ensure_artifact_dirs
@@ -312,6 +312,7 @@ def load_transactions(
 def encode_transactions(
     scenario_name: str = typer.Option(..., "--scenario", "-s"),
     schema_name: str = typer.Option("base", "--schema-name"),
+    schema_version: str | None = typer.Option(None, "--schema-version"),
     cache_dir: str = typer.Option("artifacts/cache"),
     top_k: int | None = typer.Option(None, "--top-k"),
 ) -> None:
@@ -336,6 +337,7 @@ def encode_transactions(
         schema = FEATURE_SCHEMAS.load(
             scenario_name=scenario_name,
             schema_name=schema_name,
+            schema_version=schema_version,
         )
 
         print(f"Loaded schema {schema_name} for scenario {scenario_name}.")
