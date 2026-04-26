@@ -1,36 +1,37 @@
-from dataclasses import dataclass
-from typing import Any
 from pydantic import BaseModel
+from typing import Any
 
-# data structures for model artifacts and metadata
 
-
-@dataclass
-class ModelArtifact:
+class ModelArtifact(BaseModel):
     model: Any
     schema_name: str
+    schema_version: str
     features: list[str]
     model_type: str
     model_version: str
     training_config: dict
     metrics: dict
+
+    class Config:
+        arbitrary_types_allowed = True
 
 
 class ModelMetadata(BaseModel):
     model_name: str
     model_version: str
     schema_name: str
+    schema_version: str
     features: list[str]
     model_type: str
     training_config: dict
     metrics: dict
 
 
-@dataclass
-class TrainedModelSummary:
+class TrainedModelSummary(BaseModel):
     model_name: str
     model_version: str
     schema_name: str
+    schema_version: str
     output_dir: str
     auc: float
     n_features: int

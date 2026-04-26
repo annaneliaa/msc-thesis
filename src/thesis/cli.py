@@ -458,25 +458,28 @@ def mine_transactions(
 def train_model_cmd(
     dataset_path: Path = typer.Argument(..., help="Path to dataset"),
     label_col: str = typer.Option(..., help="Name of label column"),
+    scenario_name: str = typer.Option(..., "--scenario", "-s"),
     schema_name: str = typer.Option(..., help="Feature schema name"),
+    schema_version: str | None = typer.Option(
+        None,
+        help="Feature schema version. If omitted, latest symbolic version is used.",
+    ),
     model_name: str = typer.Option("logreg", help="Model name"),
     model_version: str = typer.Option("0.1.0", help="Model version"),
     test_frac: float = typer.Option(0.3, help="Test split fraction"),
 ):
     """
-    Train a model for a given feature schema and persist it.
+    Train a model for a versioned feature schema and persist it.
     """
 
     if not dataset_path.exists():
         raise typer.BadParameter(f"Dataset not found: {dataset_path}")
 
     typer.echo(f"Loading dataset from {dataset_path}...")
-    # load dataset
+
     if dataset_path.suffix == ".parquet":
         df = pd.read_parquet(dataset_path)
-    elif dataset_path.suffix == ".csv":
-        df = pd.read_csv(dataset_path)
-    elif dataset_path.suffix == ".txt":
+    elif dataset_path.suffix in {".csv", ".txt"}:
         df = pd.read_csv(dataset_path)
     else:
         raise typer.BadParameter("Only .csv, .txt, .parquet are supported")
@@ -484,22 +487,34 @@ def train_model_cmd(
     if label_col not in df.columns:
         raise typer.BadParameter(f"Label column '{label_col}' not in dataset")
 
-    # map labels to 0 and 1
     y = df[label_col].map({"benign": 0, "attack": 1})
+
+    if y.isna().any():
+        raise typer.BadParameter(
+            f"Label column '{label_col}' must only contain 'benign' and 'attack'."
+        )
+
     X = df.drop(columns=[label_col])
 
-    # resolve output dir for model
+    typer.echo("Loading feature schema...")
+
+    schema = FEATURE_SCHEMAS.load(
+        scenario_name=scenario_name,
+        schema_name=schema_name,
+        schema_version=schema_version,
+    )
+
     output_dir = get_model_path(model_name, model_version)
 
     if output_dir.exists():
         raise typer.BadParameter(f"Model version already exists: {output_dir}")
 
     typer.echo("Starting training process...")
-    # train
+
     summary = train_model_for_schema(
         X=X,
         y=y,
-        schema_name=schema_name,
+        schema=schema,
         model_name=model_name,
         model_version=model_version,
         output_dir=output_dir,
@@ -508,9 +523,9 @@ def train_model_cmd(
 
     typer.echo("\nTraining completed:")
     typer.echo(f"  Model: {summary.model_name}")
-    typer.echo(f"  Version: {summary.model_version}")
+    typer.echo(f"  Model version: {summary.model_version}")
     typer.echo(f"  Schema: {summary.schema_name}")
-    typer.echo(f"  Feature names: {summary.feature_names}")
+    typer.echo(f"  Schema version: {summary.schema_version}")
     typer.echo(f"  AUC: {summary.auc:.4f}")
     typer.echo(f"  Features: {summary.n_features}")
     typer.echo(f"  Output dir: {summary.output_dir}")

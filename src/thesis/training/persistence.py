@@ -1,6 +1,7 @@
 from pathlib import Path
 import json
 import joblib
+from dataclasses import asdict
 
 from thesis.paths import ensure_artifact_dirs
 from thesis.schemas.models import ModelArtifact, ModelMetadata
@@ -30,7 +31,7 @@ def save_model_artifact(
         json.dump(metadata_payload, f, indent=2)
 
     with feature_schema_path.open("w", encoding="utf-8") as f:
-        json.dump(schema.__dict__, f, indent=2)
+        json.dump(asdict(schema), f, indent=2)
 
 
 def load_model_artifact(model_name: str, model_version: str) -> ModelArtifact:
@@ -56,16 +57,20 @@ def load_model_artifact(model_name: str, model_version: str) -> ModelArtifact:
         model_name=metadata_payload["model_name"],
         model_version=metadata_payload["model_version"],
         schema_name=metadata_payload["schema_name"],
+        schema_version=metadata_payload["schema_version"],
         features=metadata_payload["features"],
+        model_type=metadata_payload["model_type"],
+        training_config=metadata_payload["training_config"],
         metrics=metadata_payload["metrics"],
     )
 
     return ModelArtifact(
         model=model,
         schema_name=metadata.schema_name,
+        schema_version=metadata.schema_version,
         features=metadata.features,
-        model_type=metadata_payload.get("model_type", "unknown"),
+        model_type=metadata.model_type,
         model_version=metadata.model_version,
-        training_config=metadata_payload.get("training_config", {}),
+        training_config=metadata.training_config,
         metrics=metadata.metrics,
     )
