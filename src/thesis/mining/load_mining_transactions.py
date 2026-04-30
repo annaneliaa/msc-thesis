@@ -37,6 +37,7 @@ def load_mining_transactions_from_cache(
             window_end=row.get("window_end"),
             n_alerts=row.get("n_alerts"),
             items=set(row.get("abs_items", [])),
+            sorted_items=row.get("sorted_items") or [],
             tx_label=row.get("tx_label"),
             alert_labels=(
                 set(row["alert_labels"])
@@ -77,6 +78,7 @@ def prepare_transactions(
                 window_end=tx.window_end,
                 n_alerts=tx.n_alerts,
                 items=items,
+                sorted_items=tx.sorted_items,
                 tx_label=tx.tx_label,
                 alert_labels=(
                     set(tx.alert_labels) if tx.alert_labels is not None else None

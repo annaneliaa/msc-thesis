@@ -43,6 +43,7 @@ class MiningTransaction:
     transaction_id: int | str
     tx_label: str
     items: set[str] = field(default_factory=set)
+    sorted_items: list[str] = field(default_factory=list)
     window_start: int | None = None
     window_end: int | None = None
     n_alerts: int | None = None

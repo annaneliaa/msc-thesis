@@ -7,7 +7,8 @@ import csv
 from thesis.schemas.dataframe_schemas import SCHEMAS
 from thesis.features.schema_registry import FEATURE_SCHEMAS
 from thesis.config import load_settings
-from thesis.mining.mining_transaction_job import run_transaction_eclat_job
+from thesis.mining.itemset_mining_job import run_transaction_eclat_job
+from thesis.mining.sequence_mining_job import run_transaction_prefixspan_job
 from thesis.paths import ensure_artifact_dirs
 from thesis.schemas.validation import validate_dataframe
 from thesis.registry.models import list_all_models, get_model_path
@@ -227,6 +228,7 @@ def select_groups(
                 "alert_ids": s.alert_ids,
                 "n_alerts": s.n_alerts,
                 "items": sorted(list(s.items)),
+                "sorted_items": s.sorted_items,
                 "alert_ips": sorted(list(s.alert_ips)),
                 "tx_label": s.tx_label,
                 "alert_labels": (
@@ -288,6 +290,7 @@ def load_transactions(
                 "alert_ids": t.alert_ids,
                 "abs_items": sorted(list(t.abs_items)),
                 "raw_items": sorted(list(t.raw_items)),
+                "sorted_items": t.sorted_items,
                 "alert_ips": sorted(list(t.alert_ips)),
                 "tx_label": t.tx_label,
                 "alert_labels": (
@@ -418,16 +421,16 @@ def mine_transactions(
     ),
 ) -> None:
     """
-    Load cached Transactions and run transaction-level Eclat mining.
+    Load cached Transactions and run transaction-level Eclat and PrefixSpan mining.
     """
     transactions_path = Path(
-        f"artifacts/cache/{scenario}/transactions/transactions.json"
+        f"artifacts/cache/{scenario}/transactions/transactions_raw.json"
     )
     try:
         typer.echo(f"Loading transactions from {transactions_path}...")
         tx_path = Path(transactions_path)
 
-        result = run_transaction_eclat_job(
+        eclat_result = run_transaction_eclat_job(
             transactions_path=tx_path,
             scenario_name=scenario,
             run_name=run_name,
@@ -435,16 +438,36 @@ def mine_transactions(
             max_len=max_len,
             target_label=target_label,
         )
+        typer.echo(f"Eclat mining complete. Artifacts saved to: {eclat_result.run_dir}")
 
     except Exception as e:
         typer.echo(f"Transaction mining failed: {e}")
         raise typer.Exit(code=1)
 
     try:
+        typer.echo("Running PrefixSpan sequence mining...")
+        run_transaction_prefixspan_job(
+            transactions_path=tx_path,
+            scenario_name=scenario,
+            run_name=run_name,
+            min_support=min_support,
+            max_len=max_len,
+            target_label=target_label,
+            run_dir=eclat_result.run_dir,
+        )
+        typer.echo(
+            f"Sequence mining complete. Artifacts saved to: {eclat_result.run_dir}"
+        )
+
+    except Exception as e:
+        typer.echo(f"Sequence mining failed: {e}")
+        raise typer.Exit(code=1)
+
+    try:
         schema_path = build_persist_and_register_symbolic_schema(
-            df=result.mined_df,
-            scenario_name=result.scenario_name,
-            source_label=result.target_label,
+            df=eclat_result.mined_df,
+            scenario_name=eclat_result.scenario_name,
+            source_label=eclat_result.target_label,
             schema_name="symbolic",
         )
         typer.echo(f"Symbolic feature schema written to: {schema_path}")
