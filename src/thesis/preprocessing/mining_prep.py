@@ -43,6 +43,7 @@ def build_transaction(snapshot: GroupSnapshot) -> Transaction:
         n_alerts=snapshot.n_alerts,
         abs_items=set(abstracted_items),  # use abstracted items for mining
         raw_items=set(snapshot.items),  # keep raw copy for later use
+        sorted_items=snapshot.sorted_items,
         alert_ids=list(snapshot.alert_ids),
         alert_ips=set(snapshot.alert_ips),  # include alert IPs in transaction
         tx_label=snapshot.tx_label,

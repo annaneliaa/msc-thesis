@@ -54,7 +54,8 @@ def group_alerts_fixed_2s_by_group(
         group_id = fixed_2s_group_id(alert.ts, window_size=window_size)
         groups[group_id].append(alert)
 
-    return dict(groups)
+    # return sorted group based on timestamp
+    return {gid: sorted(grp, key=lambda a: a.ts) for gid, grp in groups.items()}
 
 
 def group_alerts(

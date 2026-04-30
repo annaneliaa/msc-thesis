@@ -92,6 +92,9 @@ class TokenCache:
         if payload.get("items") is not None:
             payload["items"] = set(payload["items"])
 
+        if "sorted_items" not in payload:
+            payload["sorted_items"] = []
+
         if payload.get("alert_labels") is not None:
             payload["alert_labels"] = set(payload["alert_labels"])
 

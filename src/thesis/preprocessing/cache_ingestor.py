@@ -90,7 +90,13 @@ class CacheIngestor:
 
         groups: Dict[str, GroupCacheEntry] = {}
 
-        for record in grouping_records:
+        # sort grouping_records by alert timestamp so that items from earlier alerts are appended first, to preserve order
+        for record in sorted(
+            grouping_records,
+            key=lambda r: alerts_by_id[r.alert_id].ts
+            if r.alert_id in alerts_by_id
+            else 0,
+        ):
             alert = alerts_by_id.get(record.alert_id)
             if alert is None:
                 continue
@@ -106,6 +112,7 @@ class CacheIngestor:
                     alert_ids=[],
                     n_alerts=0,
                     items=set(),
+                    sorted_items=[],
                     alert_ips=set(),
                     alert_labels=None,
                     tx_label=None,
@@ -118,6 +125,7 @@ class CacheIngestor:
             group.alert_ids.append(alert.alert_id)
             group.n_alerts += 1
 
+            group.sorted_items.extend(sorted(alert.tokens))
             group.items |= set(alert.tokens)
             group.alert_ips |= {alert.ip} if alert.ip else set()
 
