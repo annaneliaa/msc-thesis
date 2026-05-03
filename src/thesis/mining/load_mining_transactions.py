@@ -37,7 +37,7 @@ def load_mining_transactions_from_cache(
             window_end=row.get("window_end"),
             n_alerts=row.get("n_alerts"),
             items=set(row.get("abs_items", [])),
-            sorted_items=row.get("sorted_items") or [],
+            sorted_items=[set(itemset) for itemset in (row.get("sorted_items") or [])],
             tx_label=row.get("tx_label"),
             alert_labels=(
                 set(row["alert_labels"])

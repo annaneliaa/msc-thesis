@@ -72,6 +72,9 @@ def train_model_for_schema(
             f"(single-class split)."
         )
 
+    feature_sparsity = float((X_train == 0).values.mean())
+    n_symbolic = len(schema.symbolic.features) if schema.symbolic is not None else 0
+
     print("Saving model artifact...")
     artifact = ModelArtifact(
         model=result["model"],
@@ -89,9 +92,27 @@ def train_model_for_schema(
             "n_features": len(result["feature_names"]),
             "train_rows": len(X_train),
             "test_rows": len(X_test),
+            "train_label_dist": pd.Series(y_train).value_counts().to_dict(),
+            "test_label_dist": pd.Series(y_test).value_counts().to_dict(),
         },
         metrics={
             "auc": float(result["auc"]),
+            "accuracy": float(result["accuracy"]),
+            "precision": float(result["precision"]),
+            "recall": float(result["recall"]),
+            "f1": float(result["f1"]),
+            "balanced_accuracy": float(result["balanced_accuracy"]),
+            "tp": int(result["tp"]),
+            "fp": int(result["fp"]),
+            "tn": int(result["tn"]),
+            "fn": int(result["fn"]),
+            "train_auc": float(result["train_auc"]),
+            "performance_gap_train_vs_test": float(result["train_auc"])
+            - float(result["auc"]),
+            "feature_sparsity": feature_sparsity,
+            "avg_feature_density": 1.0 - feature_sparsity,
+            "n_symbolic_features_used": n_symbolic,
+            "top_feature_importances": result["top_feature_importances"],
             "single_class_split": bool(result["single_class_split"]),
         },
     )

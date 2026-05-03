@@ -135,9 +135,9 @@ class GroupSnapshot:  # stable snapshot
     items: set[str] = field(
         default_factory=set
     )  # raw group items, pre-abstraction # unordered, deduplicated, for itemset mining
-    sorted_items: list[str] = field(
+    sorted_items: list[set[str]] = field(
         default_factory=list
-    )  # ordered, duplicates kept, for sequence mining
+    )  # ordered list of per-alert itemsets, for sequence mining
     alert_ips: set[str] = field(default_factory=set)
     # labels (for evaluation)
     alert_labels: Optional[set[str]] = None
@@ -160,9 +160,9 @@ class Transaction:  # mining input (with weight)
     alert_ids: Optional[list[str]] = None
     abs_items: set[str] = field(default_factory=set)  # mining-ready abstracted itemset
     raw_items: Optional[set[str]] = None  # pre-abstraction mining items
-    sorted_items: list[str] = field(
+    sorted_items: list[set[str]] = field(
         default_factory=list
-    )  # ordered, duplicates kept, for sequence mining
+    )  # ordered list of per-alert itemsets, for sequence mining
     alert_ips: set[str] = field(default_factory=set)
 
     tx_label: Optional[str] = None

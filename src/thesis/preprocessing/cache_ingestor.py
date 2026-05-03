@@ -125,7 +125,7 @@ class CacheIngestor:
             group.alert_ids.append(alert.alert_id)
             group.n_alerts += 1
 
-            group.sorted_items.extend(sorted(alert.tokens))
+            group.sorted_items.append(set(alert.tokens))
             group.items |= set(alert.tokens)
             group.alert_ips |= {alert.ip} if alert.ip else set()
 

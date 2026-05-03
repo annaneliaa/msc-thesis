@@ -50,7 +50,8 @@ def run_transaction_eclat_job(
     min_support: float = 0.05,
     max_len: int | None = 3,
     target_label: str = "benign",
-) -> Path:
+    run_dir: Path | None = None,
+) -> MiningJobResult:
     """
     Mine frequent itemsets from in-memory MiningTransaction records.
 
@@ -64,7 +65,10 @@ def run_transaction_eclat_job(
     t0 = time.perf_counter()
 
     with start_run(run_name):
-        run_dir = create_run_dir(run_name)
+        if run_dir is None:
+            run_dir = create_run_dir(run_name)
+        run_dir = run_dir / "eclat"
+        run_dir.mkdir(parents=True, exist_ok=True)
 
         set_tags(
             {

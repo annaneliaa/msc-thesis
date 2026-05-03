@@ -29,7 +29,7 @@ class GroupCacheEntry:
     items: set[str] = field(
         default_factory=set
     )  # union of raw mining items from member alerts
-    sorted_items: list[str] = field(default_factory=list)
+    sorted_items: list[set[str]] = field(default_factory=list)
 
     alert_ips: set[str] = field(default_factory=set)
     # group_features_summary: dict[str, set[str]] = field(default_factory=dict)

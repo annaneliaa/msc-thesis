@@ -47,6 +47,12 @@ class TokenCache:
             if key in payload and payload[key] is not None:
                 payload[key] = sorted(payload[key])
 
+        # sorted_items is list[set[str]] — serialize each inner set as a sorted list
+        if "sorted_items" in payload and payload["sorted_items"]:
+            payload["sorted_items"] = [
+                sorted(itemset) for itemset in payload["sorted_items"]
+            ]
+
         # group_features_summary: dict[str, set[str]]
         if (
             "group_features_summary" in payload
@@ -94,6 +100,10 @@ class TokenCache:
 
         if "sorted_items" not in payload:
             payload["sorted_items"] = []
+        elif payload["sorted_items"]:
+            payload["sorted_items"] = [
+                set(itemset) for itemset in payload["sorted_items"]
+            ]
 
         if payload.get("alert_labels") is not None:
             payload["alert_labels"] = set(payload["alert_labels"])

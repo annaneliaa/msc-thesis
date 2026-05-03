@@ -241,19 +241,21 @@ def save_filtered_views(
 
 
 def sequence_contains_pattern(
-    sequence: list[str],
+    sequence: list[set[str]],
     pattern: tuple[str, ...],
 ) -> bool:
     """
-    True if pattern occurs as an ordered subsequence in sequence.
-    The match does not need to be contiguous.
+    True if pattern occurs as an ordered subsequence across the alert itemsets.
+
+    Each pattern item must appear in some alert itemset that comes after the
+    alert itemset matched by the previous pattern item.
     """
     if not pattern:
         return True
 
     j = 0
-    for item in sequence:
-        if item == pattern[j]:
+    for itemset in sequence:
+        if pattern[j] in itemset:
             j += 1
             if j == len(pattern):
                 return True
@@ -262,7 +264,7 @@ def sequence_contains_pattern(
 
 
 def sequence_support_in_group(
-    sequences: list[list[str]],
+    sequences: list[list[set[str]]],
     pattern: tuple[str, ...],
 ) -> tuple[int, float]:
     """
@@ -279,8 +281,8 @@ def sequence_support_in_group(
 
 def add_cross_label_sequence_supports(
     mined_df: pd.DataFrame,
-    target_sequences: list[list[str]],
-    other_sequences: list[list[str]],
+    target_sequences: list[list[set[str]]],
+    other_sequences: list[list[set[str]]],
     target_label: str,
     other_label: str,
 ) -> pd.DataFrame:
@@ -424,6 +426,127 @@ def select_top_sequences_per_class(
         out = out.drop_duplicates(subset=["sequence"]).reset_index(drop=True)
 
     return out
+
+
+# -----------------------------------------------------------------
+# Itemset sequence mining utilities
+# -----------------------------------------------------------------
+
+
+def itemset_sequence_contains_pattern(
+    sequence: list[set[str]],
+    pattern: tuple[frozenset[str], ...],
+) -> bool:
+    """
+    True if each step of pattern (a frozenset) is a subset of some alert itemset
+    in sequence, with steps matching in strictly increasing alert order.
+    """
+    if not pattern:
+        return True
+
+    j = 0
+    for itemset in sequence:
+        if pattern[j].issubset(itemset):
+            j += 1
+            if j == len(pattern):
+                return True
+
+    return False
+
+
+def itemset_sequence_support_in_group(
+    sequences: list[list[set[str]]],
+    pattern: tuple[frozenset[str], ...],
+) -> tuple[int, float]:
+    """
+    Count how many sequences contain the given itemset sequential pattern.
+    """
+    if not sequences:
+        return 0, 0.0
+
+    count = sum(
+        1 for seq in sequences if itemset_sequence_contains_pattern(seq, pattern)
+    )
+    return count, count / len(sequences)
+
+
+def add_cross_label_itemset_sequence_supports(
+    mined_df: pd.DataFrame,
+    target_sequences: list[list[set[str]]],
+    other_sequences: list[list[set[str]]],
+    target_label: str,
+    other_label: str,
+) -> pd.DataFrame:
+    """
+    For each mined itemset sequence, compute support in both label groups.
+    """
+    print("Calculating cross-label itemset sequence supports...")
+
+    if mined_df.empty:
+        return mined_df.copy()
+
+    out = mined_df.copy()
+
+    target_counts, target_supports, other_counts, other_supports = [], [], [], []
+
+    for pattern in out["sequence"]:
+        c_t, s_t = itemset_sequence_support_in_group(target_sequences, pattern)
+        c_o, s_o = itemset_sequence_support_in_group(other_sequences, pattern)
+        target_counts.append(c_t)
+        target_supports.append(s_t)
+        other_counts.append(c_o)
+        other_supports.append(s_o)
+
+    out[f"count_{target_label}"] = target_counts
+    out[f"support_{target_label}"] = target_supports
+    out[f"count_{other_label}"] = other_counts
+    out[f"support_{other_label}"] = other_supports
+    out["support_diff"] = out[f"support_{target_label}"] - out[f"support_{other_label}"]
+
+    return out
+
+
+def save_filtered_itemset_sequence_views(
+    df: pd.DataFrame,
+    output_dir: str | Path,
+) -> None:
+    """
+    Save useful filtered views of mined itemset sequences for inspection.
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    scored = df.copy()
+
+    benign = select_top_sequences_per_class(
+        scored,
+        top_n_benign=200,
+        top_n_attack=0,
+        min_total_count=20,
+        min_abs_support_diff=0.01,
+        min_confidence=0.7,
+    )
+    benign.to_csv(output_dir / "top_benign_itemset_sequences.csv", index=False)
+
+    attack = select_top_sequences_per_class(
+        scored,
+        top_n_benign=0,
+        top_n_attack=200,
+        min_total_count=20,
+        min_abs_support_diff=0.01,
+        min_confidence=0.7,
+    )
+    attack.to_csv(output_dir / "top_attack_itemset_sequences.csv", index=False)
+
+    features = select_top_sequences_per_class(
+        scored,
+        top_n_benign=100,
+        top_n_attack=100,
+        min_total_count=20,
+        min_abs_support_diff=0.01,
+        min_confidence=0.7,
+    )
+    features.to_csv(output_dir / "feature_itemset_sequences.csv", index=False)
 
 
 def save_filtered_sequence_views(
