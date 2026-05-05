@@ -1,6 +1,6 @@
 # Minimal post-mining filter.
 # Removes only the most obvious noise: singletons and near-zero-occurrence patterns.
-# Use this for initial exploration or when you want to inspect the full result space.
+# Use initial exploration or for inspecting the full result space.
 
 itemsets:
   min_k: 2                    # drop singleton itemsets (single alert types)

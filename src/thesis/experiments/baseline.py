@@ -189,7 +189,7 @@ def _encode_transactions(
         schema_name=schema_name,
         schema_version=None,
     )
-    print("Loaded schema.")
+    print("Loaded schema. Encoding transaction data under schema...")
     feature_df = encode_transactions_for_schema(
         transactions=transactions,
         schema=schema,

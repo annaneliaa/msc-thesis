@@ -127,6 +127,8 @@ def _mine_and_register_symbolic_schema(
     item_seq_df = item_seq_result.mined_df.copy()
 
     if filter_config is not None:
+        if not filter_config.is_absolute():
+            filter_config = _ROOT / filter_config
         mining_filters = load_mining_filter_config(filter_config)
 
         f = mining_filters.itemsets

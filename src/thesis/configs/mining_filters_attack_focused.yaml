@@ -2,7 +2,7 @@
 # Keeps patterns where the majority of occurrences are in attack transactions.
 # confidence_attack = support_attack / (support_attack + support_benign),
 # so 0.65 means the pattern appears in attack traffic at least 65% of the time.
-# Use this when you want features that are strong positive indicators of attack.
+# Use for features that are strong positive indicators of attack.
 
 itemsets:
   min_k: 2
