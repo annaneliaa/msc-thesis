@@ -21,6 +21,7 @@ class SymbolicFeature:
     confidence_attack: float | None = None
     confidence_benign: float | None = None
     mining_type: str | None = None  # "itemset", "item_sequence", or "itemset_sequence"
+    utility_score: float = 1.0
 
 
 @dataclass(frozen=True, slots=True)

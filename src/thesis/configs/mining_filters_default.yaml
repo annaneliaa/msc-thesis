@@ -19,3 +19,7 @@ item_sequences:
   min_confidence_benign: 0.0
   min_lift: null              # no novelty filter
   remove_subsumed: false
+
+feature_selection:
+  top_k: null                 # no limit
+  min_utility_score: null     # no threshold

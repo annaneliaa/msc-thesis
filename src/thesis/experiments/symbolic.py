@@ -42,6 +42,7 @@ from thesis.mining.itemset_mining_job import run_transaction_eclat_job
 from thesis.mining.sequence_mining_job import run_transaction_prefixspan_job
 from thesis.mining.util import filter_mined_itemsets, filter_mined_sequences
 from thesis.paths import CACHE_DIR, ensure_artifact_dirs
+from thesis.schemas.mining import FeatureSelectionConfig
 from thesis.registry.models import get_model_path, resolve_model_paths
 from thesis.training.service import train_model_for_schema
 from thesis.utils.runs import create_run_dir
@@ -61,6 +62,9 @@ class SymbolicExperimentConfig:
     max_seq_len: int = 5
     target_label: str = "benign"
     filter_config: Path | None = None
+    feature_selection: FeatureSelectionConfig = field(
+        default_factory=FeatureSelectionConfig
+    )
     # training
     model_name: str = "logreg"
     model_version: str = "0.1.0"
@@ -204,6 +208,19 @@ def run_symbolic_experiment(
 
     print(f"\n[Symbolic] Scenario: '{config.scenario}'")
 
+    # Resolve feature selection from filter config file if not already set
+    feature_selection = config.feature_selection
+    if config.filter_config is not None:
+        resolved_filter_config = config.filter_config
+        if not resolved_filter_config.is_absolute():
+            resolved_filter_config = _ROOT / resolved_filter_config
+        mining_filters = load_mining_filter_config(resolved_filter_config)
+        if (
+            mining_filters.feature_selection.top_k is not None
+            or mining_filters.feature_selection.min_utility_score is not None
+        ):
+            feature_selection = mining_filters.feature_selection
+
     # 1. Convert alerts CSV → JSON
     print("[1/8] Converting alerts to JSON...")
     alerts_path = _convert_alerts_to_json(config.scenario)
@@ -240,7 +257,11 @@ def run_symbolic_experiment(
     # 6. Encode under base+symbolic schema
     print(f"[6/8] Encoding transactions (schema='{config.schema_name}')...")
     df, schema = _encode_transactions(
-        config.scenario, transactions, config.schema_name, config.cache_dir
+        config.scenario,
+        transactions,
+        config.schema_name,
+        config.cache_dir,
+        feature_selection=feature_selection,
     )
 
     # 7. Train model

@@ -26,7 +26,9 @@ import pandas as pd
 from thesis.encoders.service import encode_transactions_for_schema
 from thesis.features.manifest import initialize_feature_manifest
 from thesis.features.schema_registry import FeatureSchemaRegistry
+from thesis.features.util import select_symbolic_features
 from thesis.paths import CACHE_DIR, ensure_artifact_dirs
+from thesis.schemas.mining import FeatureSelectionConfig
 from thesis.preprocessing.cache import TokenCache
 from thesis.preprocessing.cache_ingestor import CacheIngestor
 from thesis.preprocessing.mining_prep import build_transactions
@@ -182,6 +184,7 @@ def _encode_transactions(
     transactions: list,
     schema_name: str,
     cache_dir: Path,
+    feature_selection: FeatureSelectionConfig | None = None,
 ) -> tuple[pd.DataFrame, object]:
     registry = FeatureSchemaRegistry(root_dir=_ROOT / "artifacts" / "features")
     schema = registry.load(
@@ -189,6 +192,16 @@ def _encode_transactions(
         schema_name=schema_name,
         schema_version=None,
     )
+
+    if feature_selection is not None and (
+        feature_selection.top_k is not None
+        or feature_selection.min_utility_score is not None
+    ):
+        before = len(schema.symbolic.features) if schema.symbolic else 0
+        schema = select_symbolic_features(schema, feature_selection)
+        after = len(schema.symbolic.features) if schema.symbolic else 0
+        print(f"  Feature selection: {before} → {after} symbolic features")
+
     print("Loaded schema. Encoding transaction data under schema...")
     feature_df = encode_transactions_for_schema(
         transactions=transactions,

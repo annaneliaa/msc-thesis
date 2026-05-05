@@ -1,0 +1,25 @@
+# Top-20 feature selection filter.
+# No mining filters applied — keeps all mined patterns, then selects the
+# top 20 by utility score (currently 1.0 for all, so first 20 are kept).
+
+itemsets:
+  min_k: 1
+  max_k: null
+  min_support_count: 1
+  min_abs_support_diff: 0.0
+  min_confidence_attack: 0.0
+  min_confidence_benign: 0.0
+  remove_subsumed: false
+
+item_sequences:
+  min_k: 1
+  min_support_count: 1
+  min_abs_support_diff: 0.0
+  min_confidence_attack: 0.0
+  min_confidence_benign: 0.0
+  min_lift: null
+  remove_subsumed: false
+
+feature_selection:
+  top_k: 20
+  min_utility_score: null

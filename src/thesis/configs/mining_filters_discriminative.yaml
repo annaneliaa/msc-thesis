@@ -20,3 +20,7 @@ item_sequences:
   min_confidence_benign: 0.0
   min_lift: null
   remove_subsumed: true       # drop A->B when A->B->C also passes
+
+feature_selection:
+  top_k: null
+  min_utility_score: null

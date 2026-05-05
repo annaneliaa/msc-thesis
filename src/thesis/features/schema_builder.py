@@ -82,6 +82,7 @@ def build_symbolic_feature_schema(
                     if "mining_type" in row and pd.notna(row["mining_type"])
                     else None
                 ),
+                utility_score=1.0,
             )
         )
 

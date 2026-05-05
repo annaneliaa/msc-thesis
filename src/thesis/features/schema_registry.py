@@ -210,6 +210,8 @@ class FeatureSchemaRegistry:
                     support=item.get("support"),
                     confidence_attack=item.get("confidence_attack"),
                     confidence_benign=item.get("confidence_benign"),
+                    mining_type=item.get("mining_type"),
+                    utility_score=item.get("utility_score", 1.0),
                 )
                 for item in payload["features"]
             ],

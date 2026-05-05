@@ -26,10 +26,16 @@ class SequenceFilterConfig(BaseModel):
     remove_subsumed: bool = True
 
 
+class FeatureSelectionConfig(BaseModel):
+    top_k: int | None = None
+    min_utility_score: float | None = None
+
+
 class MiningFilterConfig(BaseModel):
     itemsets: ItemsetFilterConfig = ItemsetFilterConfig()
     item_sequences: SequenceFilterConfig = SequenceFilterConfig()
     itemset_sequences: SequenceFilterConfig = SequenceFilterConfig()
+    feature_selection: FeatureSelectionConfig = FeatureSelectionConfig()
 
 
 # Pydantic object models used in mining module (API payloads and metadata objects

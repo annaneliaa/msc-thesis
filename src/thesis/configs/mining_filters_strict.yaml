@@ -20,3 +20,7 @@ item_sequences:
   min_confidence_benign: 0.0
   min_lift: 2.0               # must co-occur at least 2x more than by chance
   remove_subsumed: true
+
+feature_selection:
+  top_k: null
+  min_utility_score: null

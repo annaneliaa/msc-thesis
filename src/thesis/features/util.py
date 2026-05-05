@@ -1,6 +1,11 @@
+from __future__ import annotations
+
 from pathlib import Path
 import re
 import json
+
+from thesis.schemas.features import FeatureSchema, SymbolicFeatureSchema
+from thesis.schemas.mining import FeatureSelectionConfig
 
 _VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 
@@ -86,3 +91,35 @@ def register_symbolic_schema_version(
 
     with manifest_path.open("w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2)
+
+
+def select_symbolic_features(
+    schema: FeatureSchema,
+    config: FeatureSelectionConfig,
+) -> FeatureSchema:
+    if schema.symbolic is None:
+        return schema
+
+    features = list(schema.symbolic.features)
+
+    if config.min_utility_score is not None:
+        features = [f for f in features if f.utility_score >= config.min_utility_score]
+
+    features.sort(key=lambda f: f.utility_score, reverse=True)
+
+    if config.top_k is not None:
+        features = features[: config.top_k]
+
+    filtered_symbolic = SymbolicFeatureSchema(
+        schema_name=schema.symbolic.schema_name,
+        schema_version=schema.symbolic.schema_version,
+        features=features,
+    )
+
+    return FeatureSchema(
+        schema_name=schema.schema_name,
+        schema_version=schema.schema_version,
+        base=schema.base,
+        dynamic=schema.dynamic,
+        symbolic=filtered_symbolic,
+    )

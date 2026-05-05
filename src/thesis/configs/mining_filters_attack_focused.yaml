@@ -21,3 +21,7 @@ item_sequences:
   min_confidence_benign: 0.0
   min_lift: null
   remove_subsumed: true
+
+feature_selection:
+  top_k: null
+  min_utility_score: null
