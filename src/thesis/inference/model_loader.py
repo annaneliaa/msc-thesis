@@ -6,7 +6,7 @@ from thesis.inference.runtime_models import SklearnTabularModel
 
 
 def load_model(name: str, version: str) -> SklearnTabularModel:
-    model_path, metadata_path = resolve_model_paths(name, version)
+    model_path, metadata_path, _ = resolve_model_paths(name, version)
 
     model = joblib.load(model_path)
 

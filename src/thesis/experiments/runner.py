@@ -9,6 +9,8 @@ Experiments:
     symbolic   Preprocess → mine → build symbolic schema → encode → train → evaluate
     compare    Run both baseline and symbolic for the same scenario and save
                a side-by-side result to artifacts/experiments/<scenario>/
+    transfer   Train on scenario X, test on scenario Y (cross-scenario generalisation)
+               Pass exactly two scenario names: <train> <test>
 
 Examples:
     python -m thesis.experiments.runner baseline fox
@@ -17,6 +19,8 @@ Examples:
     python -m thesis.experiments.runner symbolic fox --filter-config src/thesis/configs/mining_filters_discriminative.yaml
     python -m thesis.experiments.runner compare fox
     python -m thesis.experiments.runner compare fox --filter-config src/thesis/configs/mining_filters_strict.yaml
+    python -m thesis.experiments.runner transfer fox bear
+    python -m thesis.experiments.runner transfer fox bear --filter-config src/thesis/configs/mining_filters_strict.yaml
 """
 
 from __future__ import annotations
@@ -34,6 +38,10 @@ from thesis.experiments.baseline import (
 from thesis.experiments.symbolic import (
     SymbolicExperimentConfig,
     run_symbolic_experiment,
+)
+from thesis.experiments.transfer import (
+    TransferExperimentConfig,
+    run_transfer_experiment,
 )
 
 
@@ -59,6 +67,25 @@ def run_symbolic(scenario: str, filter_config: Path | None = None) -> None:
         f"AUC={result.auc:.4f}  "
         f"features={result.n_features}  "
         f"transactions={result.n_transactions}"
+    )
+
+
+def run_transfer(
+    train_scenario: str,
+    test_scenario: str,
+    filter_config: Path | None = None,
+) -> None:
+    config = TransferExperimentConfig(
+        train_scenario=train_scenario,
+        test_scenario=test_scenario,
+        filter_config=filter_config,
+    )
+    result = run_transfer_experiment(config)
+    auc = result.metrics.get("auc", float("nan"))
+    print(
+        f"\n[{train_scenario}→{test_scenario}] transfer done — "
+        f"AUC={auc:.4f}  "
+        f"transactions={result.n_test_transactions}"
     )
 
 
@@ -140,7 +167,7 @@ def main() -> None:
     )
     parser.add_argument(
         "experiment",
-        choices=["baseline", "symbolic", "compare"],
+        choices=["baseline", "symbolic", "compare", "transfer"],
         help="Which experiment to run.",
     )
     parser.add_argument(
@@ -169,6 +196,15 @@ def main() -> None:
             run_symbolic(scenario, filter_config=args.filter_config)
         elif args.experiment == "compare":
             run_compare(scenario, filter_config=args.filter_config)
+        elif args.experiment == "transfer":
+            if len(args.scenarios) != 2:
+                parser.error("transfer requires exactly 2 scenarios: <train> <test>")
+            run_transfer(
+                args.scenarios[0],
+                args.scenarios[1],
+                filter_config=args.filter_config,
+            )
+            break  # scenarios loop doesn't apply for transfer
 
 
 if __name__ == "__main__":
