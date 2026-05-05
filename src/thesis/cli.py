@@ -25,6 +25,7 @@ from thesis.preprocessing.mining_prep import build_transactions
 from thesis.training.service import train_model_for_schema
 from thesis.encoders.service import encode_transactions_for_schema
 from thesis.features.service import build_persist_and_register_symbolic_schema
+from thesis.features.manifest import initialize_feature_manifest
 
 """
 Entry point to the system
@@ -37,6 +38,28 @@ app = typer.Typer(help="Thesis system CLI")
 def init() -> None:
     ensure_artifact_dirs()
     typer.echo("Artifact directories created.")
+
+
+@app.command("init-scenario")
+def init_scenario(
+    scenario: str = typer.Option(..., "--scenario", "-s", help="Scenario name."),
+    overwrite: bool = typer.Option(
+        False, "--overwrite", help="Overwrite existing manifest."
+    ),
+) -> None:
+    """
+    Initialise the feature schema manifest for a scenario.
+
+    Creates artifacts/features/<scenario>/manifest.json with the base and
+    base+dynamic composite schemas. Run this once per scenario before
+    encoding transactions or training a model.
+    """
+    try:
+        path = initialize_feature_manifest(scenario_name=scenario, overwrite=overwrite)
+        typer.echo(f"Feature manifest created at: {path}")
+    except FileExistsError as e:
+        typer.echo(str(e))
+        raise typer.Exit(code=1)
 
 
 @app.command()

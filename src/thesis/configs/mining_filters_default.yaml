@@ -1,0 +1,21 @@
+# Minimal post-mining filter.
+# Removes only the most obvious noise: singletons and near-zero-occurrence patterns.
+# Use this for initial exploration or when you want to inspect the full result space.
+
+itemsets:
+  min_k: 2                    # drop singleton itemsets (single alert types)
+  max_k: null                 # no upper bound
+  min_support_count: 10       # must appear in at least 10 transactions
+  min_abs_support_diff: 0.0   # no discriminativeness requirement
+  min_confidence_attack: 0.0
+  min_confidence_benign: 0.0
+  remove_subsumed: false      # keep all sizes for inspection
+
+item_sequences:
+  min_k: 2                    # allow length-2 sequences
+  min_support_count: 10
+  min_abs_support_diff: 0.0
+  min_confidence_attack: 0.0
+  min_confidence_benign: 0.0
+  min_lift: null              # no novelty filter
+  remove_subsumed: false

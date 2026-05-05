@@ -1,0 +1,23 @@
+# Attack-focused filter.
+# Keeps patterns where the majority of occurrences are in attack transactions.
+# confidence_attack = support_attack / (support_attack + support_benign),
+# so 0.65 means the pattern appears in attack traffic at least 65% of the time.
+# Use this when you want features that are strong positive indicators of attack.
+
+itemsets:
+  min_k: 2
+  max_k: null
+  min_support_count: 20
+  min_abs_support_diff: 0.05  # some separation required, confidence does the heavy lifting
+  min_confidence_attack: 0.65
+  min_confidence_benign: 0.0
+  remove_subsumed: true
+
+item_sequences:
+  min_k: 3
+  min_support_count: 20
+  min_abs_support_diff: 0.05
+  min_confidence_attack: 0.65
+  min_confidence_benign: 0.0
+  min_lift: null
+  remove_subsumed: true
