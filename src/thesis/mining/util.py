@@ -254,6 +254,95 @@ def save_filtered_views(
     features.to_csv(output_dir / "feature_itemsets.csv", index=False)
 
 
+def remove_subset_subsumed(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Remove itemsets that are a proper subset of a larger itemset in df.
+
+    If {A, B} and {A, B, C} both appear, {A, B} is dropped because {A, B, C}
+    captures strictly more information. {A, B} is only kept when no superset
+    of it survives the preceding quality filters.
+    """
+    if df.empty:
+        return df.copy()
+
+    itemsets = [frozenset(s) for s in df["itemset"].tolist()]
+    subsumed: set[int] = set()
+    for i, s in enumerate(itemsets):
+        for t in itemsets:
+            if s < t:
+                subsumed.add(i)
+                break
+
+    return df[~df.index.isin(subsumed)].reset_index(drop=True)
+
+
+def filter_mined_itemsets(
+    df: pd.DataFrame,
+    *,
+    min_k: int = 1,
+    max_k: int | None = None,
+    min_support_count: int = 10,
+    min_abs_support_diff: float = 0.0,
+    min_confidence_attack: float = 0.0,
+    min_confidence_benign: float = 0.0,
+    remove_subsumed: bool = True,
+) -> pd.DataFrame:
+    """
+    Apply quality filters to a mined itemsets DataFrame.
+
+    Applied in order:
+      1. Size bounds    — min_k <= k <= max_k
+      2. Occurrence     — support_count >= min_support_count
+      3. Discriminative — |support_diff| >= min_abs_support_diff,
+                          confidence_attack >= min_confidence_attack,
+                          confidence_benign >= min_confidence_benign
+      4. Non-redundancy — drop itemsets that are a proper subset of a larger
+                          itemset that already passed filters 1-3
+
+    Parameters
+    ----------
+    df : enriched mined itemsets DataFrame (after add_cross_label_supports
+         and add_confidence_scores).
+    min_k : minimum itemset size.
+    max_k : maximum itemset size (None = no limit).
+    min_support_count : minimum absolute occurrence count.
+    min_abs_support_diff : minimum |support_target - support_other|.
+    min_confidence_attack : minimum confidence_attack.
+    min_confidence_benign : minimum confidence_benign.
+    remove_subsumed : if True, remove proper-subset duplicates after filtering.
+    """
+    if df.empty:
+        return df.copy()
+
+    out = df.copy()
+    mask = pd.Series(True, index=out.index)
+
+    # 1. Size bounds
+    mask &= out["k"] >= min_k
+    if max_k is not None:
+        mask &= out["k"] <= max_k
+
+    # 2. Occurrence
+    mask &= out["support_count"] >= min_support_count
+
+    # 3. Discriminativeness
+    if "support_diff" in out.columns:
+        mask &= out["support_diff"].abs() >= min_abs_support_diff
+    if min_confidence_attack > 0.0 and "confidence_attack" in out.columns:
+        mask &= out["confidence_attack"] >= min_confidence_attack
+    if min_confidence_benign > 0.0 and "confidence_benign" in out.columns:
+        mask &= out["confidence_benign"] >= min_confidence_benign
+
+    out = out.loc[mask].reset_index(drop=True)
+
+    # 4. Non-redundancy — applied last so smaller itemsets survive when their
+    #    supersets failed the quality filters above.
+    if remove_subsumed:
+        out = remove_subset_subsumed(out)
+
+    return out
+
+
 # ---------------------------------------------------------------------
 # Sequence mining utilities
 # ---------------------------------------------------------------------
@@ -627,3 +716,165 @@ def save_filtered_sequence_views(
         min_confidence=0.7,
     )
     features.to_csv(output_dir / "feature_sequences.csv", index=False)
+
+
+# -----------------------------------------------------------------
+# Advanced sequence quality filtering
+# -----------------------------------------------------------------
+
+
+def _compute_item_supports(df: pd.DataFrame, support_col: str) -> dict[str, float]:
+    """Build {item: support} from k=1 singleton rows in df."""
+    k1 = df[df["k"] == 1]
+    result: dict[str, float] = {}
+    for _, row in k1.iterrows():
+        seq = row["sequence"]
+        step = seq[0]
+        if isinstance(step, frozenset):
+            if len(step) == 1:
+                result[next(iter(step))] = row[support_col]
+        elif isinstance(step, str):
+            result[step] = row[support_col]
+    return result
+
+
+def add_lift_scores(
+    df: pd.DataFrame,
+    support_col: str = "support",
+) -> pd.DataFrame:
+    """
+    Add a lift column: observed_support / product(k=1 item supports).
+
+    lift > 1 means the sequence co-occurs more than expected by independence.
+    Rows where any item has no k=1 entry (e.g., filtered out as infrequent)
+    receive NaN — they will fail a min_lift filter if one is applied.
+    Works for both item sequences (tuple[str]) and itemset sequences
+    (tuple[frozenset[str]]): items in each step are flattened for the product.
+    """
+    if df.empty:
+        return df.copy()
+
+    item_supports = _compute_item_supports(df, support_col)
+
+    def _lift(row) -> float:
+        seq = row["sequence"]
+        if not seq:
+            return float("nan")
+        items = (
+            [item for step in seq for item in step]
+            if isinstance(seq[0], frozenset)
+            else list(seq)
+        )
+        expected = 1.0
+        for item in items:
+            p = item_supports.get(item)
+            if p is None or p <= 0.0:
+                return float("nan")
+            expected *= p
+        return row[support_col] / expected
+
+    out = df.copy()
+    out["lift"] = out.apply(_lift, axis=1)
+    return out
+
+
+def remove_prefix_subsumed(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Remove sequences that are a proper prefix of a longer sequence in df.
+
+    If A->B and A->B->C both appear, A->B is dropped because A->B->C
+    captures strictly more information. A->B is only kept when no extension
+    of it survives the preceding quality filters.
+    """
+    if df.empty:
+        return df.copy()
+
+    all_seqs: set = set(df["sequence"].tolist())
+    subsumed: set = set()
+    for seq in all_seqs:
+        for length in range(1, len(seq)):
+            prefix = seq[:length]
+            if prefix in all_seqs:
+                subsumed.add(prefix)
+
+    return df[~df["sequence"].isin(subsumed)].reset_index(drop=True)
+
+
+def filter_mined_sequences(
+    df: pd.DataFrame,
+    *,
+    min_k: int = 3,
+    min_support_count: int = 10,
+    min_abs_support_diff: float = 0.0,
+    min_confidence_attack: float = 0.0,
+    min_confidence_benign: float = 0.0,
+    min_lift: float | None = None,
+    remove_subsumed: bool = True,
+    support_col: str = "support",
+) -> pd.DataFrame:
+    """
+    Apply quality filters to a mined sequences DataFrame.
+
+    Applied in order:
+      1. Length         — k >= min_k  (k=1 rarely informative, k=2 weak signal)
+      2. Occurrence     — support_count >= min_support_count
+      3. Discriminative — |support_diff| >= min_abs_support_diff,
+                          confidence_attack >= min_confidence_attack,
+                          confidence_benign >= min_confidence_benign
+      4. Novelty        — lift >= min_lift  (skipped when min_lift is None)
+                          lift = support / prod(k=1 item supports); items
+                          below min_support have no k=1 entry and yield NaN
+      5. Non-redundancy — drop sequences that are a proper prefix of another
+                          sequence that already passed filters 1-4
+
+    Parameters
+    ----------
+    df : enriched mined sequences DataFrame (after add_cross_label_*
+         and add_confidence_scores).
+    min_k : minimum number of steps.
+    min_support_count : minimum absolute occurrence count in the target group.
+    min_abs_support_diff : minimum |support_target - support_other|.
+    min_confidence_attack : minimum confidence_attack.
+    min_confidence_benign : minimum confidence_benign.
+    min_lift : if given, require lift >= min_lift.
+    remove_subsumed : if True, remove proper-prefix duplicates after filtering.
+    support_col : support column used for lift computation.
+    """
+    if df.empty:
+        return df.copy()
+
+    out = df.copy()
+
+    # Lift must be computed before applying the k filter so k=1 rows are
+    # still present for the per-item support lookup.
+    if min_lift is not None:
+        out = add_lift_scores(out, support_col=support_col)
+
+    mask = pd.Series(True, index=out.index)
+
+    # 1. Length
+    mask &= out["k"] >= min_k
+
+    # 2. Occurrence
+    mask &= out["support_count"] >= min_support_count
+
+    # 3. Discriminativeness
+    if "support_diff" in out.columns:
+        mask &= out["support_diff"].abs() >= min_abs_support_diff
+    if min_confidence_attack > 0.0 and "confidence_attack" in out.columns:
+        mask &= out["confidence_attack"] >= min_confidence_attack
+    if min_confidence_benign > 0.0 and "confidence_benign" in out.columns:
+        mask &= out["confidence_benign"] >= min_confidence_benign
+
+    # 4. Novelty
+    if min_lift is not None and "lift" in out.columns:
+        mask &= out["lift"].fillna(0.0) >= min_lift
+
+    out = out.loc[mask].reset_index(drop=True)
+
+    # 5. Non-redundancy — applied last so short sequences survive when their
+    #    extensions failed the quality filters above.
+    if remove_subsumed:
+        out = remove_prefix_subsumed(out)
+
+    return out

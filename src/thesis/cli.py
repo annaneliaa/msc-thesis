@@ -7,11 +7,12 @@ import os
 
 from thesis.schemas.dataframe_schemas import SCHEMAS
 from thesis.features.schema_registry import FEATURE_SCHEMAS
-from thesis.config import load_settings
+from thesis.config import load_settings, load_mining_filter_config
 from thesis.mining.itemset_mining_job import run_transaction_eclat_job
 from thesis.mining.sequence_mining_job import (
     run_transaction_prefixspan_job,
 )
+from thesis.mining.util import filter_mined_itemsets, filter_mined_sequences
 from thesis.utils.runs import create_run_dir
 from thesis.paths import ensure_artifact_dirs
 from thesis.schemas.validation import validate_dataframe
@@ -415,13 +416,22 @@ def mine_transactions(
         0.05,
         help="Minimum support threshold.",
     ),
-    max_len: int = typer.Option(
+    max_itemset_size: int = typer.Option(
         3,
         help="Maximum itemset size.",
+    ),
+    max_seq_len: int = typer.Option(
+        5,
+        help="Maximum sequence length.",
     ),
     target_label: str = typer.Option(
         "benign",
         help="Label to mine from.",
+    ),
+    filter_config: Path | None = typer.Option(
+        None,
+        "--filter-config",
+        help="Path to a YAML filter config file. If omitted, no post-mining filters are applied.",
     ),
 ) -> None:
     """
@@ -430,6 +440,15 @@ def mine_transactions(
     transactions_path = Path(
         f"artifacts/cache/{scenario}/transactions/transactions_raw.json"
     )
+
+    mining_filters = None
+    if filter_config is not None:
+        if not filter_config.exists():
+            typer.echo(f"Filter config not found: {filter_config}")
+            raise typer.Exit(code=1)
+        mining_filters = load_mining_filter_config(filter_config)
+        typer.echo(f"Loaded filter config from {filter_config}.")
+
     try:
         typer.echo(f"Loading transactions from {transactions_path}...")
         tx_path = Path(transactions_path)
@@ -440,7 +459,7 @@ def mine_transactions(
             scenario_name=scenario,
             run_name=run_name,
             min_support=min_support,
-            max_len=max_len,
+            max_len=max_itemset_size,
             target_label=target_label,
             run_dir=run_dir,
         )
@@ -457,7 +476,7 @@ def mine_transactions(
             scenario_name=scenario,
             run_name=run_name,
             min_support=min_support,
-            max_len=max_len,
+            max_len=max_seq_len,
             target_label=target_label,
             run_dir=run_dir,
         )
@@ -465,34 +484,49 @@ def mine_transactions(
             f"Item sequence mining complete. Artifacts saved to: {item_seq_result.run_dir}"
         )
 
-        # typer.echo("Running PrefixSpan itemset sequence mining...")
-        # itemset_seq_result = run_transaction_itemset_prefixspan_job(
-        #     transactions_path=tx_path,
-        #     scenario_name=scenario,
-        #     run_name=run_name,
-        #     min_support=min_support,
-        #     max_len=max_len,
-        #     target_label=target_label,
-        #     run_dir=run_dir,
-        # )
-        # typer.echo(
-        #     f"Itemset sequence mining complete. Artifacts saved to: {itemset_seq_result.run_dir}"
-        # )
-
     except Exception as e:
         typer.echo(f"Sequence mining failed: {e}")
         raise typer.Exit(code=1)
 
     try:
-        # Combine features from all three mining approaches
+        # Combine features from all mining approaches
         typer.echo("Building combined feature schema from all mining results...")
 
-        # Prepare ECLAT itemsets
+        # Apply filters if a config was supplied
         eclat_df = eclat_result.mined_df.copy()
+        item_seq_df = item_seq_result.mined_df.copy()
+
+        if mining_filters is not None:
+            f = mining_filters.itemsets
+            eclat_df = filter_mined_itemsets(
+                eclat_df,
+                min_k=f.min_k,
+                max_k=f.max_k,
+                min_support_count=f.min_support_count,
+                min_abs_support_diff=f.min_abs_support_diff,
+                min_confidence_attack=f.min_confidence_attack,
+                min_confidence_benign=f.min_confidence_benign,
+                remove_subsumed=f.remove_subsumed,
+            )
+            typer.echo(f"Itemsets after filtering: {len(eclat_df)}")
+
+            f = mining_filters.item_sequences
+            item_seq_df = filter_mined_sequences(
+                item_seq_df,
+                min_k=f.min_k,
+                min_support_count=f.min_support_count,
+                min_abs_support_diff=f.min_abs_support_diff,
+                min_confidence_attack=f.min_confidence_attack,
+                min_confidence_benign=f.min_confidence_benign,
+                min_lift=f.min_lift,
+                remove_subsumed=f.remove_subsumed,
+            )
+            typer.echo(f"Item sequences after filtering: {len(item_seq_df)}")
+
+        # Prepare ECLAT itemsets
         eclat_df["mining_type"] = "itemset"
 
         # Prepare item sequences (rename sequence → itemset)
-        item_seq_df = item_seq_result.mined_df.copy()
         item_seq_df = item_seq_df.rename(columns={"sequence": "itemset"})
         item_seq_df["mining_type"] = "item_sequence"
 

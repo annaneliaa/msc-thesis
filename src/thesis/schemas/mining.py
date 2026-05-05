@@ -5,6 +5,33 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import pandas as pd
 
+
+class ItemsetFilterConfig(BaseModel):
+    min_k: int = 1
+    max_k: int | None = None
+    min_support_count: int = 10
+    min_abs_support_diff: float = 0.0
+    min_confidence_attack: float = 0.0
+    min_confidence_benign: float = 0.0
+    remove_subsumed: bool = True
+
+
+class SequenceFilterConfig(BaseModel):
+    min_k: int = 3
+    min_support_count: int = 10
+    min_abs_support_diff: float = 0.0
+    min_confidence_attack: float = 0.0
+    min_confidence_benign: float = 0.0
+    min_lift: float | None = None
+    remove_subsumed: bool = True
+
+
+class MiningFilterConfig(BaseModel):
+    itemsets: ItemsetFilterConfig = ItemsetFilterConfig()
+    item_sequences: SequenceFilterConfig = SequenceFilterConfig()
+    itemset_sequences: SequenceFilterConfig = SequenceFilterConfig()
+
+
 # Pydantic object models used in mining module (API payloads and metadata objects
 
 

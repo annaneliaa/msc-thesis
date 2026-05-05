@@ -4,6 +4,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from thesis.schemas.mining import MiningFilterConfig
 
 from thesis.paths import CONFIG_DIR
 
@@ -49,3 +50,8 @@ def load_yaml_config(path: Path) -> dict[str, Any]:
 def load_settings(config_name: str = "base.yaml") -> Settings:
     cfg = load_yaml_config(CONFIG_DIR / config_name)
     return Settings(**cfg)
+
+
+def load_mining_filter_config(path: Path) -> "MiningFilterConfig":
+    data = load_yaml_config(path)
+    return MiningFilterConfig(**data)
