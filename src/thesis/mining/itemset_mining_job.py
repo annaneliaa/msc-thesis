@@ -22,11 +22,13 @@ from thesis.utils.runs import (
 )
 
 from thesis.mining.eclat_mining import run_eclat
+from thesis.mining.or_mining import mine_or_disjunctions
 from thesis.mining.util import (
     add_cross_label_supports,
     add_confidence_scores,
     sort_itemsets_for_class,
     save_filtered_views,
+    select_top_itemsets_per_class,
 )
 from thesis.mining.load_mining_transactions import load_and_prepare_mining_transactions
 
@@ -149,6 +151,26 @@ def run_transaction_eclat_job(
         print("Generating filtered views for top itemsets...")
         save_filtered_views(mined_df, run_dir)
 
+        print("Mining OR disjunctions from top feature itemsets...")
+        feature_df = select_top_itemsets_per_class(
+            mined_df,
+            top_n_benign=100,
+            top_n_attack=100,
+            min_total_count=20,
+            min_abs_support_diff=0.01,
+            min_confidence=0.7,
+        )
+        or_df = mine_or_disjunctions(
+            base_df=feature_df,
+            target_transactions=target_baskets,
+            other_transactions=other_baskets,
+            target_label=target_label,
+            other_label=other_label,
+        )
+        or_df["mining_type"] = "or_itemset"
+        save_dataframe_artifact(or_df, run_dir, "or_feature_itemsets")
+        print(f"  Found {len(or_df)} OR patterns.")
+
         print(f"Mining completed. Saved filtered itemset views to {run_dir}.")
 
         print("Generating summary statistics and metadata...")
@@ -241,4 +263,5 @@ def run_transaction_eclat_job(
             mined_df=mined_df,
             scenario_name=scenario_name,
             target_label=target_label,
+            or_df=or_df if not or_df.empty else None,
         )

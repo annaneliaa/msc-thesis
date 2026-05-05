@@ -38,6 +38,13 @@ def _make_feature_name(itemset: tuple[str, ...], prefix: str = "sym") -> str:
     return f"{prefix}__{'__'.join(parts)}"
 
 
+def _make_or_feature_name(
+    clauses: tuple[tuple[str, ...], ...], prefix: str = "or"
+) -> str:
+    clause_parts = ["_".join(_sanitize_token(x) for x in c) for c in clauses]
+    return f"{prefix}__{'__OR__'.join(clause_parts)}"
+
+
 def build_symbolic_feature_schema(
     df: pd.DataFrame,
     source_label: str,
@@ -53,20 +60,118 @@ def build_symbolic_feature_schema(
         df = df.head(max_features)
 
     features: list[SymbolicFeature] = []
+    seen_names: set[str] = set()
 
     for _, row in df.iterrows():
-        itemset = _parse_itemset(row["itemset"])
+        is_or = (
+            "clauses" in row.index
+            and row["clauses"] is not None
+            and not (isinstance(row["clauses"], float))  # NaN from concat
+        )
+
+        if is_or:
+            clauses: tuple[tuple[str, ...], ...] = row["clauses"]
+            feature_name = _make_or_feature_name(clauses)
+            if feature_name in seen_names:
+                continue
+            seen_names.add(feature_name)
+            features.append(
+                SymbolicFeature(
+                    feature_name=feature_name,
+                    itemset=(),
+                    source_label=source_label,
+                    clauses=clauses,
+                    confidence_attack=(
+                        float(row["confidence_attack"])
+                        if "confidence_attack" in row
+                        and pd.notna(row["confidence_attack"])
+                        else None
+                    ),
+                    confidence_benign=(
+                        float(row["confidence_benign"])
+                        if "confidence_benign" in row
+                        and pd.notna(row["confidence_benign"])
+                        else None
+                    ),
+                    mining_type="or_itemset",
+                    utility_score=1.0,
+                )
+            )
+        else:
+            itemset = _parse_itemset(row["itemset"])
+            feature_name = _make_feature_name(itemset)
+            if feature_name in seen_names:
+                continue
+            seen_names.add(feature_name)
+            features.append(
+                SymbolicFeature(
+                    feature_name=feature_name,
+                    itemset=itemset,
+                    source_label=source_label,
+                    support=(
+                        float(row["support"])
+                        if "support" in row and pd.notna(row["support"])
+                        else None
+                    ),
+                    confidence_attack=(
+                        float(row["confidence_attack"])
+                        if "confidence_attack" in row
+                        and pd.notna(row["confidence_attack"])
+                        else None
+                    ),
+                    confidence_benign=(
+                        float(row["confidence_benign"])
+                        if "confidence_benign" in row
+                        and pd.notna(row["confidence_benign"])
+                        else None
+                    ),
+                    mining_type=(
+                        str(row["mining_type"])
+                        if "mining_type" in row and pd.notna(row["mining_type"])
+                        else None
+                    ),
+                    utility_score=1.0,
+                )
+            )
+
+    return SymbolicFeatureSchema(
+        schema_name=schema_name,
+        schema_version=schema_version,
+        features=features,
+    )
+
+
+def build_or_feature_schema(
+    df: pd.DataFrame,
+    source_label: str,
+    schema_name: str,
+    schema_version: str,
+    max_features: int | None = None,
+) -> SymbolicFeatureSchema:
+    """
+    Convert OR-pattern DataFrame (output of mine_or_disjunctions) into a schema.
+    Expects a 'clauses' column of tuple[tuple[str, ...], ...].
+    """
+    if max_features is not None:
+        df = df.head(max_features)
+
+    features: list[SymbolicFeature] = []
+    seen_names: set[str] = set()
+
+    for _, row in df.iterrows():
+        clauses: tuple[tuple[str, ...], ...] = row["clauses"]
+        feature_name = _make_or_feature_name(clauses)
+
+        if feature_name in seen_names:
+            continue
+        seen_names.add(feature_name)
 
         features.append(
             SymbolicFeature(
-                feature_name=_make_feature_name(itemset),
-                itemset=itemset,
+                feature_name=feature_name,
+                itemset=(),
                 source_label=source_label,
-                support=(
-                    float(row["support"])
-                    if "support" in row and pd.notna(row["support"])
-                    else None
-                ),
+                clauses=clauses,
                 confidence_attack=(
                     float(row["confidence_attack"])
                     if "confidence_attack" in row and pd.notna(row["confidence_attack"])
@@ -77,11 +182,7 @@ def build_symbolic_feature_schema(
                     if "confidence_benign" in row and pd.notna(row["confidence_benign"])
                     else None
                 ),
-                mining_type=(
-                    str(row["mining_type"])
-                    if "mining_type" in row and pd.notna(row["mining_type"])
-                    else None
-                ),
+                mining_type="or_itemset",
                 utility_score=1.0,
             )
         )

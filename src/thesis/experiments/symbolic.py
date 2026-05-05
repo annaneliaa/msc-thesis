@@ -174,14 +174,28 @@ def _mine_and_register_symbolic_schema(
         "confidence_attack",
         "confidence_benign",
     ]
+    or_cols_to_keep = [
+        "clauses",
+        "mining_type",
+        "confidence_attack",
+        "confidence_benign",
+    ]
     eclat_df = eclat_df[[c for c in cols_to_keep if c in eclat_df.columns]]
     item_seq_df = item_seq_df[[c for c in cols_to_keep if c in item_seq_df.columns]]
 
-    combined_df = pd.concat([eclat_df, item_seq_df], axis=0, ignore_index=True)
+    dfs_to_concat = [eclat_df, item_seq_df]
+    if eclat_result.or_df is not None and not eclat_result.or_df.empty:
+        or_df = eclat_result.or_df[
+            [c for c in or_cols_to_keep if c in eclat_result.or_df.columns]
+        ]
+        dfs_to_concat.append(or_df)
+
+    combined_df = pd.concat(dfs_to_concat, axis=0, ignore_index=True)
     combined_df.to_csv(os.path.join(run_dir, "combined_mining_df.csv"), index=False)
+    n_or = len(eclat_result.or_df) if eclat_result.or_df is not None else 0
     print(
         f"  Combined {len(eclat_df)} itemsets + {len(item_seq_df)} sequences "
-        f"= {len(combined_df)} candidate features"
+        f"+ {n_or} OR patterns = {len(combined_df)} candidate features"
     )
 
     schema_path = build_persist_and_register_symbolic_schema(

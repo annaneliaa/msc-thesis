@@ -90,3 +90,4 @@ class MiningJobResult:
     mined_df: pd.DataFrame
     scenario_name: str
     target_label: str
+    or_df: pd.DataFrame | None = None

@@ -62,4 +62,7 @@ def encode_transactions_for_schema(
         axis=1,
     )
 
+    # Remove any duplicate columns that may have slipped through
+    encoded = encoded.loc[:, ~encoded.columns.duplicated(keep="first")]
+
     return encoded
