@@ -1,5 +1,24 @@
-import pandas as pd
+import os
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
+
+import pandas as pd
+
+# Worker-process state; populated once per child process by _init_parallel_workers
+_worker_seqs: list | None = None
+
+
+def _init_parallel_workers(seqs):
+    global _worker_seqs
+    _worker_seqs = seqs
+
+
+def _itemset_pattern_support_worker(pattern):
+    return itemset_sequence_support_in_group(_worker_seqs, pattern)
+
+
+def _sequence_pattern_support_worker(pattern):
+    return sequence_support_in_group(_worker_seqs, pattern)
 
 
 def support_in_group(
@@ -295,20 +314,28 @@ def add_cross_label_sequence_supports(
         return mined_df.copy()
 
     out = mined_df.copy()
+    patterns = out["sequence"].tolist()
+    n_target = len(target_sequences)
 
-    target_counts = []
-    target_supports = []
-    other_counts = []
-    other_supports = []
+    # support_count from PrefixSpan is already the count in target_sequences
+    target_counts = out["support_count"].tolist()
+    target_supports = [c / n_target for c in target_counts]
 
-    for sequence in out["sequence"]:
-        c_t, s_t = sequence_support_in_group(target_sequences, sequence)
-        c_o, s_o = sequence_support_in_group(other_sequences, sequence)
+    n_workers = min(os.cpu_count() or 1, max(1, len(patterns)))
+    chunksize = max(1, len(patterns) // (n_workers * 4))
+    with ProcessPoolExecutor(
+        max_workers=n_workers,
+        initializer=_init_parallel_workers,
+        initargs=(other_sequences,),
+    ) as executor:
+        other_results = list(
+            executor.map(
+                _sequence_pattern_support_worker, patterns, chunksize=chunksize
+            )
+        )
 
-        target_counts.append(c_t)
-        target_supports.append(s_t)
-        other_counts.append(c_o)
-        other_supports.append(s_o)
+    other_counts = [r[0] for r in other_results]
+    other_supports = [r[1] for r in other_results]
 
     out[f"count_{target_label}"] = target_counts
     out[f"support_{target_label}"] = target_supports
@@ -486,16 +513,26 @@ def add_cross_label_itemset_sequence_supports(
         return mined_df.copy()
 
     out = mined_df.copy()
+    patterns = out["sequence"].tolist()
+    n_target = len(target_sequences)
 
-    target_counts, target_supports, other_counts, other_supports = [], [], [], []
+    # support_count from PrefixSpan is already the count in target_sequences
+    target_counts = out["support_count"].tolist()
+    target_supports = [c / n_target for c in target_counts]
 
-    for pattern in out["sequence"]:
-        c_t, s_t = itemset_sequence_support_in_group(target_sequences, pattern)
-        c_o, s_o = itemset_sequence_support_in_group(other_sequences, pattern)
-        target_counts.append(c_t)
-        target_supports.append(s_t)
-        other_counts.append(c_o)
-        other_supports.append(s_o)
+    n_workers = min(os.cpu_count() or 1, max(1, len(patterns)))
+    chunksize = max(1, len(patterns) // (n_workers * 4))
+    with ProcessPoolExecutor(
+        max_workers=n_workers,
+        initializer=_init_parallel_workers,
+        initargs=(other_sequences,),
+    ) as executor:
+        other_results = list(
+            executor.map(_itemset_pattern_support_worker, patterns, chunksize=chunksize)
+        )
+
+    other_counts = [r[0] for r in other_results]
+    other_supports = [r[1] for r in other_results]
 
     out[f"count_{target_label}"] = target_counts
     out[f"support_{target_label}"] = target_supports

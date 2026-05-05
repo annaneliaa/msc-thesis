@@ -20,6 +20,7 @@ class SymbolicFeature:
     support: float | None = None
     confidence_attack: float | None = None
     confidence_benign: float | None = None
+    mining_type: str | None = None  # "itemset", "item_sequence", or "itemset_sequence"
 
 
 @dataclass(frozen=True, slots=True)

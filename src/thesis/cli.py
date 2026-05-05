@@ -3,6 +3,7 @@ import pandas as pd
 from pathlib import Path
 import json
 import csv
+import os
 
 from thesis.schemas.dataframe_schemas import SCHEMAS
 from thesis.features.schema_registry import FEATURE_SCHEMAS
@@ -10,7 +11,6 @@ from thesis.config import load_settings
 from thesis.mining.itemset_mining_job import run_transaction_eclat_job
 from thesis.mining.sequence_mining_job import (
     run_transaction_prefixspan_job,
-    run_transaction_itemset_prefixspan_job,
 )
 from thesis.utils.runs import create_run_dir
 from thesis.paths import ensure_artifact_dirs
@@ -465,27 +465,87 @@ def mine_transactions(
             f"Item sequence mining complete. Artifacts saved to: {item_seq_result.run_dir}"
         )
 
-        typer.echo("Running PrefixSpan itemset sequence mining...")
-        itemset_seq_result = run_transaction_itemset_prefixspan_job(
-            transactions_path=tx_path,
-            scenario_name=scenario,
-            run_name=run_name,
-            min_support=min_support,
-            max_len=max_len,
-            target_label=target_label,
-            run_dir=run_dir,
-        )
-        typer.echo(
-            f"Itemset sequence mining complete. Artifacts saved to: {itemset_seq_result.run_dir}"
-        )
+        # typer.echo("Running PrefixSpan itemset sequence mining...")
+        # itemset_seq_result = run_transaction_itemset_prefixspan_job(
+        #     transactions_path=tx_path,
+        #     scenario_name=scenario,
+        #     run_name=run_name,
+        #     min_support=min_support,
+        #     max_len=max_len,
+        #     target_label=target_label,
+        #     run_dir=run_dir,
+        # )
+        # typer.echo(
+        #     f"Itemset sequence mining complete. Artifacts saved to: {itemset_seq_result.run_dir}"
+        # )
 
     except Exception as e:
         typer.echo(f"Sequence mining failed: {e}")
         raise typer.Exit(code=1)
 
     try:
+        # Combine features from all three mining approaches
+        typer.echo("Building combined feature schema from all mining results...")
+
+        # Prepare ECLAT itemsets
+        eclat_df = eclat_result.mined_df.copy()
+        eclat_df["mining_type"] = "itemset"
+
+        # Prepare item sequences (rename sequence → itemset)
+        item_seq_df = item_seq_result.mined_df.copy()
+        item_seq_df = item_seq_df.rename(columns={"sequence": "itemset"})
+        item_seq_df["mining_type"] = "item_sequence"
+
+        # Prepare itemset sequences (rename sequence → itemset)
+        # itemset_seq_df = itemset_seq_result.mined_df.copy()
+        # itemset_seq_df = itemset_seq_df.rename(columns={"sequence": "itemset"})
+        # itemset_seq_df["mining_type"] = "itemset_sequence"
+
+        # Select relevant columns for feature schema
+        cols_to_keep = [
+            "itemset",
+            "mining_type",
+            "support",
+            "confidence_attack",
+            "confidence_benign",
+        ]
+        eclat_df = eclat_df[[c for c in cols_to_keep if c in eclat_df.columns]]
+        item_seq_df = item_seq_df[[c for c in cols_to_keep if c in item_seq_df.columns]]
+        # itemset_seq_df = itemset_seq_df[
+        #     [c for c in cols_to_keep if c in itemset_seq_df.columns]
+        # ]
+
+        # Combine all features
+        combined_df = pd.concat(
+            [eclat_df, item_seq_df],
+            axis=0,
+            ignore_index=True,
+        )
+        combined_df.to_csv(os.path.join(run_dir, "combined_mining_df.csv"), index=False)
+
+        # Sort by confidence in target label (descending), then by support
+        sort_cols = []
+        if "confidence_attack" in combined_df.columns:
+            sort_cols.append("confidence_attack")
+        elif "confidence_benign" in combined_df.columns:
+            sort_cols.append("confidence_benign")
+        if "support" in combined_df.columns:
+            sort_cols.append("support")
+
+        if sort_cols:
+            combined_df = combined_df.sort_values(
+                by=sort_cols,
+                ascending=False,
+                na_position="last",
+            ).reset_index(drop=True)
+
+        typer.echo(
+            f"Combined {len(eclat_df)} itemsets, {len(item_seq_df)} item sequences, "
+            f"into {len(combined_df)} features."
+        )
+
         schema_path = build_persist_and_register_symbolic_schema(
-            df=eclat_result.mined_df,
+            df=combined_df,
             scenario_name=eclat_result.scenario_name,
             source_label=eclat_result.target_label,
             schema_name="symbolic",

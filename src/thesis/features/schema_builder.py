@@ -77,6 +77,11 @@ def build_symbolic_feature_schema(
                     if "confidence_benign" in row and pd.notna(row["confidence_benign"])
                     else None
                 ),
+                mining_type=(
+                    str(row["mining_type"])
+                    if "mining_type" in row and pd.notna(row["mining_type"])
+                    else None
+                ),
             )
         )
 
