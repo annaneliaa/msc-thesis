@@ -16,12 +16,14 @@ def list_all_models() -> list[str]:
     return [p.name for p in MODELS_DIR.iterdir() if p.is_dir()]
 
 
-def get_model_path(name: str, version: str) -> Path:
-    return MODELS_DIR / name / version
+def get_model_path(scenario: str, name: str, version: str) -> Path:
+    return MODELS_DIR / scenario / name / version
 
 
-def resolve_model_paths(name: str, version: str) -> tuple[Path, Path]:
-    model_dir = get_model_path(name, version)
+def resolve_model_paths(
+    scenario: str, name: str, version: str
+) -> tuple[Path, Path, Path]:
+    model_dir = get_model_path(scenario, name, version)
     model_path = model_dir / MODEL_FILENAME
     metadata_path = model_dir / METADATA_FILENAME
     feature_schema_path = model_dir / FEATURE_SCHEMA_FILENAME

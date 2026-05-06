@@ -80,12 +80,14 @@ class TransferExperimentResult:
 # ---------------------------------------------------------------------------
 
 
-def _model_exists(model_name: str, model_version: str) -> bool:
-    return (MODELS_DIR / model_name / model_version / MODEL_FILENAME).exists()
+def _model_exists(scenario: str, model_name: str, model_version: str) -> bool:
+    return (
+        MODELS_DIR / scenario / model_name / model_version / MODEL_FILENAME
+    ).exists()
 
 
 def _ensure_trained_model(config: TransferExperimentConfig) -> None:
-    if _model_exists(config.model_name, config.model_version):
+    if _model_exists(config.train_scenario, config.model_name, config.model_version):
         print(
             f"  [skip] Model '{config.model_name}' v{config.model_version} already exists."
         )
@@ -162,7 +164,9 @@ def run_transfer_experiment(
 
     # 6. Load model and train schema
     print("[6/8] Loading model and train schema...")
-    model = load_model_for_inference(config.model_name, config.model_version)
+    model = load_model_for_inference(
+        config.train_scenario, config.model_name, config.model_version
+    )
 
     registry = FeatureSchemaRegistry(root_dir=_ROOT / "artifacts" / "features")
     schema = registry.load(

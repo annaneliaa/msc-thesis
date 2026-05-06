@@ -29,9 +29,9 @@ class InferenceResult:
 
 
 def load_model_for_inference(
-    model_name: str, model_version: str
+    scenario: str, model_name: str, model_version: str
 ) -> SklearnTabularModel:
-    return load_model(model_name, model_version)
+    return load_model(scenario, model_name, model_version)
 
 
 def run_inference_on_transactions(

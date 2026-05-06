@@ -3,7 +3,12 @@ import json
 import joblib
 from dataclasses import asdict
 
-from thesis.paths import ensure_artifact_dirs
+from thesis.paths import (
+    MODEL_FILENAME,
+    METADATA_FILENAME,
+    FEATURE_SCHEMA_FILENAME,
+    ensure_artifact_dirs,
+)
 from thesis.schemas.models import ModelArtifact, ModelMetadata
 from thesis.schemas.features import FeatureSchema
 from thesis.registry.models import resolve_model_paths
@@ -18,27 +23,24 @@ def save_model_artifact(
     ensure_artifact_dirs()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    model_path, metadata_path, feature_schema_path = resolve_model_paths(
-        name=metadata.model_name,
-        version=metadata.model_version,
-    )
+    joblib.dump(artifact.model, output_dir / MODEL_FILENAME)
 
-    joblib.dump(artifact.model, model_path)
+    with (output_dir / METADATA_FILENAME).open("w", encoding="utf-8") as f:
+        json.dump(metadata.model_dump(), f, indent=2)
 
-    metadata_payload = metadata.model_dump()
-
-    with metadata_path.open("w", encoding="utf-8") as f:
-        json.dump(metadata_payload, f, indent=2)
-
-    with feature_schema_path.open("w", encoding="utf-8") as f:
+    with (output_dir / FEATURE_SCHEMA_FILENAME).open("w", encoding="utf-8") as f:
         json.dump(asdict(schema), f, indent=2)
 
 
-def load_model_artifact(model_name: str, model_version: str) -> ModelArtifact:
+def load_model_artifact(
+    scenario: str, model_name: str, model_version: str
+) -> ModelArtifact:
     (
         model_path,
         metadata_path,
+        _,
     ) = resolve_model_paths(
+        scenario=scenario,
         name=model_name,
         version=model_version,
     )

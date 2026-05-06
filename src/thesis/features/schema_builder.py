@@ -134,6 +134,14 @@ def build_symbolic_feature_schema(
                 )
             )
 
+    n_input = len(df)
+    n_kept = len(features)
+    n_dropped = n_input - n_kept
+    if n_dropped:
+        print(
+            f"  [schema_builder] Dropped {n_dropped} duplicate feature names ({n_kept}/{n_input} kept)"
+        )
+
     return SymbolicFeatureSchema(
         schema_name=schema_name,
         schema_version=schema_version,

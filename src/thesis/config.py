@@ -24,6 +24,7 @@ class ArtifactConfig(BaseModel):
 
 
 class ModelConfig(BaseModel):
+    scenario: str = "default"
     model_name: str = "dummy-model"
     model_version: str = "0.1.0"
 

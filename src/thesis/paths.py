@@ -16,6 +16,7 @@ FEATURE_DIR = ARTIFACTS_DIR / "features"
 MODEL_FILENAME = "model.joblib"
 METADATA_FILENAME = "metadata.json"
 FEATURE_SCHEMA_FILENAME = "feature_schema.json"
+ABSTRACTION_MAP_PATH = ROOT / "data" / "abstraction_map.json"
 
 
 def ensure_artifact_dirs() -> None:

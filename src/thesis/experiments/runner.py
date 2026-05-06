@@ -43,6 +43,7 @@ from thesis.experiments.transfer import (
     TransferExperimentConfig,
     run_transfer_experiment,
 )
+from thesis.paths import ABSTRACTION_MAP_PATH
 
 
 def run_baseline(scenario: str) -> None:
@@ -60,6 +61,7 @@ def run_symbolic(scenario: str, filter_config: Path | None = None) -> None:
     config = SymbolicExperimentConfig(
         scenario=scenario,
         filter_config=filter_config,
+        abstraction_map_path=ABSTRACTION_MAP_PATH,
     )
     result = run_symbolic_experiment(config)
     print(

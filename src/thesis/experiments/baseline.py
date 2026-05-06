@@ -272,7 +272,9 @@ def run_baseline_experiment(
     print(f"[6/7] Training '{config.model_name}' v{config.model_version}...")
     y = df["tx_label"].map({"benign": 0, "attack": 1})
     X = df.drop(columns=["tx_label"])
-    output_dir = get_model_path(config.model_name, config.model_version)
+    output_dir = get_model_path(
+        config.scenario, config.model_name, config.model_version
+    )
 
     summary = train_model_for_schema(
         X=X,
@@ -286,7 +288,9 @@ def run_baseline_experiment(
 
     # 7. Load full metrics from saved metadata and write results file
     print("[7/7] Saving experiment results...")
-    _, metadata_path, _ = resolve_model_paths(config.model_name, config.model_version)
+    _, metadata_path, _ = resolve_model_paths(
+        config.scenario, config.model_name, config.model_version
+    )
     with metadata_path.open("r", encoding="utf-8") as f:
         full_metrics = json.load(f).get("metrics", {})
 

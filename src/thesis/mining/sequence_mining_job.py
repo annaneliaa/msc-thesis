@@ -22,7 +22,7 @@ from thesis.utils.runs import (
 )
 
 from thesis.mining.prefixspan_mining import run_prefixspan, run_itemset_prefixspan
-from thesis.mining.repeat_encoding import encode_sequence_of_itemsets
+from thesis.mining.repeat_encoding import encode_runs, encode_sequence_of_itemsets
 from thesis.mining.util import (
     add_cross_label_sequence_supports,
     add_cross_label_itemset_sequence_supports,
@@ -121,19 +121,8 @@ def run_transaction_prefixspan_job(
         other_sequences = [list(tx.sorted_items) for tx in other_group]
         all_sequences = [list(tx.sorted_items) for tx in transactions]
 
-        print("Encoding consecutive token repeats...")
-        target_sequences_encoded = [
-            encode_sequence_of_itemsets(seq) for seq in target_sequences
-        ]
-        other_sequences_encoded = [
-            encode_sequence_of_itemsets(seq) for seq in other_sequences
-        ]
-        all_sequences_encoded = [
-            encode_sequence_of_itemsets(seq) for seq in all_sequences
-        ]
-
         mined_df = run_prefixspan(
-            sequences=target_sequences_encoded,
+            sequences=target_sequences,
             min_support=min_support,
             max_len=max_len,
             run_dir=run_dir,
@@ -141,13 +130,33 @@ def run_transaction_prefixspan_job(
 
         mined_df = add_cross_label_sequence_supports(
             mined_df=mined_df,
-            target_sequences=target_sequences_encoded,
-            other_sequences=other_sequences_encoded,
+            target_sequences=target_sequences,
+            other_sequences=other_sequences,
             target_label=target_label,
             other_label=other_label,
         )
 
         mined_df = add_confidence_scores(mined_df)
+
+        # Collapse consecutive same-item runs in each mined pattern into
+        # repeat-encoded tokens (e.g. A, A, B → A__repeat_2, B).
+        # Support counts are already correct; we only rename the patterns.
+        print("Applying item-level repeat encoding to mined patterns...")
+        mined_df["sequence"] = mined_df["sequence"].apply(
+            lambda seq: tuple(encode_runs(list(seq)))
+        )
+        mined_df["sequence_str"] = mined_df["sequence"].apply(lambda x: " -> ".join(x))
+        mined_df["k"] = mined_df["sequence"].apply(len)
+        n_before = len(mined_df)
+        mined_df = (
+            mined_df.sort_values("support_count", ascending=False)
+            .drop_duplicates(subset=["sequence"])
+            .reset_index(drop=True)
+        )
+        if len(mined_df) < n_before:
+            print(
+                f"  Merged {n_before - len(mined_df)} patterns that collapsed to the same encoded form"
+            )
 
         save_dataframe_artifact(mined_df, run_dir, "frequent_sequences")
 
@@ -169,11 +178,11 @@ def run_transaction_prefixspan_job(
         print("Generating summary statistics and metadata...")
 
         unique_items = set()
-        for seq in all_sequences_encoded:
+        for seq in all_sequences:
             for itemset in seq:
                 unique_items.update(itemset)
 
-        sequence_lengths = [len(seq) for seq in all_sequences_encoded]
+        sequence_lengths = [len(seq) for seq in all_sequences]
 
         summary_df = pd.DataFrame(
             [

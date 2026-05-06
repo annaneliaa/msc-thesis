@@ -664,7 +664,7 @@ def train_model_cmd(
         schema_version=schema_version,
     )
 
-    output_dir = get_model_path(model_name, model_version)
+    output_dir = get_model_path(scenario_name, model_name, model_version)
 
     if output_dir.exists():
         raise typer.BadParameter(f"Model version already exists: {output_dir}")

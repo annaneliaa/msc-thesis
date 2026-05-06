@@ -63,6 +63,12 @@ def encode_transactions_for_schema(
     )
 
     # Remove any duplicate columns that may have slipped through
+    n_before = encoded.shape[1]
     encoded = encoded.loc[:, ~encoded.columns.duplicated(keep="first")]
+    n_dropped = n_before - encoded.shape[1]
+    if n_dropped:
+        print(
+            f"  [encoder] Dropped {n_dropped} duplicate columns ({encoded.shape[1]}/{n_before} kept)"
+        )
 
     return encoded

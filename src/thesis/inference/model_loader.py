@@ -5,8 +5,8 @@ from thesis.registry.models import resolve_model_paths
 from thesis.inference.runtime_models import SklearnTabularModel
 
 
-def load_model(name: str, version: str) -> SklearnTabularModel:
-    model_path, metadata_path, _ = resolve_model_paths(name, version)
+def load_model(scenario: str, name: str, version: str) -> SklearnTabularModel:
+    model_path, metadata_path, _ = resolve_model_paths(scenario, name, version)
 
     model = joblib.load(model_path)
 

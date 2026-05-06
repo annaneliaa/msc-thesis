@@ -6,7 +6,9 @@ from thesis.paths import ensure_artifact_dirs
 
 settings = load_settings()
 ensure_artifact_dirs()
-model = load_model(settings)
+model = load_model(
+    settings.model.scenario, settings.model.model_name, settings.model.model_version
+)
 
 app = FastAPI(title=settings.app.name)
 

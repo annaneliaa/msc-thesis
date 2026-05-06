@@ -40,6 +40,11 @@ from thesis.experiments.baseline import (
 from thesis.features.service import build_persist_and_register_symbolic_schema
 from thesis.mining.itemset_mining_job import run_transaction_eclat_job
 from thesis.mining.sequence_mining_job import run_transaction_prefixspan_job
+from thesis.mining.token_abstraction import (
+    abstract_mined_df,
+    abstract_or_clauses_df,
+    load_abstraction_map,
+)
 from thesis.mining.util import filter_mined_itemsets, filter_mined_sequences
 from thesis.paths import CACHE_DIR, ensure_artifact_dirs
 from thesis.schemas.mining import FeatureSelectionConfig
@@ -63,6 +68,8 @@ class SymbolicExperimentConfig:
     target_label: str = "benign"
     filter_config: Path | None = None
     jaccard_threshold: float = 0.98
+    abstraction_map_path: Path | None = None
+    abstraction_level: int = 0  # 0 = mid-level (recommended set up), 1 = coarse
     feature_selection: FeatureSelectionConfig = field(
         default_factory=FeatureSelectionConfig
     )
@@ -104,10 +111,12 @@ def _mine_and_register_symbolic_schema(
     target_label: str,
     filter_config: Path | None,
     jaccard_threshold: float = 0.98,
+    abstraction_map_path: Path | None = None,
+    abstraction_level: int = 0,
 ) -> Path:
     run_dir = create_run_dir(run_name)
 
-    print("  Running Eclat itemset mining...")
+    print("--- Running Eclat itemset mining (AND + AND/OR) --- ")
     eclat_result = run_transaction_eclat_job(
         transactions_path=transactions_path,
         scenario_name=scenario,
@@ -119,7 +128,7 @@ def _mine_and_register_symbolic_schema(
         jaccard_threshold=jaccard_threshold,
     )
 
-    print("  Running PrefixSpan sequence mining...")
+    print("--- Running PrefixSpan sequence mining ---")
     item_seq_result = run_transaction_prefixspan_job(
         transactions_path=transactions_path,
         scenario_name=scenario,
@@ -130,6 +139,7 @@ def _mine_and_register_symbolic_schema(
         run_dir=run_dir,
     )
 
+    print("--- Filtering mining results ---")
     eclat_df = eclat_result.mined_df.copy()
     item_seq_df = item_seq_result.mined_df.copy()
 
@@ -162,14 +172,34 @@ def _mine_and_register_symbolic_schema(
             remove_subsumed=f.remove_subsumed,
         )
         print(
-            f"  After filtering: {len(eclat_df)} itemsets, "
-            f"{len(item_seq_df)} sequences"
+            f"  After filtering: {len(eclat_df)} itemsets, {len(item_seq_df)} sequences"
         )
 
     eclat_df["mining_type"] = "itemset"
     item_seq_df = item_seq_df.rename(columns={"sequence": "itemset"})
     item_seq_df["mining_type"] = "item_sequence"
 
+    if abstraction_map_path is not None:
+        print("--- Applying token abstraction ---")
+        abstraction_map = load_abstraction_map(abstraction_map_path)
+        n_eclat_before, n_seq_before = len(eclat_df), len(item_seq_df)
+        eclat_df = abstract_mined_df(eclat_df, abstraction_map, level=abstraction_level)
+        item_seq_df = abstract_mined_df(
+            item_seq_df, abstraction_map, level=abstraction_level
+        )
+        print(
+            f"  itemsets {n_eclat_before}→{len(eclat_df)}, "
+            f"sequences {n_seq_before}→{len(item_seq_df)} "
+            f"(level={abstraction_level})"
+        )
+        if eclat_result.or_df is not None and not eclat_result.or_df.empty:
+            n_or_before = len(eclat_result.or_df)
+            eclat_result.or_df = abstract_or_clauses_df(
+                eclat_result.or_df, abstraction_map, level=abstraction_level
+            )
+            print(f"  OR patterns {n_or_before}→{len(eclat_result.or_df)}")
+
+    print("--- Constructing combined dataframe from mining results ---")
     cols_to_keep = [
         "itemset",
         "mining_type",
@@ -194,13 +224,16 @@ def _mine_and_register_symbolic_schema(
         dfs_to_concat.append(or_df)
 
     combined_df = pd.concat(dfs_to_concat, axis=0, ignore_index=True)
-    combined_df.to_csv(os.path.join(run_dir, "combined_mining_df.csv"), index=False)
+    combined_df.to_csv(
+        os.path.join(run_dir, "final_combined_mining_df.csv"), index=False
+    )
     n_or = len(eclat_result.or_df) if eclat_result.or_df is not None else 0
     print(
         f"  Combined {len(eclat_df)} itemsets + {len(item_seq_df)} sequences "
         f"+ {n_or} OR patterns = {len(combined_df)} candidate features"
     )
 
+    print("--- Building and saving symbolic schema ---")
     schema_path = build_persist_and_register_symbolic_schema(
         df=combined_df,
         scenario_name=scenario,
@@ -270,6 +303,8 @@ def run_symbolic_experiment(
         target_label=config.target_label,
         filter_config=config.filter_config,
         jaccard_threshold=config.jaccard_threshold,
+        abstraction_map_path=config.abstraction_map_path,
+        abstraction_level=config.abstraction_level,
     )
 
     # 6. Encode under base+symbolic schema
@@ -286,7 +321,9 @@ def run_symbolic_experiment(
     print(f"[7/8] Training '{config.model_name}' v{config.model_version}...")
     y = df["tx_label"].map({"benign": 0, "attack": 1})
     X = df.drop(columns=["tx_label"])
-    output_dir = get_model_path(config.model_name, config.model_version)
+    output_dir = get_model_path(
+        config.scenario, config.model_name, config.model_version
+    )
 
     summary = train_model_for_schema(
         X=X,
@@ -300,7 +337,9 @@ def run_symbolic_experiment(
 
     # 8. Load full metrics and write results file
     print("[8/8] Saving experiment results...")
-    _, metadata_path, _ = resolve_model_paths(config.model_name, config.model_version)
+    _, metadata_path, _ = resolve_model_paths(
+        config.scenario, config.model_name, config.model_version
+    )
     with metadata_path.open("r", encoding="utf-8") as f:
         full_metrics = json.load(f).get("metrics", {})
 
