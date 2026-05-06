@@ -1,6 +1,6 @@
-# MSc Thesis: Hybrid Symbolic-Neural System for Intrusion Detection
+# MSc Thesis: Symbolic Knowledge Mining System for Intrusion Detection
 
-A neural-symbolic (NeSy) system for intrusion detection with focus on reducing false positives (FP). This project combines machine learning models with symbolic reasoning for improved anomaly detection.
+A neural-symbolic (NeSy) system for intrusion detection in SOCs with focus on reducing false positives. This project combines machine learning models with symbolic reasoning for modelling benign behaviour to separate true attacks from false positives.
 
 ## Project Overview
 
