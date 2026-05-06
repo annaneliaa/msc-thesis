@@ -51,7 +51,7 @@ def test_preprocess_alert_batch_cli_runs_full_pipeline(tmp_path, monkeypatch):
     result = runner.invoke(
         app,
         [
-            "preprocess-alert-batch",
+            "process-batch",
             "--scenario",
             SCENARIO,
             "--cache-dir",
@@ -123,7 +123,7 @@ def test_duplicate_alert_ingestion_does_not_duplicate_group_entries(
     result = runner.invoke(
         app,
         [
-            "preprocess-alert-batch",
+            "process-batch",
             "--scenario",
             SCENARIO,
             "--cache-dir",
@@ -185,7 +185,7 @@ def test_empty_alerts_are_not_added_to_cache(tmp_path, monkeypatch):
     result = runner.invoke(
         app,
         [
-            "preprocess-alert-batch",
+            "process-batch",
             "--scenario",
             SCENARIO,
             "--cache-dir",
@@ -235,7 +235,7 @@ def test_alerts_json_to_group_snapshot_selection_full_pipeline(tmp_path, monkeyp
     preprocess_result = runner.invoke(
         app,
         [
-            "preprocess-alert-batch",
+            "process-batch",
             "--scenario",
             SCENARIO,
             "--cache-dir",

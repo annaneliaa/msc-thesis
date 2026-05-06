@@ -21,10 +21,8 @@ def make_tokenized_alert() -> TokenizedAlert:
         tokens={
             "short:W-Sys-Cav",
             "host:mail",
-            "name:wazuh clamav database update",
-            "ip:172.17.131.81",
-            "database",
-            "update",
+            "sig:database",
+            "sig:update",
         },
         time_label="false_positive",
         event_label="-",
