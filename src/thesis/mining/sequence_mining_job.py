@@ -22,6 +22,7 @@ from thesis.utils.runs import (
 )
 
 from thesis.mining.prefixspan_mining import run_prefixspan, run_itemset_prefixspan
+from thesis.mining.repeat_encoding import encode_sequence_of_itemsets
 from thesis.mining.util import (
     add_cross_label_sequence_supports,
     add_cross_label_itemset_sequence_supports,
@@ -120,8 +121,19 @@ def run_transaction_prefixspan_job(
         other_sequences = [list(tx.sorted_items) for tx in other_group]
         all_sequences = [list(tx.sorted_items) for tx in transactions]
 
+        print("Encoding consecutive token repeats...")
+        target_sequences_encoded = [
+            encode_sequence_of_itemsets(seq) for seq in target_sequences
+        ]
+        other_sequences_encoded = [
+            encode_sequence_of_itemsets(seq) for seq in other_sequences
+        ]
+        all_sequences_encoded = [
+            encode_sequence_of_itemsets(seq) for seq in all_sequences
+        ]
+
         mined_df = run_prefixspan(
-            sequences=target_sequences,
+            sequences=target_sequences_encoded,
             min_support=min_support,
             max_len=max_len,
             run_dir=run_dir,
@@ -129,8 +141,8 @@ def run_transaction_prefixspan_job(
 
         mined_df = add_cross_label_sequence_supports(
             mined_df=mined_df,
-            target_sequences=target_sequences,
-            other_sequences=other_sequences,
+            target_sequences=target_sequences_encoded,
+            other_sequences=other_sequences_encoded,
             target_label=target_label,
             other_label=other_label,
         )
@@ -157,11 +169,11 @@ def run_transaction_prefixspan_job(
         print("Generating summary statistics and metadata...")
 
         unique_items = set()
-        for seq in all_sequences:
+        for seq in all_sequences_encoded:
             for itemset in seq:
                 unique_items.update(itemset)
 
-        sequence_lengths = [len(seq) for seq in all_sequences]
+        sequence_lengths = [len(seq) for seq in all_sequences_encoded]
 
         summary_df = pd.DataFrame(
             [
@@ -345,8 +357,19 @@ def run_transaction_itemset_prefixspan_job(
         other_sequences = [list(tx.sorted_items) for tx in other_group]
         all_sequences = [list(tx.sorted_items) for tx in transactions]
 
+        print("Encoding consecutive token repeats...")
+        target_sequences_encoded = [
+            encode_sequence_of_itemsets(seq) for seq in target_sequences
+        ]
+        other_sequences_encoded = [
+            encode_sequence_of_itemsets(seq) for seq in other_sequences
+        ]
+        all_sequences_encoded = [
+            encode_sequence_of_itemsets(seq) for seq in all_sequences
+        ]
+
         mined_df = run_itemset_prefixspan(
-            sequences=target_sequences,
+            sequences=target_sequences_encoded,
             min_support=min_support,
             max_len=max_len,
             run_dir=run_dir,
@@ -354,8 +377,8 @@ def run_transaction_itemset_prefixspan_job(
 
         mined_df = add_cross_label_itemset_sequence_supports(
             mined_df=mined_df,
-            target_sequences=target_sequences,
-            other_sequences=other_sequences,
+            target_sequences=target_sequences_encoded,
+            other_sequences=other_sequences_encoded,
             target_label=target_label,
             other_label=other_label,
         )
@@ -378,11 +401,11 @@ def run_transaction_itemset_prefixspan_job(
         save_filtered_itemset_sequence_views(mined_df, run_dir)
 
         unique_items: set[str] = set()
-        for seq in all_sequences:
+        for seq in all_sequences_encoded:
             for itemset in seq:
                 unique_items.update(itemset)
 
-        sequence_lengths = [len(seq) for seq in all_sequences]
+        sequence_lengths = [len(seq) for seq in all_sequences_encoded]
 
         summary_df = pd.DataFrame(
             [

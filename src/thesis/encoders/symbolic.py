@@ -3,10 +3,15 @@ import pandas as pd
 
 from thesis.schemas.preprocessing import Transaction
 from thesis.schemas.features import SymbolicFeatureSchema, SymbolicFeature
+from thesis.mining.repeat_encoding import encode_sequence_of_itemsets
 
 
 def _transaction_items(tx: Transaction) -> set[str]:
-    return set(tx.abs_items or tx.raw_items or [])
+    base = set(tx.abs_items or tx.raw_items or [])
+    if tx.sorted_items:
+        encoded = encode_sequence_of_itemsets(tx.sorted_items)
+        base.update(item for itemset in encoded for item in itemset)
+    return base
 
 
 def _compile_feature(
