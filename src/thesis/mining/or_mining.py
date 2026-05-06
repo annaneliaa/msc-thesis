@@ -6,6 +6,12 @@ import itertools
 import pandas as pd
 
 
+def _jaccard_similarity(a: frozenset[int], b: frozenset[int]) -> float:
+    if not a and not b:
+        return 1.0
+    return len(a & b) / len(a | b)
+
+
 def _parse_itemset(value: object) -> tuple[str, ...]:
     if isinstance(value, tuple):
         return tuple(str(x) for x in value)
@@ -16,6 +22,36 @@ def _parse_itemset(value: object) -> tuple[str, ...]:
         if isinstance(parsed, (tuple, list)):
             return tuple(str(x) for x in parsed)
     raise ValueError(f"Unsupported itemset value: {value!r}")
+
+
+def _remove_near_duplicate_patterns(
+    df: pd.DataFrame,
+    target_tidsets: dict[tuple[str, ...], frozenset[int]],
+    other_tidsets: dict[tuple[str, ...], frozenset[int]],
+    jaccard_threshold: float = 0.98,
+) -> pd.DataFrame:
+    """Remove OR patterns that are near-duplicates based on Jaccard similarity of TID-sets."""
+    kept_indices = []
+    kept_keys: list[tuple[frozenset[int], frozenset[int]]] = []
+
+    for idx, row in df.iterrows():
+        clauses = row["clauses"]
+        t_union = frozenset().union(*(target_tidsets[c] for c in clauses))
+        o_union = frozenset().union(*(other_tidsets[c] for c in clauses))
+
+        is_near_duplicate = False
+        for kt, ko in kept_keys:
+            t_sim = _jaccard_similarity(t_union, kt)
+            o_sim = _jaccard_similarity(o_union, ko)
+            if t_sim >= jaccard_threshold and o_sim >= jaccard_threshold:
+                is_near_duplicate = True
+                break
+
+        if not is_near_duplicate:
+            kept_indices.append(idx)
+            kept_keys.append((t_union, o_union))
+
+    return df.loc[kept_indices].reset_index(drop=True)
 
 
 def _build_class_tidsets(
@@ -45,6 +81,7 @@ def mine_or_disjunctions(
     min_confidence: float = 0.6,
     direction: str = "both",
     remove_dominated: bool = True,
+    jaccard_threshold: float = 0.98,
 ) -> pd.DataFrame:
     """
     Synthesize OR-of-AND patterns from already-filtered frequent itemsets.
@@ -73,6 +110,11 @@ def mine_or_disjunctions(
     remove_dominated:
         Drop OR patterns whose |support_diff| is no better than the best
         single clause.  These patterns add coverage but not discrimination.
+    jaccard_threshold:
+        Remove OR patterns that are near-duplicates: if both target and other
+        TID-sets have Jaccard similarity >= threshold with a previously kept
+        pattern, drop this one.  Range [0, 1]; 1.0 = only exact duplicates,
+        0.98 removes patterns with >98% overlap.
 
     Returns
     -------
@@ -192,4 +234,11 @@ def mine_or_disjunctions(
             effective_keys.add(key)
             dedup_idx.append(idx)
 
-    return out.loc[dedup_idx].reset_index(drop=True)
+    out_dedup = out.loc[dedup_idx].reset_index(drop=True)
+
+    if not out_dedup.empty and jaccard_threshold < 1.0:
+        out_dedup = _remove_near_duplicate_patterns(
+            out_dedup, target_tidsets, other_tidsets, jaccard_threshold
+        )
+
+    return out_dedup

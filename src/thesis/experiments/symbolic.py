@@ -62,6 +62,7 @@ class SymbolicExperimentConfig:
     max_seq_len: int = 5
     target_label: str = "benign"
     filter_config: Path | None = None
+    jaccard_threshold: float = 0.98
     feature_selection: FeatureSelectionConfig = field(
         default_factory=FeatureSelectionConfig
     )
@@ -102,6 +103,7 @@ def _mine_and_register_symbolic_schema(
     max_seq_len: int,
     target_label: str,
     filter_config: Path | None,
+    jaccard_threshold: float = 0.98,
 ) -> Path:
     run_dir = create_run_dir(run_name)
 
@@ -114,6 +116,7 @@ def _mine_and_register_symbolic_schema(
         max_len=max_itemset_size,
         target_label=target_label,
         run_dir=run_dir,
+        jaccard_threshold=jaccard_threshold,
     )
 
     print("  Running PrefixSpan sequence mining...")
@@ -266,6 +269,7 @@ def run_symbolic_experiment(
         max_seq_len=config.max_seq_len,
         target_label=config.target_label,
         filter_config=config.filter_config,
+        jaccard_threshold=config.jaccard_threshold,
     )
 
     # 6. Encode under base+symbolic schema
@@ -299,6 +303,29 @@ def run_symbolic_experiment(
     _, metadata_path, _ = resolve_model_paths(config.model_name, config.model_version)
     with metadata_path.open("r", encoding="utf-8") as f:
         full_metrics = json.load(f).get("metrics", {})
+
+    # Enrich feature importances with feature types
+    if schema.symbolic is not None:
+        feature_type_map = {
+            f.feature_name: {
+                "mining_type": f.mining_type,
+                "source_label": f.source_label,
+                "clauses": "AND/OR" if f.clauses else None,
+            }
+            for f in schema.symbolic.features
+        }
+
+        for importance_type in ["by_coefficient", "by_permutation"]:
+            if importance_type in full_metrics.get("top_feature_importances", {}):
+                enriched = {}
+                for feat_name, importance_val in full_metrics[
+                    "top_feature_importances"
+                ][importance_type].items():
+                    enriched[feat_name] = {
+                        "importance": importance_val,
+                        "feature_info": feature_type_map.get(feat_name, {}),
+                    }
+                full_metrics["top_feature_importances"][importance_type] = enriched
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     results_dir = _EXPERIMENTS_DIR / config.scenario

@@ -9,6 +9,7 @@ from sklearn.metrics import (
     balanced_accuracy_score,
     confusion_matrix,
 )
+from sklearn.inspection import permutation_importance
 
 from thesis.schemas.features import FeatureSchema
 
@@ -21,7 +22,7 @@ def train_eval_holdout(
     schema: FeatureSchema,
     model_factory,
     test_idx_start: int | None = None,
-    top_n_importances: int = 10,
+    top_n_importances: int = 30,
 ) -> dict:
     feature_names = list(X_train.columns)
 
@@ -61,13 +62,44 @@ def train_eval_holdout(
     train_auc = float(roc_auc_score(y_train, proba_train))
 
     importances = {}
-    if hasattr(model, "feature_importances_"):
+
+    coef_importances = {}
+    if hasattr(model, "coef_"):
+        coefs = np.abs(model.coef_[0])
+        pairs = sorted(
+            zip(feature_names, coefs),
+            key=lambda x: x[1],
+            reverse=True,
+        )
+        coef_importances = {
+            name: float(coef) for name, coef in pairs[:top_n_importances]
+        }
+    elif hasattr(model, "feature_importances_"):
         pairs = sorted(
             zip(feature_names, model.feature_importances_),
             key=lambda x: x[1],
             reverse=True,
         )
-        importances = {name: float(imp) for name, imp in pairs[:top_n_importances]}
+        coef_importances = {name: float(imp) for name, imp in pairs[:top_n_importances]}
+
+    perm_importances = {}
+    try:
+        perm_result = permutation_importance(
+            model, X_test, y_test, n_repeats=10, random_state=42, n_jobs=-1
+        )
+        pairs = sorted(
+            zip(feature_names, perm_result.importances_mean),
+            key=lambda x: x[1],
+            reverse=True,
+        )
+        perm_importances = {name: float(imp) for name, imp in pairs[:top_n_importances]}
+    except Exception:
+        pass
+
+    importances = {
+        "by_coefficient": coef_importances,
+        "by_permutation": perm_importances,
+    }
 
     return {
         "schema": schema.schema_name,

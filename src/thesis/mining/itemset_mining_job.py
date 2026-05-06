@@ -53,6 +53,7 @@ def run_transaction_eclat_job(
     max_len: int | None = 3,
     target_label: str = "benign",
     run_dir: Path | None = None,
+    jaccard_threshold: float = 0.98,
 ) -> MiningJobResult:
     """
     Mine frequent itemsets from in-memory MiningTransaction records.
@@ -166,6 +167,7 @@ def run_transaction_eclat_job(
             other_transactions=other_baskets,
             target_label=target_label,
             other_label=other_label,
+            jaccard_threshold=jaccard_threshold,
         )
         or_df["mining_type"] = "or_itemset"
         save_dataframe_artifact(or_df, run_dir, "or_feature_itemsets")
