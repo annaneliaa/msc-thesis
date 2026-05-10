@@ -528,7 +528,9 @@ def mine_transactions(
                 min_support_count=f.min_support_count,
                 min_abs_support_diff=f.min_abs_support_diff,
                 min_confidence_attack=f.min_confidence_attack,
+                max_confidence_attack=f.max_confidence_attack,
                 min_confidence_benign=f.min_confidence_benign,
+                max_overlap=f.max_overlap,
                 remove_subsumed=f.remove_subsumed,
             )
             typer.echo(f"Itemsets after filtering: {len(eclat_df)}")
@@ -540,8 +542,10 @@ def mine_transactions(
                 min_support_count=f.min_support_count,
                 min_abs_support_diff=f.min_abs_support_diff,
                 min_confidence_attack=f.min_confidence_attack,
+                max_confidence_attack=f.max_confidence_attack,
                 min_confidence_benign=f.min_confidence_benign,
                 min_lift=f.min_lift,
+                max_overlap=f.max_overlap,
                 remove_subsumed=f.remove_subsumed,
             )
             typer.echo(f"Item sequences after filtering: {len(item_seq_df)}")

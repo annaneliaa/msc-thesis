@@ -32,6 +32,7 @@ from thesis.schemas.mining import FeatureSelectionConfig
 from thesis.preprocessing.cache import TokenCache
 from thesis.preprocessing.cache_ingestor import CacheIngestor
 from thesis.preprocessing.mining_prep import build_transactions
+from thesis.schemas.preprocessing import Transaction
 from thesis.preprocessing.service import process_alert_batch, select_groups_from_cache
 from thesis.registry.models import get_model_path, resolve_model_paths
 from thesis.training.service import train_model_for_schema
@@ -126,6 +127,11 @@ def _convert_alerts_to_json(scenario: str) -> Path:
 
 
 def _process_alert_batch(scenario: str, alerts_path: Path, cache_dir: Path) -> None:
+    alert_store_dir = cache_dir / scenario / "alerts"
+    if alert_store_dir.exists() and any(alert_store_dir.glob("*.json")):
+        print(f"  [skip] Alert cache already populated at {alert_store_dir}")
+        return
+
     with alerts_path.open("r", encoding="utf-8") as f:
         payload = json.load(f)
 
@@ -136,6 +142,37 @@ def _process_alert_batch(scenario: str, alerts_path: Path, cache_dir: Path) -> N
 
 
 def _load_transactions(scenario: str, cache_dir: Path) -> list:
+    out_dir = cache_dir / scenario / "transactions"
+    out_path = out_dir / "transactions_raw.json"
+
+    if out_path.exists():
+        print(f"  [skip] Loading transactions from existing {out_path}")
+        with out_path.open("r", encoding="utf-8") as f:
+            serialized = json.load(f)
+        transactions = [
+            Transaction(
+                transaction_id=t["transaction_id"],
+                group_id=t["group_id"],
+                method=t["method"],
+                start_ts=t["start_ts"],
+                end_ts=t["end_ts"],
+                n_alerts=t["n_alerts"],
+                alert_ids=t["alert_ids"],
+                abs_items=set(t["abs_items"]),
+                raw_items=set(t["raw_items"]) if t["raw_items"] is not None else None,
+                sorted_items=[set(s) for s in t["sorted_items"]],
+                alert_ips=set(t["alert_ips"]),
+                tx_label=t["tx_label"],
+                alert_labels=set(t["alert_labels"])
+                if t["alert_labels"] is not None
+                else None,
+                weight=t["weight"],
+            )
+            for t in serialized
+        ]
+        print(f"  Loaded {len(transactions)} transactions from cache.")
+        return transactions
+
     cache = TokenCache(cache_dir=cache_dir, scenario=scenario)
     snapshots = select_groups_from_cache(
         cache=cache,
@@ -147,10 +184,7 @@ def _load_transactions(scenario: str, cache_dir: Path) -> list:
     )
     transactions = build_transactions(snapshots)
 
-    out_dir = cache_dir / scenario / "transactions"
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / "transactions_raw.json"
-
     serialized = [
         {
             "transaction_id": t.transaction_id,
@@ -161,7 +195,7 @@ def _load_transactions(scenario: str, cache_dir: Path) -> list:
             "n_alerts": t.n_alerts,
             "alert_ids": t.alert_ids,
             "abs_items": sorted(list(t.abs_items)),
-            "raw_items": sorted(list(t.raw_items)),
+            "raw_items": sorted(list(t.raw_items)) if t.raw_items is not None else None,
             "sorted_items": [sorted(s) for s in t.sorted_items],
             "alert_ips": sorted(list(t.alert_ips)),
             "tx_label": t.tx_label,
@@ -186,12 +220,23 @@ def _encode_transactions(
     cache_dir: Path,
     feature_selection: FeatureSelectionConfig | None = None,
 ) -> tuple[pd.DataFrame, object]:
+    safe_name = schema_name.replace("+", "_").replace("/", "_")
+    out_path = (
+        cache_dir / scenario / "transactions" / f"transactions_{safe_name}.parquet"
+    )
+
     registry = FeatureSchemaRegistry(root_dir=_ROOT / "artifacts" / "features")
     schema = registry.load(
         scenario_name=scenario,
         schema_name=schema_name,
         schema_version=None,
     )
+
+    if out_path.exists() and feature_selection is None:
+        print(f"  [skip] Loading encoded transactions from existing {out_path}")
+        df = pd.read_parquet(out_path)
+        print(f"  Loaded {len(df)} transactions from parquet.")
+        return df, schema
 
     if feature_selection is not None and (
         feature_selection.top_k is not None
@@ -224,10 +269,6 @@ def _encode_transactions(
         axis=1,
     )
 
-    safe_name = schema_name.replace("+", "_").replace("/", "_")
-    out_path = (
-        cache_dir / scenario / "transactions" / f"transactions_{safe_name}.parquet"
-    )
     df.to_parquet(out_path, index=False)
     print(f"  Encoded {len(df)} transactions under schema '{schema_name}' → {out_path}")
     return df, schema
@@ -269,19 +310,18 @@ def run_baseline_experiment(
     )
 
     # 6. Train model
-    print(f"[6/7] Training '{config.model_name}' v{config.model_version}...")
+    effective_version = f"{config.model_version}_{config.schema_name.replace('+', '_')}"
+    print(f"[6/7] Training '{config.model_name}' v{effective_version}...")
     y = df["tx_label"].map({"benign": 0, "attack": 1})
     X = df.drop(columns=["tx_label"])
-    output_dir = get_model_path(
-        config.scenario, config.model_name, config.model_version
-    )
+    output_dir = get_model_path(config.scenario, config.model_name, effective_version)
 
     summary = train_model_for_schema(
         X=X,
         y=y,
         schema=schema,
         model_name=config.model_name,
-        model_version=config.model_version,
+        model_version=effective_version,
         output_dir=output_dir,
         test_frac=config.test_frac,
     )
@@ -289,7 +329,7 @@ def run_baseline_experiment(
     # 7. Load full metrics from saved metadata and write results file
     print("[7/7] Saving experiment results...")
     _, metadata_path, _ = resolve_model_paths(
-        config.scenario, config.model_name, config.model_version
+        config.scenario, config.model_name, effective_version
     )
     with metadata_path.open("r", encoding="utf-8") as f:
         full_metrics = json.load(f).get("metrics", {})
@@ -306,7 +346,7 @@ def run_baseline_experiment(
                 "scenario": config.scenario,
                 "timestamp": timestamp,
                 "model_name": config.model_name,
-                "model_version": config.model_version,
+                "model_version": summary.model_version,
                 "schema_name": summary.schema_name,
                 "schema_version": summary.schema_version,
                 "n_transactions": len(df),
@@ -324,7 +364,7 @@ def run_baseline_experiment(
     return BaselineExperimentResult(
         scenario=config.scenario,
         model_name=config.model_name,
-        model_version=config.model_version,
+        model_version=summary.model_version,
         schema_name=summary.schema_name,
         schema_version=summary.schema_version,
         auc=summary.auc,

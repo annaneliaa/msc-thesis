@@ -9,7 +9,9 @@ itemsets:
   min_support_count: 30       # at least ~0.3% of transactions (with 10k tx)
   min_abs_support_diff: 0.10  # at least 10 percentage point gap between classes
   min_confidence_attack: 0.0
+  max_confidence_attack: null # no upper bound on attack confidence
   min_confidence_benign: 0.0
+  max_overlap: 0.4            # minority-class support <= 40% of majority-class support
   remove_subsumed: true       # drop {A,B} when {A,B,C} also passes
 
 item_sequences:
@@ -17,8 +19,10 @@ item_sequences:
   min_support_count: 30
   min_abs_support_diff: 0.10
   min_confidence_attack: 0.0
+  max_confidence_attack: null # no upper bound on attack confidence
   min_confidence_benign: 0.0
   min_lift: null
+  max_overlap: 0.4
   remove_subsumed: true       # drop A->B when A->B->C also passes
 
 feature_selection:

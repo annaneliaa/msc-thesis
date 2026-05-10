@@ -139,10 +139,30 @@ def _mine_and_register_symbolic_schema(
         run_dir=run_dir,
     )
 
-    print("--- Filtering mining results ---")
     eclat_df = eclat_result.mined_df.copy()
     item_seq_df = item_seq_result.mined_df.copy()
 
+    if abstraction_map_path is not None:
+        print("--- Applying token abstraction ---")
+        abstraction_map = load_abstraction_map(abstraction_map_path)
+        n_eclat_before, n_seq_before = len(eclat_df), len(item_seq_df)
+        eclat_df = abstract_mined_df(eclat_df, abstraction_map, level=abstraction_level)
+        item_seq_df = abstract_mined_df(
+            item_seq_df, abstraction_map, level=abstraction_level, column="sequence"
+        )
+        print(
+            f"  itemsets {n_eclat_before}→{len(eclat_df)}, "
+            f"sequences {n_seq_before}→{len(item_seq_df)} "
+            f"(level={abstraction_level})"
+        )
+        if eclat_result.or_df is not None and not eclat_result.or_df.empty:
+            n_or_before = len(eclat_result.or_df)
+            eclat_result.or_df = abstract_or_clauses_df(
+                eclat_result.or_df, abstraction_map, level=abstraction_level
+            )
+            print(f"  OR patterns {n_or_before}→{len(eclat_result.or_df)}")
+
+    print("--- Filtering mining results ---")
     if filter_config is not None:
         if not filter_config.is_absolute():
             filter_config = _ROOT / filter_config
@@ -156,7 +176,9 @@ def _mine_and_register_symbolic_schema(
             min_support_count=f.min_support_count,
             min_abs_support_diff=f.min_abs_support_diff,
             min_confidence_attack=f.min_confidence_attack,
+            max_confidence_attack=f.max_confidence_attack,
             min_confidence_benign=f.min_confidence_benign,
+            max_overlap=f.max_overlap,
             remove_subsumed=f.remove_subsumed,
         )
 
@@ -167,8 +189,10 @@ def _mine_and_register_symbolic_schema(
             min_support_count=f.min_support_count,
             min_abs_support_diff=f.min_abs_support_diff,
             min_confidence_attack=f.min_confidence_attack,
+            max_confidence_attack=f.max_confidence_attack,
             min_confidence_benign=f.min_confidence_benign,
             min_lift=f.min_lift,
+            max_overlap=f.max_overlap,
             remove_subsumed=f.remove_subsumed,
         )
         print(
@@ -178,26 +202,6 @@ def _mine_and_register_symbolic_schema(
     eclat_df["mining_type"] = "itemset"
     item_seq_df = item_seq_df.rename(columns={"sequence": "itemset"})
     item_seq_df["mining_type"] = "item_sequence"
-
-    if abstraction_map_path is not None:
-        print("--- Applying token abstraction ---")
-        abstraction_map = load_abstraction_map(abstraction_map_path)
-        n_eclat_before, n_seq_before = len(eclat_df), len(item_seq_df)
-        eclat_df = abstract_mined_df(eclat_df, abstraction_map, level=abstraction_level)
-        item_seq_df = abstract_mined_df(
-            item_seq_df, abstraction_map, level=abstraction_level
-        )
-        print(
-            f"  itemsets {n_eclat_before}→{len(eclat_df)}, "
-            f"sequences {n_seq_before}→{len(item_seq_df)} "
-            f"(level={abstraction_level})"
-        )
-        if eclat_result.or_df is not None and not eclat_result.or_df.empty:
-            n_or_before = len(eclat_result.or_df)
-            eclat_result.or_df = abstract_or_clauses_df(
-                eclat_result.or_df, abstraction_map, level=abstraction_level
-            )
-            print(f"  OR patterns {n_or_before}→{len(eclat_result.or_df)}")
 
     print("--- Constructing combined dataframe from mining results ---")
     cols_to_keep = [
@@ -286,6 +290,7 @@ def run_symbolic_experiment(
     # 4. Build transactions from closed groups
     print("[4/8] Building transactions from cache...")
     transactions = _load_transactions(config.scenario, config.cache_dir)
+
     transactions_path = (
         config.cache_dir / config.scenario / "transactions" / "transactions_raw.json"
     )
@@ -318,19 +323,18 @@ def run_symbolic_experiment(
     )
 
     # 7. Train model
-    print(f"[7/8] Training '{config.model_name}' v{config.model_version}...")
+    effective_version = f"{config.model_version}_{config.schema_name.replace('+', '_')}"
+    print(f"[7/8] Training '{config.model_name}' v{effective_version}...")
     y = df["tx_label"].map({"benign": 0, "attack": 1})
     X = df.drop(columns=["tx_label"])
-    output_dir = get_model_path(
-        config.scenario, config.model_name, config.model_version
-    )
+    output_dir = get_model_path(config.scenario, config.model_name, effective_version)
 
     summary = train_model_for_schema(
         X=X,
         y=y,
         schema=schema,
         model_name=config.model_name,
-        model_version=config.model_version,
+        model_version=effective_version,
         output_dir=output_dir,
         test_frac=config.test_frac,
     )
@@ -338,7 +342,7 @@ def run_symbolic_experiment(
     # 8. Load full metrics and write results file
     print("[8/8] Saving experiment results...")
     _, metadata_path, _ = resolve_model_paths(
-        config.scenario, config.model_name, config.model_version
+        config.scenario, config.model_name, effective_version
     )
     with metadata_path.open("r", encoding="utf-8") as f:
         full_metrics = json.load(f).get("metrics", {})
@@ -378,7 +382,7 @@ def run_symbolic_experiment(
                 "scenario": config.scenario,
                 "timestamp": timestamp,
                 "model_name": config.model_name,
-                "model_version": config.model_version,
+                "model_version": summary.model_version,
                 "schema_name": summary.schema_name,
                 "schema_version": summary.schema_version,
                 "symbolic_schema_path": str(symbolic_schema_path),
@@ -408,7 +412,7 @@ def run_symbolic_experiment(
     return SymbolicExperimentResult(
         scenario=config.scenario,
         model_name=config.model_name,
-        model_version=config.model_version,
+        model_version=summary.model_version,
         schema_name=summary.schema_name,
         schema_version=summary.schema_version,
         symbolic_schema_path=symbolic_schema_path,

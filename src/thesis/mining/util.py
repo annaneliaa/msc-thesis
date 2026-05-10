@@ -284,7 +284,9 @@ def filter_mined_itemsets(
     min_support_count: int = 10,
     min_abs_support_diff: float = 0.0,
     min_confidence_attack: float = 0.0,
+    max_confidence_attack: float | None = None,
     min_confidence_benign: float = 0.0,
+    max_overlap: float | None = None,
     remove_subsumed: bool = True,
 ) -> pd.DataFrame:
     """
@@ -295,7 +297,9 @@ def filter_mined_itemsets(
       2. Occurrence     — support_count >= min_support_count
       3. Discriminative — |support_diff| >= min_abs_support_diff,
                           confidence_attack >= min_confidence_attack,
-                          confidence_benign >= min_confidence_benign
+                          confidence_attack <= max_confidence_attack,
+                          confidence_benign >= min_confidence_benign,
+                          overlap <= max_overlap
       4. Non-redundancy — drop itemsets that are a proper subset of a larger
                           itemset that already passed filters 1-3
 
@@ -308,7 +312,14 @@ def filter_mined_itemsets(
     min_support_count : minimum absolute occurrence count.
     min_abs_support_diff : minimum |support_target - support_other|.
     min_confidence_attack : minimum confidence_attack.
+    max_confidence_attack : maximum confidence_attack; drop patterns that appear
+        too frequently in attacks (useful when mining benign-only features).
+        None disables this filter.
     min_confidence_benign : minimum confidence_benign.
+    max_overlap : maximum allowed class overlap, defined as
+        min(support_benign, support_attack) / max(support_benign, support_attack).
+        0.0 keeps only class-pure itemsets; 1.0 applies no overlap filtering.
+        None disables this filter.
     remove_subsumed : if True, remove proper-subset duplicates after filtering.
     """
     if df.empty:
@@ -330,8 +341,19 @@ def filter_mined_itemsets(
         mask &= out["support_diff"].abs() >= min_abs_support_diff
     if min_confidence_attack > 0.0 and "confidence_attack" in out.columns:
         mask &= out["confidence_attack"] >= min_confidence_attack
+    if max_confidence_attack is not None and "confidence_attack" in out.columns:
+        mask &= out["confidence_attack"] <= max_confidence_attack
     if min_confidence_benign > 0.0 and "confidence_benign" in out.columns:
         mask &= out["confidence_benign"] >= min_confidence_benign
+    if (
+        max_overlap is not None
+        and "support_benign" in out.columns
+        and "support_attack" in out.columns
+    ):
+        lo = out[["support_benign", "support_attack"]].min(axis=1)
+        hi = out[["support_benign", "support_attack"]].max(axis=1)
+        overlap = (lo / hi.replace(0, pd.NA)).fillna(0.0)
+        mask &= overlap <= max_overlap
 
     out = out.loc[mask].reset_index(drop=True)
 
@@ -807,8 +829,10 @@ def filter_mined_sequences(
     min_support_count: int = 10,
     min_abs_support_diff: float = 0.0,
     min_confidence_attack: float = 0.0,
+    max_confidence_attack: float | None = None,
     min_confidence_benign: float = 0.0,
     min_lift: float | None = None,
+    max_overlap: float | None = None,
     remove_subsumed: bool = True,
     support_col: str = "support",
 ) -> pd.DataFrame:
@@ -820,7 +844,9 @@ def filter_mined_sequences(
       2. Occurrence     — support_count >= min_support_count
       3. Discriminative — |support_diff| >= min_abs_support_diff,
                           confidence_attack >= min_confidence_attack,
-                          confidence_benign >= min_confidence_benign
+                          confidence_attack <= max_confidence_attack,
+                          confidence_benign >= min_confidence_benign,
+                          overlap <= max_overlap
       4. Novelty        — lift >= min_lift  (skipped when min_lift is None)
                           lift = support / prod(k=1 item supports); items
                           below min_support have no k=1 entry and yield NaN
@@ -835,8 +861,15 @@ def filter_mined_sequences(
     min_support_count : minimum absolute occurrence count in the target group.
     min_abs_support_diff : minimum |support_target - support_other|.
     min_confidence_attack : minimum confidence_attack.
+    max_confidence_attack : maximum confidence_attack; drop patterns that appear
+        too frequently in attacks (useful when mining benign-only features).
+        None disables this filter.
     min_confidence_benign : minimum confidence_benign.
     min_lift : if given, require lift >= min_lift.
+    max_overlap : maximum allowed class overlap, defined as
+        min(support_benign, support_attack) / max(support_benign, support_attack).
+        0.0 keeps only class-pure sequences; 1.0 applies no overlap filtering.
+        None disables this filter.
     remove_subsumed : if True, remove proper-prefix duplicates after filtering.
     support_col : support column used for lift computation.
     """
@@ -863,8 +896,19 @@ def filter_mined_sequences(
         mask &= out["support_diff"].abs() >= min_abs_support_diff
     if min_confidence_attack > 0.0 and "confidence_attack" in out.columns:
         mask &= out["confidence_attack"] >= min_confidence_attack
+    if max_confidence_attack is not None and "confidence_attack" in out.columns:
+        mask &= out["confidence_attack"] <= max_confidence_attack
     if min_confidence_benign > 0.0 and "confidence_benign" in out.columns:
         mask &= out["confidence_benign"] >= min_confidence_benign
+    if (
+        max_overlap is not None
+        and "support_benign" in out.columns
+        and "support_attack" in out.columns
+    ):
+        lo = out[["support_benign", "support_attack"]].min(axis=1)
+        hi = out[["support_benign", "support_attack"]].max(axis=1)
+        overlap = (lo / hi.replace(0, pd.NA)).fillna(0.0)
+        mask &= overlap <= max_overlap
 
     # 4. Novelty
     if min_lift is not None and "lift" in out.columns:

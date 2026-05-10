@@ -1,0 +1,121 @@
+{
+  "short:A-Acc-Chr1": ["apache_referer_character_change", "apache_access"],
+  "short:A-Acc-Chr2": ["apache_request_character_change", "apache_access"],
+  "short:A-Acc-Clc": ["apache_method_frequency_anomaly", "apache_access"],
+  "short:A-Acc-Ent1": ["apache_referer_entropy", "apache_access"],
+  "short:A-Acc-Ent2": ["apache_request_entropy", "apache_access"],
+  "short:A-Acc-Ent3": ["apache_user_agent_entropy", "apache_access"],
+  "short:A-Acc-Frq": ["apache_access_frequency_anomaly", "apache_access"],
+  "short:A-Acc-Val1": ["apache_new_request_method", "apache_access"],
+  "short:A-Acc-Val2": ["apache_new_status_code", "apache_access"],
+
+  "short:A-All-Evt": ["new_event_type", "anomaly_detector"],
+
+  "short:A-Aud-Com1": ["audit_apparmor_combination", "audit"],
+  "short:A-Aud-Com2": ["audit_credential_combination", "audit"],
+  "short:A-Aud-Com3": ["audit_login_combination", "audit"],
+  "short:A-Aud-Com4": ["audit_service_combination", "audit"],
+  "short:A-Aud-Com5": ["audit_syscall_combination", "audit"],
+  "short:A-Aud-Com6": ["audit_user_combination", "audit"],
+
+  "short:A-Dns-Clc1": ["dns_event_frequency_anomaly", "dns"],
+  "short:A-Dns-Clc2": ["dns_query_ip_frequency_anomaly", "dns"],
+  "short:A-Dns-Clc3": ["dns_query_record_frequency_anomaly", "dns"],
+  "short:A-Dns-Chr": ["dns_domain_character_change", "dns"],
+  "short:A-Dns-Ent": ["dns_domain_entropy", "dns"],
+  "short:A-Dns-Frq": ["dns_query_record_frequency_anomaly", "dns"],
+  "short:A-Dns-Val1": ["dns_new_ip_address", "dns"],
+  "short:A-Dns-Val2": ["dns_new_query_record", "dns"],
+
+  "short:A-Mon-Avg": ["cpu_deviation_from_average", "monitoring"],
+  "short:A-Mon-Rng": ["cpu_out_of_range", "monitoring"],
+
+  "short:S-Dns-Dom": ["suspicious_dns_domain", "dns"],
+  "short:S-Dns-Loo": ["localhost_dns_lookup", "dns"],
+  "short:S-Dns-Uns": ["dns_unsolicited_response", "dns"],
+  "short:S-Dns-Qry1": ["suspicious_tld_query", "dns"],
+  "short:S-Dns-Qry2": ["suspicious_ga_domain_query", "dns"],
+  "short:S-Dns-Qry3": ["suspicious_biz_tld_query", "dns"],
+  "short:S-Dns-Qry4": ["suspicious_cloud_tld_query", "dns"],
+
+  "short:S-Flw-445": ["smb_port_scan_or_infection", "network_flow"],
+  "short:S-Flw-Apt": ["linux_package_manager_traffic", "network_flow"],
+  "short:S-Flw-Cov": ["covid_domain_indicator", "network_flow"],
+  "short:S-Flw-Nmp": ["nmap_user_agent_scan", "network_flow"],
+
+  "short:S-Htt-Gzp": ["http_decompression_error", "http"],
+  "short:S-Htt-Mat": ["http_request_response_mismatch", "http"],
+  "short:S-Htt-Res": ["http_invalid_response", "http"],
+
+  "short:S-Nat-Trv": ["stun_nat_traversal", "network_flow"],
+  "short:S-Smt-Rep": ["smtp_invalid_response", "smtp"],
+  "short:S-Smt-Wel": ["smtp_missing_server_greeting", "smtp"],
+
+  "short:S-Tls-Crt": ["tls_certificate_invalid", "tls"],
+  "short:S-Tls-Fai": ["tls_handshake_failure", "tls"],
+  "short:S-Tls-Hnd": ["tls_invalid_handshake", "tls"],
+  "short:S-Tls-Rec": ["tls_invalid_record", "tls"],
+  "short:S-Tls-Ssl": ["tls_invalid_ssl_header", "tls"],
+  "short:S-Tls-Typ": ["tls_invalid_record_type", "tls"],
+
+  "short:W-Acc-400": ["web_client_error", "web_access"],
+  "short:W-Acc-500": ["web_server_error", "web_access"],
+  "short:W-Acc-Att": ["web_attack", "web_access"],
+  "short:W-Acc-Brt": ["cms_bruteforce", "web_access"],
+  "short:W-Acc-Cms": ["cms_login_attempt", "web_access"],
+  "short:W-Acc-Sus": ["suspicious_url_access", "web_access"],
+
+  "short:W-All-Evt": ["ids_event", "ids"],
+  "short:W-All-Ids": ["new_ids_alert", "ids"],
+  "short:W-All-Mul1": ["multiple_ids_alerts_same_id", "ids"],
+  "short:W-All-Mul2": ["multiple_ids_events_same_source", "ids"],
+  "short:W-All-Mul3": ["multiple_web_errors_same_source", "ids"],
+
+  "short:W-Aud-Sel": ["selinux_permission_check", "audit"],
+  "short:W-Aut-Pam1": ["pam_session_event", "authentication"],
+  "short:W-Aut-Pam2": ["pam_login_failure", "authentication"],
+  "short:W-Aut-Pam3": ["pam_multiple_login_failures", "authentication"],
+  "short:W-Aut-Ssh1": ["ssh_authentication_success", "authentication"],
+  "short:W-Aut-Ssh2": ["ssh_insecure_connection_attempt", "authentication"],
+  "short:W-Aut-Sud": ["sudo_execution", "authentication"],
+  "short:W-Aut-Uid": ["uid_change", "authentication"],
+
+  "short:W-Err-Fbd1": ["apache_forbidden_directory_access", "apache_access"],
+  "short:W-Err-Fbd2": ["apache_forbidden_file_access", "apache_access"],
+
+  "short:W-Mai-Brt": ["mail_bruteforce", "authentication", "mail"],
+  "short:W-Mai-Inv": ["mail_invalid_login", "authentication", "mail"],
+  "short:W-Sys-Cav": ["clamav_update", "system"],
+  "short:W-Sys-Dov": ["dovecot_authentication_success", "authentication", "mail"],
+  "short:W-Sys-Fai": ["system_authentication_failure", "authentication"],
+
+  "sig:authentication": ["authentication"],
+  "sig:success":        ["authentication"],
+  "sig:login":          ["authentication"],
+  "sig:failed":         ["authentication"],
+  "sig:user":           ["authentication"],
+
+  "sig:tls":            ["tls"],
+  "sig:handshake":      ["tls"],
+  "sig:invalid":        ["tls"],
+  "sig:message":        ["tls"],
+  "sig:code":           ["tls"],
+
+  "sig:dns":            ["dns"],
+  "sig:query":          ["dns"],
+  "sig:domain":         ["dns"],
+
+  "sig:apache":         ["apache_access"],
+  "sig:directory":      ["apache_access"],
+  "sig:forbidden":      ["apache_access"],
+
+  "sig:access":         ["web_access"],
+  "sig:request":        ["web_access"],
+  "sig:server":         ["web_access"],
+  "sig:url":            ["web_access"],
+  "sig:status":         ["web_access"],
+  "sig:suspicious":     ["web_access"],
+
+  "sig:database":       ["system"],
+  "sig:update":         ["system"]
+}

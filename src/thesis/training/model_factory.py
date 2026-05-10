@@ -13,6 +13,10 @@ MODEL_FACTORIES = {
         penalty="l1",
         C=1.0,
     ),
+    "logreg_sweep": lambda: LogisticRegression(
+        max_iter=1000,
+        class_weight="balanced",
+    ),
 }
 
 

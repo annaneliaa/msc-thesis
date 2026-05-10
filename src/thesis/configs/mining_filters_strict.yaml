@@ -9,7 +9,9 @@ itemsets:
   min_support_count: 50       # at least ~0.5% of transactions
   min_abs_support_diff: 0.20  # strong class separation required
   min_confidence_attack: 0.0
+  max_confidence_attack: null # no upper bound on attack confidence
   min_confidence_benign: 0.0
+  max_overlap: 0.3            # minority-class support <= 30% of majority-class support
   remove_subsumed: true
 
 item_sequences:
@@ -17,8 +19,10 @@ item_sequences:
   min_support_count: 50
   min_abs_support_diff: 0.20
   min_confidence_attack: 0.0
+  max_confidence_attack: null # no upper bound on attack confidence
   min_confidence_benign: 0.0
   min_lift: 2.0               # must co-occur at least 2x more than by chance
+  max_overlap: 0.3
   remove_subsumed: true
 
 feature_selection:

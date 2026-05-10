@@ -12,7 +12,9 @@ class ItemsetFilterConfig(BaseModel):
     min_support_count: int = 10
     min_abs_support_diff: float = 0.0
     min_confidence_attack: float = 0.0
+    max_confidence_attack: float | None = None
     min_confidence_benign: float = 0.0
+    max_overlap: float | None = None
     remove_subsumed: bool = True
 
 
@@ -21,8 +23,10 @@ class SequenceFilterConfig(BaseModel):
     min_support_count: int = 10
     min_abs_support_diff: float = 0.0
     min_confidence_attack: float = 0.0
+    max_confidence_attack: float | None = None
     min_confidence_benign: float = 0.0
     min_lift: float | None = None
+    max_overlap: float | None = None
     remove_subsumed: bool = True
 
 

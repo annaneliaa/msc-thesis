@@ -23,6 +23,10 @@ from thesis.utils.runs import (
 
 from thesis.mining.prefixspan_mining import run_prefixspan, run_itemset_prefixspan
 from thesis.mining.repeat_encoding import encode_runs, encode_sequence_of_itemsets
+from thesis.mining.token_abstraction import (
+    abstract_mail_hosts_item_sequence_df,
+    abstract_mail_hosts_itemset_sequence_df,
+)
 from thesis.mining.util import (
     add_cross_label_sequence_supports,
     add_cross_label_itemset_sequence_supports,
@@ -157,6 +161,9 @@ def run_transaction_prefixspan_job(
             print(
                 f"  Merged {n_before - len(mined_df)} patterns that collapsed to the same encoded form"
             )
+
+        print("Applying mail host abstraction to mined patterns...")
+        mined_df = abstract_mail_hosts_item_sequence_df(mined_df)
 
         save_dataframe_artifact(mined_df, run_dir, "frequent_sequences")
 
@@ -393,6 +400,9 @@ def run_transaction_itemset_prefixspan_job(
         )
 
         mined_df = add_confidence_scores(mined_df)
+
+        print("Applying mail host abstraction to mined itemset sequence patterns...")
+        mined_df = abstract_mail_hosts_itemset_sequence_df(mined_df)
 
         save_dataframe_artifact(mined_df, run_dir, "frequent_itemset_sequences")
 

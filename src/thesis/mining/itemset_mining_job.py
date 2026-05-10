@@ -31,6 +31,10 @@ from thesis.mining.util import (
     select_top_itemsets_per_class,
 )
 from thesis.mining.load_mining_transactions import load_and_prepare_mining_transactions
+from thesis.mining.token_abstraction import (
+    abstract_mail_hosts_mined_df,
+    abstract_mail_hosts_or_clauses_df,
+)
 
 
 def sort_frequent_itemsets(
@@ -137,6 +141,9 @@ def run_transaction_eclat_job(
 
         mined_df = add_confidence_scores(mined_df)
 
+        print("Applying mail host abstraction to mined itemsets...")
+        mined_df = abstract_mail_hosts_mined_df(mined_df)
+
         save_dataframe_artifact(mined_df, run_dir, "frequent_itemsets")
 
         benign_sorted_df = sort_itemsets_for_class(mined_df, "benign")
@@ -170,6 +177,7 @@ def run_transaction_eclat_job(
             jaccard_threshold=jaccard_threshold,
         )
         or_df["mining_type"] = "or_itemset"
+        or_df = abstract_mail_hosts_or_clauses_df(or_df)
         save_dataframe_artifact(or_df, run_dir, "or_feature_itemsets")
         print(f"  Found {len(or_df)} OR patterns.")
 

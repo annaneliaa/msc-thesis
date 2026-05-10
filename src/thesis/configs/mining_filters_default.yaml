@@ -8,7 +8,9 @@ itemsets:
   min_support_count: 10       # must appear in at least 10 transactions
   min_abs_support_diff: 0.0   # no discriminativeness requirement
   min_confidence_attack: 0.0
+  max_confidence_attack: null # no upper bound on attack confidence
   min_confidence_benign: 0.0
+  max_overlap: null           # no overlap filter — keep full result space for exploration
   remove_subsumed: false      # keep all sizes for inspection
 
 item_sequences:
@@ -16,8 +18,10 @@ item_sequences:
   min_support_count: 10
   min_abs_support_diff: 0.0
   min_confidence_attack: 0.0
+  max_confidence_attack: null # no upper bound on attack confidence
   min_confidence_benign: 0.0
   min_lift: null              # no novelty filter
+  max_overlap: null           # no overlap filter
   remove_subsumed: false
 
 feature_selection:

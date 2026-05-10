@@ -10,7 +10,9 @@ itemsets:
   min_support_count: 20
   min_abs_support_diff: 0.05  # some separation required, confidence does the heavy lifting
   min_confidence_attack: 0.65
+  max_confidence_attack: null # no upper bound — attack-focused patterns are expected to be high
   min_confidence_benign: 0.0
+  max_overlap: null           # confidence_attack >= 0.65 already implies overlap <= ~0.54; null avoids double-counting
   remove_subsumed: true
 
 item_sequences:
@@ -18,8 +20,10 @@ item_sequences:
   min_support_count: 20
   min_abs_support_diff: 0.05
   min_confidence_attack: 0.65
+  max_confidence_attack: null # no upper bound — attack-focused patterns are expected to be high
   min_confidence_benign: 0.0
   min_lift: null
+  max_overlap: null           # same reasoning as itemsets
   remove_subsumed: true
 
 feature_selection:
