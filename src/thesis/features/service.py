@@ -5,6 +5,8 @@ from thesis.features.schema_builder import build_symbolic_feature_schema
 from thesis.features.persistence import save_symbolic_feature_schema
 from thesis.features.manifest import initialize_feature_manifest
 from thesis.features.util import next_schema_version, register_symbolic_schema_version
+from thesis.schemas.features import SymbolicFeatureSchema
+from thesis.schemas.mining import FeatureSelectionConfig
 
 
 def build_persist_and_register_symbolic_schema(
@@ -13,7 +15,7 @@ def build_persist_and_register_symbolic_schema(
     source_label: str,
     schema_name: str = "symbolic",
     schema_version: str | None = None,
-    max_features: int | None = None,
+    feature_selection: FeatureSelectionConfig | None = None,
     root_dir: Path = Path("artifacts/features"),
     bump: str = "patch",
 ) -> Path:
@@ -51,8 +53,24 @@ def build_persist_and_register_symbolic_schema(
         source_label=source_label,
         schema_name=schema_name,
         schema_version=schema_version,
-        max_features=max_features,
     )
+
+    if feature_selection is not None:
+        features = list(symbolic_schema.features)
+        if feature_selection.min_utility_score is not None:
+            features = [
+                f
+                for f in features
+                if f.utility_score >= feature_selection.min_utility_score
+            ]
+        features.sort(key=lambda f: f.utility_score, reverse=True)
+        if feature_selection.top_k is not None:
+            features = features[: feature_selection.top_k]
+        symbolic_schema = SymbolicFeatureSchema(
+            schema_name=symbolic_schema.schema_name,
+            schema_version=symbolic_schema.schema_version,
+            features=features,
+        )
 
     schema_filename = f"{schema_name}/{schema_version}.json"
     schema_path = root_dir / scenario_name / schema_filename

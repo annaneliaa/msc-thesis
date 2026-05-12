@@ -1,0 +1,3 @@
+[submodule "external/AlertBERT"]
+	path = external/AlertBERT
+	url = https://github.com/annaneliaa/AlertBERT

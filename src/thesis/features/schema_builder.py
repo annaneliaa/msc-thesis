@@ -50,15 +50,11 @@ def build_symbolic_feature_schema(
     source_label: str,
     schema_name: str,
     schema_version: str,
-    max_features: int | None = None,
 ) -> SymbolicFeatureSchema:
     """
     Convert mined itemsets dataframe into a symbolic feature schema.
     Expects at least an 'itemset' column.
     """
-    if max_features is not None:
-        df = df.head(max_features)
-
     features: list[SymbolicFeature] = []
     seen_names: set[str] = set()
 
@@ -154,15 +150,11 @@ def build_or_feature_schema(
     source_label: str,
     schema_name: str,
     schema_version: str,
-    max_features: int | None = None,
 ) -> SymbolicFeatureSchema:
     """
     Convert OR-pattern DataFrame (output of mine_or_disjunctions) into a schema.
     Expects a 'clauses' column of tuple[tuple[str, ...], ...].
     """
-    if max_features is not None:
-        df = df.head(max_features)
-
     features: list[SymbolicFeature] = []
     seen_names: set[str] = set()
 

@@ -22,9 +22,11 @@ dependencies = [
   "datasets",
   "numpy",
   "scikit-learn",
+  "scipy",
   "jupyter",
   "ipywidgets",
   "torch",
+  "tensordict",
   "python-dotenv",
   "accelerate>=1.1.0"
 ]
@@ -37,6 +39,9 @@ dev = [
   "black>=24.0",
   "pre-commit>=3.8",
 ]
+# graph-tool is required for AlertBERT grouping but is not pip-installable.
+# Install it via conda before pip install -e .:
+#   mamba install -c conda-forge graph-tool
 
 [project.scripts]
 thesis-cli = "thesis.cli:app"

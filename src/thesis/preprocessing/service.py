@@ -1,14 +1,24 @@
-from thesis.schemas.preprocessing import IncomingAlert, TokenizedAlert
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from thesis.schemas.preprocessing import GroupSnapshot, IncomingAlert, TokenizedAlert
 from thesis.preprocessing.parsing import parse_incoming_alert
 from thesis.preprocessing.tokenization import tokenize_alert
 from thesis.preprocessing.cache_ingestor import CacheIngestor
 from thesis.preprocessing.cache import TokenCache
-from thesis.schemas.preprocessing import GroupSnapshot
 from thesis.preprocessing.group_selector import (
     select_group_snapshots_from_response,
     create_cache_query,
 )
-from thesis.preprocessing.group_alerts import group_alerts
+from thesis.preprocessing.group_alerts import (
+    # ALERTBERT_METHOD,
+    FIXED_WINDOW_METHOD,
+    group_alerts,
+)
+
+if TYPE_CHECKING:
+    from thesis.preprocessing.grouping.alertbert_grouper import AlertBERTGrouper
 
 """"
 Set up pipeline methods here for the module.
@@ -16,7 +26,18 @@ To be called from CLI commands to expose as less as possible.
 """
 
 
-def process_alert_batch(rows: list[dict], scenario: str, ingestor: CacheIngestor):
+def process_alert_batch(
+    rows: list[dict],
+    scenario: str,
+    ingestor: CacheIngestor,
+    grouping_mode: str = FIXED_WINDOW_METHOD,
+    grouper: AlertBERTGrouper | None = None,
+) -> int:
+    """Parse, tokenize, group, and ingest one batch of raw alert rows.
+
+    Pass grouping_mode='alertbert' and a pre-loaded AlertBERTGrouper as
+    `grouper` to use embedding-based grouping instead of the fixed window.
+    """
     tokenized_alerts: list[TokenizedAlert] = []
     for row in rows:
         try:
@@ -28,8 +49,7 @@ def process_alert_batch(rows: list[dict], scenario: str, ingestor: CacheIngestor
             print(f"Skipping row due to parsing/tokenization error: {e}")
             continue
 
-    # apply grouping to the batch
-    alert_groups = group_alerts(tokenized_alerts)
+    alert_groups = group_alerts(tokenized_alerts, method=grouping_mode, grouper=grouper)
 
     if tokenized_alerts:
         ingestor.ingest_alert_batch(tokenized_alerts, batch_name=scenario)

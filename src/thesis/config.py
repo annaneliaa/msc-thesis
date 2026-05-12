@@ -34,6 +34,24 @@ class EncoderConfig(BaseModel):
     encoder_version: str = "0.1.0"
 
 
+class AlertBERTConfig(BaseModel):
+    """Config for a trained AlertBERT model used at grouping-inference time."""
+
+    model_id: str = ""
+    models_path: str = "artifacts/alertbert"
+    delta: float = 2.0
+    theta: float = 2.0
+    dim_reduction: int = 2
+    device: str = "cpu"
+
+
+class GroupingConfig(BaseModel):
+    """Selects the alert-grouping strategy for preprocessing."""
+
+    mode: str = "fixed_2s"  # "fixed_2s" | "alertbert"
+    alertbert: AlertBERTConfig = AlertBERTConfig()
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="THESIS_", extra="ignore")
 
@@ -41,6 +59,7 @@ class Settings(BaseSettings):
     artifacts: ArtifactConfig = ArtifactConfig()
     model: ModelConfig = ModelConfig()
     encoder: EncoderConfig = EncoderConfig()
+    grouping: GroupingConfig = GroupingConfig()
 
 
 def load_yaml_config(path: Path) -> dict[str, Any]:

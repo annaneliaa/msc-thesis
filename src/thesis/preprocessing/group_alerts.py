@@ -1,10 +1,16 @@
+from __future__ import annotations
+
 from collections import defaultdict
+from typing import TYPE_CHECKING
 
-from thesis.schemas.preprocessing import TokenizedAlert, GroupingRecord
+from thesis.schemas.preprocessing import GroupingRecord, TokenizedAlert
 
+if TYPE_CHECKING:
+    from thesis.preprocessing.grouping.alertbert_grouper import AlertBERTGrouper
 
 FIXED_WINDOW_SECONDS = 2
 FIXED_WINDOW_METHOD = "fixed_2s"
+ALERTBERT_METHOD = "alertbert"
 
 
 def fixed_2s_group_id(ts: int, window_size: int = FIXED_WINDOW_SECONDS) -> str:
@@ -58,16 +64,32 @@ def group_alerts_fixed_2s_by_group(
     return {gid: sorted(grp, key=lambda a: a.ts) for gid, grp in groups.items()}
 
 
+def group_alerts_alertbert(
+    alerts: list[TokenizedAlert],
+    grouper: AlertBERTGrouper,
+) -> list[GroupingRecord]:
+    """Group alerts using a pre-loaded AlertBERTGrouper."""
+    return grouper.group(alerts)
+
+
 def group_alerts(
     alerts: list[TokenizedAlert],
     method: str = FIXED_WINDOW_METHOD,
+    grouper: AlertBERTGrouper | None = None,
     **kwargs,
 ) -> list[GroupingRecord]:
-    """
-    Main entry point for alert grouping.
-    Dispatches to specific grouping methods based on the 'method' argument.
+    """Main entry point for alert grouping.
+
+    Dispatches to the chosen grouping strategy.  Pass a pre-loaded
+    AlertBERTGrouper as `grouper` when method='alertbert'.
     """
     if method == FIXED_WINDOW_METHOD:
         return group_alerts_fixed_2s(alerts, **kwargs)
+    elif method == ALERTBERT_METHOD:
+        if grouper is None:
+            raise ValueError(
+                "grouper must be a loaded AlertBERTGrouper when method='alertbert'"
+            )
+        return group_alerts_alertbert(alerts, grouper)
     else:
         raise ValueError(f"Unsupported grouping method: {method}")

@@ -12,6 +12,7 @@ LOGS_DIR = ARTIFACTS_DIR / "logs"
 RUNS_DIR = ARTIFACTS_DIR / "runs"
 CACHE_DIR = ARTIFACTS_DIR / "cache"
 FEATURE_DIR = ARTIFACTS_DIR / "features"
+ALERTBERT_MODELS_DIR = ARTIFACTS_DIR / "alertbert"
 
 MODEL_FILENAME = "model.joblib"
 METADATA_FILENAME = "metadata.json"
@@ -29,6 +30,7 @@ def ensure_artifact_dirs() -> None:
         RUNS_DIR,
         CACHE_DIR,
         FEATURE_DIR,
+        ALERTBERT_MODELS_DIR,
     ]:
         path.mkdir(parents=True, exist_ok=True)
 

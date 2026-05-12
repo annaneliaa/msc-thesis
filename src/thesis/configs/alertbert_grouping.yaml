@@ -1,0 +1,35 @@
+# AlertBERT grouping configuration
+#
+# Usage: pass this section as grouping: in your experiment config, or load it
+# separately and construct an AlertBERTGrouper + GroupingConfig from it.
+#
+# Pretraining: run  python -m alertbert.train_mlm  from external/AlertBERT
+# before any experiment that uses mode: alertbert.  The trained model lands in
+# models_path / model_id /.  Re-use the same frozen model across all runs for
+# fair comparisons.
+
+grouping:
+  mode: alertbert   # fixed_2s | alertbert
+
+  alertbert:
+    # Identifier assigned by AlertBERT during train_mlm (matches the directory
+    # name under models_path, e.g. "1l_4h_16d_original_1_60k").
+    model_id: ""
+
+    # Root directory where AlertBERT saves trained models.
+    # Relative paths are resolved from the project root (msc-thesis/).
+    models_path: artifacts/alertbert
+
+    # --- Grouping hyperparameters ---
+    # delta: time/cosine distance threshold; alerts within delta are grouped.
+    delta: 2.0
+
+    # theta: cosine-distance scaling factor (must be >= delta).
+    # Increasing theta makes the cosine component less decisive relative to time.
+    theta: 2.0
+
+    # dim_reduction: PCA dimensions before clustering. 2 is the AlertBERT default.
+    dim_reduction: 2
+
+    # device: "cpu" or "cuda" for embedding inference.
+    device: cpu
