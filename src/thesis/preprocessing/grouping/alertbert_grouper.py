@@ -26,11 +26,16 @@ class _TokenizedAlertDataset:
     Mirrors the interface of alertbert.aitads.AlertDataset: a .data dict of
     numpy arrays, .keys, __len__, and __getitem__ with cyclic-index slice
     support (needed by AlertBERT's sliding readout window).
+
+    time_offset must match the value saved in the model's report.json so that
+    the normalised timestamps are on the same scale as at training time.
     """
 
-    def __init__(self, alerts: list[TokenizedAlert]) -> None:
+    def __init__(self, alerts: list[TokenizedAlert], time_offset: float = 0.0) -> None:
         self.data: dict[str, np.ndarray] = {
-            "raw_time": np.array([a.ts for a in alerts], dtype=np.float64),
+            "raw_time": np.array(
+                [a.ts - time_offset for a in alerts], dtype=np.float32
+            ),
             "short": np.array([a.short or "" for a in alerts]),
             "host": np.array([a.host or "" for a in alerts]),
         }
@@ -107,6 +112,7 @@ class AlertBERTGrouper:
         self.dim_reduction = dim_reduction
         self.device = device
         self._alertbert = None
+        self._time_offset: float = 0.0
 
     def load(self) -> None:
         """Load model weights, vocabs, and collate function from disk."""
@@ -115,6 +121,9 @@ class AlertBERTGrouper:
             sys.path.insert(0, ab_root)
 
         reports, model_param_dicts = load_reports([self.model_id], self.models_path)
+        # Retrieve the timestamp offset saved at training time so inference
+        # timestamps are normalised on the same scale (see train_alertbert.py).
+        self._time_offset = float(reports[self.model_id].get("time_offset", 0.0))
         # label_vocabs={} → only the model's own feature vocabs end up in the
         # inference collate_fn; we don't need ground-truth label decoding here.
         data_tools = load_data_tools(
@@ -143,7 +152,7 @@ class AlertBERTGrouper:
             self.load()
 
         sorted_alerts = sorted(alerts, key=lambda a: a.ts)
-        dataset = _TokenizedAlertDataset(sorted_alerts)
+        dataset = _TokenizedAlertDataset(sorted_alerts, time_offset=self._time_offset)
         cluster_labels: np.ndarray = self._alertbert.forward(dataset)
 
         return [

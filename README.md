@@ -85,12 +85,71 @@ pytest -v
 pytest tests/path/to/test_file.py
 ```
 
+## AlertBERT Grouper Training
+
+AlertBERT is a masked language model used to embed and cluster alerts for grouping. A model must be trained per scenario before AlertBERT-mode grouping can be used.
+
+### Prerequisites
+
+Ensure the scenario's alert data has been converted to JSON first:
+
+```bash
+python -m thesis convert-alerts-to-json <scenario>
+# e.g.: python -m thesis convert-alerts-to-json fox
+```
+
+This produces `artifacts/processed-data/{scenario}/alerts.json`.
+
+### Configure
+
+Edit `configs/alertbert_training.yaml` and set the scenario you want to train on:
+
+```yaml
+scenario: fox       # thesis scenario name (fox, bear, harrison, …)
+test_frac: 0.3      # must match the downstream classifier's test_frac
+val_frac: 0.1       # validation fraction drawn from within the training portion
+id_suffix: "1"      # appended to the auto-generated model ID
+```
+
+The data split is time-based and consistent with the downstream feature classifier:
+- **train**: first `(1 - test_frac - val_frac)` of alerts by time
+- **val**: next `val_frac` of alerts (used during AlertBERT training only)
+- **test**: last `test_frac` of alerts — held out entirely, never seen by AlertBERT
+
+### Train
+
+```bash
+cd msc-thesis/
+python src/thesis/scripts/train_alertbert.py
+# or with an explicit config path:
+python src/thesis/scripts/train_alertbert.py --config configs/alertbert_training.yaml
+```
+
+Training prints progress and saves model checkpoints under `artifacts/alertbert/`. At the end it prints the model ID, e.g.:
+
+```
+Done. Models saved under: artifacts/alertbert
+Model directories match:  mlm_1l_4h_16d_fox_1_<k>k
+```
+
+### Activate the trained model
+
+Copy the printed model ID into `configs/alertbert_grouping.yaml`:
+
+```yaml
+alertbert:
+  model_id: mlm_1l_4h_16d_fox_1_60k
+  models_path: artifacts/alertbert
+```
+
 ## Configuration
 
 Configuration files are located in `configs/`:
 - `base.yaml` - Base configuration
 - `dev.yaml` - Development overrides
 - `prod.yaml` - Production overrides
+- `alertbert_training.yaml` - AlertBERT MLM training parameters
+- `alertbert_grouping.yaml` - AlertBERT grouper runtime settings
 
 Key configuration includes:
 - App name, environment, host, and port

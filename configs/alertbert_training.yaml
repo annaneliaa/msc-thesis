@@ -1,0 +1,78 @@
+# AlertBERT MLM training configuration
+# ======================================
+# Run from msc-thesis/ with:
+#   python src/thesis/scripts/train_alertbert.py [--config configs/alertbert_training.yaml]
+#
+# After training the model ID is printed and looks like:
+#   mlm_{num_layers}l_{n_heads}h_{dim_per_head}d_{scenario}_{id_suffix}_{k}k
+# Set that as alertbert.model_id in alertbert_grouping.yaml to use it for grouping.
+
+# --- Dataset ---
+# Thesis scenario name (fox, bear, harrison, russellmitchell, santos, shaw, wardbeck, wheeler, wilson).
+# Alert data is loaded from artifacts/processed-data/{scenario}/alerts.json.
+scenario: fox
+
+# Held-out test fraction. Must match the test_frac passed to the downstream feature
+# classifier (train_model_for_schema / make_holdout_split) so both operate on the
+# same training data. Data is sorted by timestamp; the last test_frac fraction is
+# never seen by AlertBERT training.
+test_frac: 0.3
+
+# Validation fraction drawn from within the training portion.
+# val_frac=0.1 means the last 10% of the non-test alerts are used for validation.
+val_frac: 0.1
+
+# Override data path. Defaults to artifacts/processed-data/{scenario}/alerts.json.
+data_path: null
+
+# --- Model identification ---
+# Appended to the auto-generated model ID.
+# Full ID: {n_layers}l_{n_heads}h_{dim_per_head}d_{scenario}_{id_suffix}
+id_suffix: "1"
+
+# --- Data parameters ---
+context_size: 4096
+batch_size: 16
+features: [short, host]
+targets: [short, host]
+sampling: index
+min_freq: 10
+
+# --- Model architecture ---
+n_heads: 4
+dim_per_head: 16
+num_layers: 1
+feedforward_factor: 4
+activation: gelu      # "relu" or "gelu"
+gated_activation: true
+encoding: raw_time    # "raw_time" or "position"
+encoding_type: rotary # "rotary" or "learned" (learned only for position encoding)
+rotary_max_exp: 14    # log2 of max reasonable time span in a context window (seconds)
+rotary_cutoff: 0.75
+biases: false
+head_bias: true
+tie_weights: true
+emb_init_std: null    # null → defaults to 1/sqrt(d_model)
+
+# --- Training ---
+# save_intervals: [start_update, end_update] pairs. The best-performing checkpoint
+# within each interval is kept. Checkpoints are saved every 10 epochs inside an interval.
+save_intervals:
+  - [18000, 20000]
+  - [38000, 40000]
+  - [58000, 60000]
+
+optimizer: adam           # "adam" or "sgd"
+scheduler: linear         # "linear" or "schedulefree"
+lr: 5.0e-3
+warm_up_steps: 200
+decay: 0.1
+momentum: 0.9
+gamma: null               # null = cross-entropy; float = focal loss gamma (currently disabled upstream)
+class_balance: 2.0
+target_ratio: 0.2
+mask_ratio: 0.8
+perturb_ratio: 0.1
+
+# --- Output ---
+log: train                # log file name relative to artifacts/alertbert/; null logs to stdout
