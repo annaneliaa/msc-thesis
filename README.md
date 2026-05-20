@@ -12,16 +12,22 @@ A neural-symbolic (NeSy) system for intrusion detection in SOCs with focus on re
 
 ## Installation
 
-### Development Setup
+### Environment Setup
 
 ```bash
-# Install in development mode with all dependencies
+conda activate thesis
+```
+
+### Development Install
+
+```bash
+# Install the package in editable mode (run from repo root)
 pip install -e ".[dev]"
 ```
 
 ### Requirements
-- Python ≥ 3.10
-- Dependencies include: FastAPI, PyTorch, Transformers, MLflow, Pandas, and more (see `pyproject.toml`)
+- Python ≥ 3.10 (managed via the `thesis` conda environment)
+- Dependencies include: PyTorch, Transformers, Scikit-learn, Pandas, and more (see `pyproject.toml`)
 
 ## Project Structure
 
@@ -85,62 +91,72 @@ pytest -v
 pytest tests/path/to/test_file.py
 ```
 
-## AlertBERT Grouper Training
+## AlertBERT Grouper
 
-AlertBERT is a masked language model used to embed and cluster alerts for grouping. A model must be trained per scenario before AlertBERT-mode grouping can be used.
-
-### Prerequisites
-
-Ensure the scenario's alert data has been converted to JSON first:
-
-```bash
-python -m thesis convert-alerts-to-json <scenario>
-# e.g.: python -m thesis convert-alerts-to-json fox
-```
-
-This produces `artifacts/processed-data/{scenario}/alerts.json`.
+AlertBERT is a pre-trained masked language model that embeds alerts into a vector space and clusters them into groups. Pre-trained checkpoints live in `external/AlertBERT/saved_models/`. No local training is needed — the models are used for inference only.
 
 ### Configure
 
-Edit `configs/alertbert_training.yaml` and set the scenario you want to train on:
-
-```yaml
-scenario: fox       # thesis scenario name (fox, bear, harrison, …)
-test_frac: 0.3      # must match the downstream classifier's test_frac
-val_frac: 0.1       # validation fraction drawn from within the training portion
-id_suffix: "1"      # appended to the auto-generated model ID
-```
-
-The data split is time-based and consistent with the downstream feature classifier:
-- **train**: first `(1 - test_frac - val_frac)` of alerts by time
-- **val**: next `val_frac` of alerts (used during AlertBERT training only)
-- **test**: last `test_frac` of alerts — held out entirely, never seen by AlertBERT
-
-### Train
-
-```bash
-cd msc-thesis/
-python src/thesis/scripts/train_alertbert.py
-# or with an explicit config path:
-python src/thesis/scripts/train_alertbert.py --config configs/alertbert_training.yaml
-```
-
-Training prints progress and saves model checkpoints under `artifacts/alertbert/`. At the end it prints the model ID, e.g.:
-
-```
-Done. Models saved under: artifacts/alertbert
-Model directories match:  mlm_1l_4h_16d_fox_1_<k>k
-```
-
-### Activate the trained model
-
-Copy the printed model ID into `configs/alertbert_grouping.yaml`:
+Point `configs/alertbert_grouping.yaml` at the checkpoint you want to use:
 
 ```yaml
 alertbert:
-  model_id: mlm_1l_4h_16d_fox_1_60k
-  models_path: artifacts/alertbert
+  model_id: mlm_1l_1h_16d_original_1_60k   # directory name under saved_models/
+  models_path: external/AlertBERT/saved_models
+  delta: 2.0      # time-gap threshold (seconds) for pre-clustering
+  theta: 6.0      # cosine-distance scale factor (>= delta); higher = more semantic splitting
+  padding: 1024   # context alerts added on each side of an embedding chunk
+  readout: 2048   # alerts per embedding chunk (padding + readout ≤ model context window)
+  device: cpu     # or cuda
 ```
+
+`delta` and `theta` control the grouping sensitivity:
+- **delta** — maximum combined distance (time + semantic) to merge two alerts. Also used as the pre-clustering time gap.
+- **theta** — scales the semantic (cosine) component. When `theta == delta` embeddings are ignored; increasing `theta` relative to `delta` allows semantically different alerts to be split even when they are temporally close.
+
+### Embedding and chunking strategy
+
+AlertBERT embeds the full alert sequence of a scenario in order. Because the upstream clustering step builds a pairwise distance matrix (O(n²) memory), the sequence is processed in **6-hour time windows**. Within each window, if the alert count exceeds 30 000, the window is further divided into equal-sized **sub-chunks**.
+
+Each forward pass through the transformer sees `readout + 2 × padding` alerts. The model embeds all of them, but only the central `readout` embeddings are kept — the padding alerts on each side are discarded. This ensures boundary alerts in each chunk still see neighbours on both sides, giving them richer contextual representations. For scenarios smaller than `readout`, chunking is skipped and everything is embedded in a single pass.
+
+### Run
+
+AlertBERT grouping is invoked as part of the preprocessing pipeline. Configure the grouping method in the experiment config and run via the CLI or experiment scripts:
+
+```bash
+# Preprocess a scenario with AlertBERT grouping
+thesis-cli preprocess <scenario> --grouping alertbert
+```
+
+## Visualization
+
+### EDA Plots
+```
+# All scenarios (PDF, default output dir)
+python src/thesis/scripts/run_eda_plots.py --all
+
+# Specific scenarios
+python src/thesis/scripts/run_eda_plots.py fox harrison wheeler
+
+# Custom options
+python src/thesis/scripts/run_eda_plots.py --all \
+  --out-dir plots/eda \
+  --fmt png \
+  --bin-hours 2 \
+  --top-k 25
+```
+
+**Flags:**
+
+|Flag|Default|Description|
+|---|---|---|
+|`--all`|—|include all 8 scenarios|
+|`--data-dir`|`data/alerts_csv`|path to the CSV directory|
+|`--out-dir`|`artifacts/experiments/plots/eda`|where to save figures|
+|`--fmt`|`pdf`|`pdf`, `png`, or `svg`|
+|`--bin-hours`|`1.0`|histogram bin width for the volume plot|
+|`--top-k`|`20`|number of signatures in the top-names plot|
 
 ## Configuration
 
@@ -148,8 +164,7 @@ Configuration files are located in `configs/`:
 - `base.yaml` - Base configuration
 - `dev.yaml` - Development overrides
 - `prod.yaml` - Production overrides
-- `alertbert_training.yaml` - AlertBERT MLM training parameters
-- `alertbert_grouping.yaml` - AlertBERT grouper runtime settings
+- `alertbert_grouping.yaml` - AlertBERT grouper runtime settings (model, delta, theta, chunking)
 
 Key configuration includes:
 - App name, environment, host, and port
@@ -201,7 +216,7 @@ Datasets are located in `data/`:
 ### Notebooks
 Jupyter notebooks available in `src/thesis/notebooks/` for exploratory analysis and visualization.
 
-## Key Features
+## Main Features
 
 - **Hybrid Architecture**: Combines neural models (PyTorch/Transformers) with symbolic reasoning
 - **MLflow Integration**: Experiment tracking and model management

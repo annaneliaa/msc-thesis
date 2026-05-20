@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
+from thesis.config import GroupingConfig
 from thesis.schemas.preprocessing import GroupSnapshot, IncomingAlert, TokenizedAlert
 from thesis.preprocessing.parsing import parse_incoming_alert
 from thesis.preprocessing.tokenization import tokenize_alert
@@ -12,7 +14,7 @@ from thesis.preprocessing.group_selector import (
     create_cache_query,
 )
 from thesis.preprocessing.group_alerts import (
-    # ALERTBERT_METHOD,
+    ALERTBERT_METHOD,
     FIXED_WINDOW_METHOD,
     group_alerts,
 )
@@ -26,6 +28,25 @@ To be called from CLI commands to expose as less as possible.
 """
 
 
+def build_grouper(grouping: GroupingConfig) -> "AlertBERTGrouper | None":
+    """Construct an AlertBERTGrouper from config, or return None for fixed-window mode."""
+    if grouping.mode != ALERTBERT_METHOD:
+        return None
+    from thesis.preprocessing.grouping.alertbert_grouper import AlertBERTGrouper
+
+    cfg = grouping.alertbert
+    checkpoint_dir = Path(cfg.models_path) / cfg.model_id
+    return AlertBERTGrouper(
+        checkpoint_dir=checkpoint_dir,
+        delta=cfg.delta,
+        theta=cfg.theta,
+        dim_reduction=cfg.dim_reduction,
+        padding=cfg.padding,
+        readout=cfg.readout,
+        device=cfg.device,
+    )
+
+
 def process_alert_batch(
     rows: list[dict],
     scenario: str,
@@ -33,11 +54,6 @@ def process_alert_batch(
     grouping_mode: str = FIXED_WINDOW_METHOD,
     grouper: AlertBERTGrouper | None = None,
 ) -> int:
-    """Parse, tokenize, group, and ingest one batch of raw alert rows.
-
-    Pass grouping_mode='alertbert' and a pre-loaded AlertBERTGrouper as
-    `grouper` to use embedding-based grouping instead of the fixed window.
-    """
     tokenized_alerts: list[TokenizedAlert] = []
     for row in rows:
         try:

@@ -7,7 +7,12 @@ import os
 
 from thesis.schemas.dataframe_schemas import SCHEMAS
 from thesis.features.schema_registry import FEATURE_SCHEMAS
-from thesis.config import load_settings, load_mining_filter_config
+from thesis.config import (
+    AlertBERTConfig,
+    GroupingConfig,
+    load_settings,
+    load_mining_filter_config,
+)
 from thesis.mining.itemset_mining_job import run_transaction_eclat_job
 from thesis.mining.sequence_mining_job import (
     run_transaction_prefixspan_job,
@@ -20,7 +25,11 @@ from thesis.registry.models import list_all_models, get_model_path
 from thesis.registry.encoders import list_all_encoders
 from thesis.preprocessing.cache import TokenCache
 from thesis.preprocessing.cache_ingestor import CacheIngestor
-from thesis.preprocessing.service import process_alert_batch, select_groups_from_cache
+from thesis.preprocessing.service import (
+    build_grouper,
+    process_alert_batch,
+    select_groups_from_cache,
+)
 from thesis.preprocessing.mining_prep import build_transactions
 from thesis.training.service import train_model_for_schema
 from thesis.encoders.service import encode_transactions_for_schema
@@ -168,13 +177,40 @@ def preprocess_alert_batch(
     cache_dir: str = typer.Option(
         "artifacts/cache", help="Directory where cache files are stored."
     ),
+    grouping_mode: str = typer.Option(
+        "fixed_2s",
+        "--grouping-mode",
+        "-g",
+        help="Grouping method: 'fixed_2s' or 'alertbert'.",
+    ),
+    alertbert_model_id: str = typer.Option(
+        "",
+        "--alertbert-model-id",
+        help="AlertBERT model ID (subdirectory under models path).",
+    ),
+    alertbert_models_path: str = typer.Option(
+        "artifacts/alertbert",
+        "--alertbert-models-path",
+        help="Directory containing AlertBERT saved models.",
+    ),
+    alertbert_delta: float = typer.Option(
+        2.0, "--alertbert-delta", help="AlertBERT delta (time threshold)."
+    ),
+    alertbert_theta: float = typer.Option(
+        6.0, "--alertbert-theta", help="AlertBERT theta (cosine scale)."
+    ),
+    alertbert_device: str = typer.Option(
+        "cpu", "--alertbert-device", help="PyTorch device, e.g. 'cpu' or 'cuda'."
+    ),
 ) -> None:
     """
     Run parsing -> tokenization -> cache ingestion for multiple alerts.
     Also runs grouping on the batch and ingests groups into cache.
     from one input JSON file.
     """
-    print(f"Preprocessing alert batch for scenario '{scenario}'...")
+    print(
+        f"Preprocessing alert batch for scenario '{scenario}' (grouping={grouping_mode})..."
+    )
     try:
         alerts_path = Path(f"artifacts/processed-data/{scenario}/alerts.json")
         cache_path = Path(cache_dir)
@@ -185,11 +221,27 @@ def preprocess_alert_batch(
         if not isinstance(payload, list):
             raise ValueError("Input file must contain a JSON list of alert objects.")
 
+        grouping = GroupingConfig(
+            mode=grouping_mode,
+            alertbert=AlertBERTConfig(
+                model_id=alertbert_model_id,
+                models_path=alertbert_models_path,
+                delta=alertbert_delta,
+                theta=alertbert_theta,
+                device=alertbert_device,
+            ),
+        )
+        grouper = build_grouper(grouping)
+
         cache = TokenCache(cache_dir=cache_path, scenario=scenario)
         cache_ingestor = CacheIngestor(cache=cache)
 
         processed_count = process_alert_batch(
-            rows=payload, scenario=scenario, ingestor=cache_ingestor
+            rows=payload,
+            scenario=scenario,
+            ingestor=cache_ingestor,
+            grouping_mode=grouping_mode,
+            grouper=grouper,
         )
 
         typer.echo(f"Processed {processed_count} alerts.")

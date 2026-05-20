@@ -9,14 +9,15 @@ Usage:
     python src/thesis/scripts/run_compare_scenarios.py fox --force
     python src/thesis/scripts/run_compare_scenarios.py fox wheeler --no-run
 
-Output:
-    artifacts/experiments/compare_table.csv
-    artifacts/experiments/compare_delta_table.csv
-    artifacts/experiments/compare_table.txt
-    artifacts/experiments/plots/compare_auc.png
-    artifacts/experiments/plots/compare_metrics.png
-    artifacts/experiments/plots/compare_features.png
-    artifacts/experiments/plots/compare_fp.png
+Output (all under artifacts/experiments/run_compare/):
+    <scenarios>/compare_<ts>.json        per-scenario result
+    plots/<scenarios>/compare_table.csv
+    plots/<scenarios>/compare_delta_table.csv
+    plots/<scenarios>/compare_table.txt
+    plots/<scenarios>/compare_auc.png
+    plots/<scenarios>/compare_metrics.png
+    plots/<scenarios>/compare_features.png
+    plots/<scenarios>/compare_fp.png
 """
 
 from __future__ import annotations
@@ -46,6 +47,29 @@ from thesis.experiments.symbolic import (
 from thesis.paths import ABSTRACTION_MAP_PATH
 
 
+class _Tee:
+    """Mirror stdout to both terminal and a log file."""
+
+    def __init__(self, log_path: Path) -> None:
+        self._file = log_path.open("w", encoding="utf-8", buffering=1)
+        self._stdout = sys.__stdout__
+
+    def write(self, s: str) -> int:
+        self._stdout.write(s)
+        self._file.write(s)
+        return len(s)
+
+    def flush(self) -> None:
+        self._stdout.flush()
+        self._file.flush()
+
+    def fileno(self) -> int:
+        return self._stdout.fileno()
+
+    def close(self) -> None:
+        self._file.close()
+
+
 def _find_repo_root() -> Path:
     here = Path(__file__).resolve()
     for parent in here.parents:
@@ -63,7 +87,7 @@ sys.path.insert(0, str(_REPO / "src"))
 # ---------------------------------------------------------------------------
 
 FILTER_CONFIG = _REPO / "src/thesis/configs/mining_filters_strict.yaml"
-EXPERIMENTS_DIR = _REPO / "artifacts" / "experiments"
+EXPERIMENTS_DIR = _REPO / "artifacts" / "experiments" / "run_compare"
 
 
 # ---------------------------------------------------------------------------
@@ -108,20 +132,27 @@ def _load_compare_result(scenario: str) -> dict | None:
 # ---------------------------------------------------------------------------
 
 
-def _run_compare(scenario: str) -> dict:
+def _run_compare(
+    scenario: str,
+    filter_config: Path = FILTER_CONFIG,
+    model_name: str = "logreg",
+) -> dict:
     print(f"\n{'='*60}")
     print(f" Running compare: {scenario}")
     print(f"{'='*60}")
 
     print("\n--- Phase 1/2: baseline ---")
-    baseline = run_baseline_experiment(BaselineExperimentConfig(scenario=scenario))
+    baseline = run_baseline_experiment(
+        BaselineExperimentConfig(scenario=scenario, model_name=model_name)
+    )
 
     print("\n--- Phase 2/2: symbolic ---")
     symbolic = run_symbolic_experiment(
         SymbolicExperimentConfig(
             scenario=scenario,
-            filter_config=FILTER_CONFIG,
+            filter_config=filter_config,
             abstraction_map_path=ABSTRACTION_MAP_PATH,
+            model_name=model_name,
         )
     )
 
@@ -133,7 +164,8 @@ def _run_compare(scenario: str) -> dict:
         "experiment": "compare",
         "scenario": scenario,
         "timestamp": timestamp,
-        "filter_config": str(FILTER_CONFIG),
+        "model_name": model_name,
+        "filter_config": str(filter_config),
         "baseline": {
             "schema_name": baseline.schema_name,
             "schema_version": baseline.schema_version,
@@ -165,6 +197,7 @@ def _run_compare(scenario: str) -> dict:
 
     return {
         "scenario": scenario,
+        "model_name": model_name,
         "baseline": {
             **baseline.metrics,
             "n_features": baseline.n_features,
@@ -175,7 +208,7 @@ def _run_compare(scenario: str) -> dict:
             "n_features": symbolic.n_features,
             "n_transactions": symbolic.n_transactions,
         },
-        "filter_config": str(FILTER_CONFIG),
+        "filter_config": str(filter_config),
         "source": out_path.name,
     }
 
@@ -427,8 +460,37 @@ def main() -> None:
         action="store_true",
         help="Skip running; only load existing results and (re-)plot.",
     )
+    parser.add_argument(
+        "--filter-config",
+        type=Path,
+        default=FILTER_CONFIG,
+        help=f"Path to the mining filter YAML (default: {FILTER_CONFIG})",
+    )
+    parser.add_argument(
+        "--model-name",
+        default="logreg",
+        help="Model to use: logreg, logreg_l1, random_forest, lstm (default: logreg)",
+    )
     args = parser.parse_args()
 
+    run_ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    subdir_name = "_".join(args.scenarios)
+    log_dir = EXPERIMENTS_DIR / "plots" / subdir_name
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / f"compare_{run_ts}.log"
+    tee = _Tee(log_path)
+    sys.stdout = tee
+    print(f"Logging to {log_path}")
+
+    try:
+        _run_main(args, run_ts, subdir_name)
+    finally:
+        sys.stdout = sys.__stdout__
+        tee.close()
+        print(f"Log saved → {log_path}")
+
+
+def _run_main(args: object, run_ts: str, subdir_name: str) -> None:
     all_results: list[dict] = []
 
     for scenario in args.scenarios:
@@ -449,7 +511,9 @@ def main() -> None:
             all_results.append(existing)
             continue
 
-        r = _run_compare(scenario)
+        r = _run_compare(
+            scenario, filter_config=args.filter_config, model_name=args.model_name
+        )
         all_results.append(r)
 
     if not all_results:
@@ -459,7 +523,6 @@ def main() -> None:
     long_df = _build_long_table(all_results)
     delta_df = _build_delta_table(all_results)
 
-    subdir_name = "_".join(args.scenarios)
     out_dir = EXPERIMENTS_DIR / "plots" / subdir_name
     out_dir.mkdir(parents=True, exist_ok=True)
 

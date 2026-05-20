@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -29,6 +28,7 @@ import pandas as pd
 
 from thesis.config import load_mining_filter_config
 from thesis.experiments.baseline import (
+    ALERTBERT_METHOD,
     _EXPERIMENTS_DIR,
     _ROOT,
     _convert_alerts_to_json,
@@ -46,54 +46,11 @@ from thesis.mining.token_abstraction import (
     load_abstraction_map,
 )
 from thesis.mining.util import filter_mined_itemsets, filter_mined_sequences
-from thesis.paths import CACHE_DIR, ensure_artifact_dirs
-from thesis.schemas.mining import FeatureSelectionConfig
+from thesis.paths import ensure_artifact_dirs
+from thesis.schemas.experiments import SymbolicExperimentConfig, ExperimentResult
 from thesis.registry.models import get_model_path, resolve_model_paths
 from thesis.training.service import train_model_for_schema
 from thesis.utils.runs import create_run_dir
-
-
-# ---------------------------------------------------------------------------
-# Config and result types
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class SymbolicExperimentConfig:
-    scenario: str
-    # mining
-    min_support: float = 0.05
-    max_itemset_size: int = 3
-    max_seq_len: int = 5
-    target_label: str = "benign"
-    filter_config: Path | None = None
-    jaccard_threshold: float = 0.98
-    abstraction_map_path: Path | None = None
-    abstraction_level: int = 0  # 0 = mid-level (recommended set up), 1 = coarse
-    feature_selection: FeatureSelectionConfig = field(
-        default_factory=FeatureSelectionConfig
-    )
-    # training
-    model_name: str = "logreg"
-    model_version: str = "0.1.0"
-    schema_name: str = "base+symbolic"
-    test_frac: float = 0.3
-    cache_dir: Path = field(default_factory=lambda: CACHE_DIR)
-
-
-@dataclass
-class SymbolicExperimentResult:
-    scenario: str
-    model_name: str
-    model_version: str
-    schema_name: str
-    schema_version: str
-    symbolic_schema_path: Path
-    auc: float
-    n_transactions: int
-    n_features: int
-    metrics: dict
-    results_file: Path
 
 
 # ---------------------------------------------------------------------------
@@ -256,7 +213,7 @@ def _mine_and_register_symbolic_schema(
 
 def run_symbolic_experiment(
     config: SymbolicExperimentConfig,
-) -> SymbolicExperimentResult:
+) -> ExperimentResult:
     ensure_artifact_dirs()
     _EXPERIMENTS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -281,7 +238,13 @@ def run_symbolic_experiment(
 
     # 2. Tokenise + ingest into cache
     print("[2/8] Processing alert batch...")
-    _process_alert_batch(config.scenario, alerts_path, config.cache_dir)
+    _process_alert_batch(
+        config.scenario,
+        alerts_path,
+        config.cache_dir,
+        grouping_mode=config.grouping.mode,
+        grouping=config.grouping,
+    )
 
     # 3. Ensure feature manifest
     print("[3/8] Checking feature manifest...")
@@ -375,6 +338,11 @@ def run_symbolic_experiment(
     results_dir.mkdir(parents=True, exist_ok=True)
     results_file = results_dir / f"symbolic_{timestamp}.json"
 
+    grouping_params = (
+        config.grouping.alertbert.model_dump()
+        if config.grouping.mode == ALERTBERT_METHOD
+        else None
+    )
     with results_file.open("w", encoding="utf-8") as f:
         json.dump(
             {
@@ -385,6 +353,7 @@ def run_symbolic_experiment(
                 "model_version": summary.model_version,
                 "schema_name": summary.schema_name,
                 "schema_version": summary.schema_version,
+                "grouping": {"mode": config.grouping.mode, "params": grouping_params},
                 "symbolic_schema_path": str(symbolic_schema_path),
                 "mining": {
                     "min_support": config.min_support,
@@ -409,7 +378,7 @@ def run_symbolic_experiment(
     print(f"  AUC: {summary.auc:.4f}")
     print(f"  Results → {results_file}")
 
-    return SymbolicExperimentResult(
+    return ExperimentResult(
         scenario=config.scenario,
         model_name=config.model_name,
         model_version=summary.model_version,
@@ -421,4 +390,5 @@ def run_symbolic_experiment(
         n_features=summary.n_features,
         metrics=full_metrics,
         results_file=results_file,
+        grouping_mode=config.grouping.mode,
     )

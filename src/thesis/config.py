@@ -40,8 +40,13 @@ class AlertBERTConfig(BaseModel):
     model_id: str = ""
     models_path: str = "artifacts/alertbert"
     delta: float = 2.0
-    theta: float = 2.0
+    theta: float = 6.0
     dim_reduction: int = 2
+    # padding + readout control the transformer chunk size (readout + 2*padding alerts
+    # per forward pass). The orignal paper uses readout=2048, padding=1024 for GPU.
+    # For CPU, keep these small to avoid large attention matrices.
+    padding: int = 64
+    readout: int = 256
     device: str = "cpu"
 
 

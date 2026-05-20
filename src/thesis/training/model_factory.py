@@ -1,5 +1,8 @@
 from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
 from typing import Callable, Any
+
+from thesis.training.lstm_classifier import LSTMClassifier
 
 MODEL_FACTORIES = {
     "logreg": lambda: LogisticRegression(
@@ -17,6 +20,13 @@ MODEL_FACTORIES = {
         max_iter=1000,
         class_weight="balanced",
     ),
+    "random_forest": lambda: RandomForestClassifier(
+        n_estimators=200,
+        class_weight="balanced",
+        random_state=42,
+        n_jobs=-1,
+    ),
+    "lstm": lambda: LSTMClassifier(),
 }
 
 

@@ -91,15 +91,20 @@ def run_transfer(
     )
 
 
-def run_compare(scenario: str, filter_config: Path | None = None) -> None:
+def run_compare(
+    scenario: str,
+    filter_config: Path | None = None,
+    model_name: str = "logreg",
+) -> None:
     print("\n--- Phase 1/2: baseline ---")
-    baseline_config = BaselineExperimentConfig(scenario=scenario)
+    baseline_config = BaselineExperimentConfig(scenario=scenario, model_name=model_name)
     baseline = run_baseline_experiment(baseline_config)
 
     print("\n--- Phase 2/2: symbolic ---")
     symbolic_config = SymbolicExperimentConfig(
         scenario=scenario,
         filter_config=filter_config,
+        model_name=model_name,
     )
     symbolic = run_symbolic_experiment(symbolic_config)
 
@@ -131,6 +136,7 @@ def run_compare(scenario: str, filter_config: Path | None = None) -> None:
                 "experiment": "compare",
                 "scenario": scenario,
                 "timestamp": timestamp,
+                "model_name": model_name,
                 "filter_config": str(filter_config) if filter_config else None,
                 "baseline": {
                     "schema_name": baseline.schema_name,
@@ -183,6 +189,11 @@ def main() -> None:
         default=None,
         help="Path to a YAML mining filter config (symbolic and compare only).",
     )
+    parser.add_argument(
+        "--model-name",
+        default="logreg",
+        help="Model to use: logreg, logreg_l1, random_forest, lstm (default: logreg)",
+    )
 
     args = parser.parse_args()
 
@@ -197,7 +208,9 @@ def main() -> None:
         elif args.experiment == "symbolic":
             run_symbolic(scenario, filter_config=args.filter_config)
         elif args.experiment == "compare":
-            run_compare(scenario, filter_config=args.filter_config)
+            run_compare(
+                scenario, filter_config=args.filter_config, model_name=args.model_name
+            )
         elif args.experiment == "transfer":
             if len(args.scenarios) != 2:
                 parser.error("transfer requires exactly 2 scenarios: <train> <test>")

@@ -24,7 +24,7 @@ Usage:
     python src/thesis/scripts/run_sweep.py fox --params min_support max_overlap
     python src/thesis/scripts/run_sweep.py fox --no-run   # plot from cached results
 
-Output (all under artifacts/experiments/sweep/<scenario>/):
+Output (all under artifacts/experiments/run_sweep/<scenario>/):
     results.csv                          all sweep results
     plots/<scenario>_sweep_<param>.png   dual-axis plot per parameter
     plots/<scenario>_sweep_overview.png  2×2 summary grid
@@ -35,6 +35,7 @@ from __future__ import annotations
 import argparse
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 import matplotlib
@@ -49,6 +50,29 @@ from thesis.experiments.symbolic import (
     run_symbolic_experiment,
 )
 from thesis.paths import ABSTRACTION_MAP_PATH
+
+
+class _Tee:
+    """Mirror stdout to both terminal and a log file."""
+
+    def __init__(self, log_path: Path) -> None:
+        self._file = log_path.open("w", encoding="utf-8", buffering=1)
+        self._stdout = sys.__stdout__
+
+    def write(self, s: str) -> int:
+        self._stdout.write(s)
+        self._file.write(s)
+        return len(s)
+
+    def flush(self) -> None:
+        self._stdout.flush()
+        self._file.flush()
+
+    def fileno(self) -> int:
+        return self._stdout.fileno()
+
+    def close(self) -> None:
+        self._file.close()
 
 
 def _find_repo_root() -> Path:
@@ -346,7 +370,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    sweep_dir = _REPO / "artifacts" / "experiments" / "sweep" / args.scenario
+    sweep_dir = _REPO / "artifacts" / "experiments" / "run_sweep" / args.scenario
     sweep_dir.mkdir(parents=True, exist_ok=True)
     plots_dir = sweep_dir / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
@@ -354,6 +378,27 @@ def main() -> None:
     tmp_dir = sweep_dir / "_tmp"
     tmp_dir.mkdir(exist_ok=True)
 
+    run_ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    log_path = sweep_dir / f"sweep_{run_ts}.log"
+    tee = _Tee(log_path)
+    sys.stdout = tee
+    print(f"Logging to {log_path}")
+
+    try:
+        _sweep_body(args, sweep_dir, plots_dir, csv_path, tmp_dir)
+    finally:
+        sys.stdout = sys.__stdout__
+        tee.close()
+        print(f"Log saved → {log_path}")
+
+
+def _sweep_body(
+    args: object,
+    sweep_dir: Path,
+    plots_dir: Path,
+    csv_path: Path,
+    tmp_dir: Path,
+) -> None:
     cached = _load_cached(csv_path)
 
     if not args.no_run:

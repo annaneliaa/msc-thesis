@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import csv
 import json
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -27,47 +26,25 @@ from thesis.encoders.service import encode_transactions_for_schema
 from thesis.features.manifest import initialize_feature_manifest
 from thesis.features.schema_registry import FeatureSchemaRegistry
 from thesis.features.util import select_symbolic_features
-from thesis.paths import CACHE_DIR, ensure_artifact_dirs
+from thesis.config import GroupingConfig
+from thesis.paths import ensure_artifact_dirs
 from thesis.schemas.mining import FeatureSelectionConfig
 from thesis.preprocessing.cache import TokenCache
 from thesis.preprocessing.cache_ingestor import CacheIngestor
 from thesis.preprocessing.mining_prep import build_transactions
+from thesis.preprocessing.group_alerts import ALERTBERT_METHOD, FIXED_WINDOW_METHOD
 from thesis.schemas.preprocessing import Transaction
-from thesis.preprocessing.service import process_alert_batch, select_groups_from_cache
+from thesis.schemas.experiments import BaselineExperimentConfig, ExperimentResult
+from thesis.preprocessing.service import (
+    build_grouper,
+    process_alert_batch,
+    select_groups_from_cache,
+)
 from thesis.registry.models import get_model_path, resolve_model_paths
 from thesis.training.service import train_model_for_schema
 
 _ROOT = Path(__file__).resolve().parents[3]
 _EXPERIMENTS_DIR = _ROOT / "artifacts" / "experiments"
-
-
-# ---------------------------------------------------------------------------
-# Config and result types
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class BaselineExperimentConfig:
-    scenario: str
-    model_name: str = "logreg"
-    model_version: str = "0.1.0"
-    schema_name: str = "base"
-    test_frac: float = 0.3
-    cache_dir: Path = field(default_factory=lambda: CACHE_DIR)
-
-
-@dataclass
-class BaselineExperimentResult:
-    scenario: str
-    model_name: str
-    model_version: str
-    schema_name: str
-    schema_version: str
-    auc: float
-    n_transactions: int
-    n_features: int
-    metrics: dict
-    results_file: Path
 
 
 # ---------------------------------------------------------------------------
@@ -126,7 +103,13 @@ def _convert_alerts_to_json(scenario: str) -> Path:
     return output_path
 
 
-def _process_alert_batch(scenario: str, alerts_path: Path, cache_dir: Path) -> None:
+def _process_alert_batch(
+    scenario: str,
+    alerts_path: Path,
+    cache_dir: Path,
+    grouping_mode: str = FIXED_WINDOW_METHOD,
+    grouping: GroupingConfig | None = None,
+) -> None:
     alert_store_dir = cache_dir / scenario / "alerts"
     if alert_store_dir.exists() and any(alert_store_dir.glob("*.json")):
         print(f"  [skip] Alert cache already populated at {alert_store_dir}")
@@ -135,9 +118,16 @@ def _process_alert_batch(scenario: str, alerts_path: Path, cache_dir: Path) -> N
     with alerts_path.open("r", encoding="utf-8") as f:
         payload = json.load(f)
 
+    grouper = build_grouper(grouping) if grouping is not None else None
     cache = TokenCache(cache_dir=cache_dir, scenario=scenario)
     ingestor = CacheIngestor(cache=cache)
-    count = process_alert_batch(rows=payload, scenario=scenario, ingestor=ingestor)
+    count = process_alert_batch(
+        rows=payload,
+        scenario=scenario,
+        ingestor=ingestor,
+        grouping_mode=grouping_mode,
+        grouper=grouper,
+    )
     print(f"  Processed {count} alerts into cache.")
 
 
@@ -146,32 +136,36 @@ def _load_transactions(scenario: str, cache_dir: Path) -> list:
     out_path = out_dir / "transactions_raw.json"
 
     if out_path.exists():
-        print(f"  [skip] Loading transactions from existing {out_path}")
         with out_path.open("r", encoding="utf-8") as f:
             serialized = json.load(f)
-        transactions = [
-            Transaction(
-                transaction_id=t["transaction_id"],
-                group_id=t["group_id"],
-                method=t["method"],
-                start_ts=t["start_ts"],
-                end_ts=t["end_ts"],
-                n_alerts=t["n_alerts"],
-                alert_ids=t["alert_ids"],
-                abs_items=set(t["abs_items"]),
-                raw_items=set(t["raw_items"]) if t["raw_items"] is not None else None,
-                sorted_items=[set(s) for s in t["sorted_items"]],
-                alert_ips=set(t["alert_ips"]),
-                tx_label=t["tx_label"],
-                alert_labels=set(t["alert_labels"])
-                if t["alert_labels"] is not None
-                else None,
-                weight=t["weight"],
-            )
-            for t in serialized
-        ]
-        print(f"  Loaded {len(transactions)} transactions from cache.")
-        return transactions
+        if serialized:
+            print(f"  [skip] Loading transactions from existing {out_path}")
+            transactions = [
+                Transaction(
+                    transaction_id=t["transaction_id"],
+                    group_id=t["group_id"],
+                    method=t["method"],
+                    start_ts=t["start_ts"],
+                    end_ts=t["end_ts"],
+                    n_alerts=t["n_alerts"],
+                    alert_ids=t["alert_ids"],
+                    abs_items=set(t["abs_items"]),
+                    raw_items=set(t["raw_items"])
+                    if t["raw_items"] is not None
+                    else None,
+                    sorted_items=[set(s) for s in t["sorted_items"]],
+                    alert_ips=set(t["alert_ips"]),
+                    tx_label=t["tx_label"],
+                    alert_labels=set(t["alert_labels"])
+                    if t["alert_labels"] is not None
+                    else None,
+                    weight=t["weight"],
+                )
+                for t in serialized
+            ]
+            print(f"  Loaded {len(transactions)} transactions from cache.")
+            return transactions
+        print(f"  [warn] {out_path} is empty, rebuilding transactions...")
 
     cache = TokenCache(cache_dir=cache_dir, scenario=scenario)
     snapshots = select_groups_from_cache(
@@ -281,7 +275,7 @@ def _encode_transactions(
 
 def run_baseline_experiment(
     config: BaselineExperimentConfig,
-) -> BaselineExperimentResult:
+) -> ExperimentResult:
     ensure_artifact_dirs()
     _EXPERIMENTS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -293,7 +287,13 @@ def run_baseline_experiment(
 
     # 2. Tokenise + ingest into cache
     print("[2/7] Processing alert batch...")
-    _process_alert_batch(config.scenario, alerts_path, config.cache_dir)
+    _process_alert_batch(
+        config.scenario,
+        alerts_path,
+        config.cache_dir,
+        grouping_mode=config.grouping.mode,
+        grouping=config.grouping,
+    )
 
     # 3. Ensure feature manifest exists (creates base + base+dynamic schemas if missing)
     print("[3/7] Checking feature manifest...")
@@ -339,6 +339,11 @@ def run_baseline_experiment(
     results_dir.mkdir(parents=True, exist_ok=True)
     results_file = results_dir / f"baseline_{timestamp}.json"
 
+    grouping_params = (
+        config.grouping.alertbert.model_dump()
+        if config.grouping.mode == ALERTBERT_METHOD
+        else None
+    )
     with results_file.open("w", encoding="utf-8") as f:
         json.dump(
             {
@@ -349,6 +354,7 @@ def run_baseline_experiment(
                 "model_version": summary.model_version,
                 "schema_name": summary.schema_name,
                 "schema_version": summary.schema_version,
+                "grouping": {"mode": config.grouping.mode, "params": grouping_params},
                 "n_transactions": len(df),
                 "n_features": summary.n_features,
                 "test_size": summary.test_size,
@@ -361,7 +367,7 @@ def run_baseline_experiment(
     print(f"  AUC: {summary.auc:.4f}")
     print(f"  Results → {results_file}")
 
-    return BaselineExperimentResult(
+    return ExperimentResult(
         scenario=config.scenario,
         model_name=config.model_name,
         model_version=summary.model_version,
@@ -372,4 +378,5 @@ def run_baseline_experiment(
         n_features=summary.n_features,
         metrics=full_metrics,
         results_file=results_file,
+        grouping_mode=config.grouping.mode,
     )

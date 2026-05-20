@@ -39,6 +39,7 @@ from thesis.inference.service import (
     load_model_for_inference,
     run_inference_on_transactions,
 )
+from thesis.config import GroupingConfig
 from thesis.paths import CACHE_DIR, MODELS_DIR, MODEL_FILENAME, ensure_artifact_dirs
 from thesis.schemas.mining import FeatureSelectionConfig
 
@@ -60,6 +61,7 @@ class TransferExperimentConfig:
         default_factory=FeatureSelectionConfig
     )
     cache_dir: Path = field(default_factory=lambda: CACHE_DIR)
+    grouping: GroupingConfig = field(default_factory=GroupingConfig)
 
 
 @dataclass
@@ -156,7 +158,13 @@ def run_transfer_experiment(
 
     # 4. Tokenise + ingest test alerts into cache
     print("[4/8] Processing test alert batch...")
-    _process_alert_batch(config.test_scenario, alerts_path, config.cache_dir)
+    _process_alert_batch(
+        config.test_scenario,
+        alerts_path,
+        config.cache_dir,
+        grouping_mode=config.grouping.mode,
+        grouping=config.grouping,
+    )
 
     # 5. Build test transactions
     print("[5/8] Building test transactions from cache...")
