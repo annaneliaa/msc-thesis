@@ -123,12 +123,14 @@ def _run_pair(
     grouping: GroupingConfig,
     cache_dir: Path,
     filter_config: Path | None,
+    grouping_cache_dir: Path | None = None,
 ) -> tuple[ExperimentResult, ExperimentResult, list]:
     baseline = run_baseline_experiment(
         BaselineExperimentConfig(
             scenario=scenario,
             cache_dir=cache_dir,
             grouping=grouping,
+            grouping_cache_dir=grouping_cache_dir,
         )
     )
     symbolic = run_symbolic_experiment(
@@ -138,9 +140,10 @@ def _run_pair(
             grouping=grouping,
             filter_config=filter_config,
             abstraction_map_path=ABSTRACTION_MAP_PATH,
+            grouping_cache_dir=grouping_cache_dir,
         )
     )
-    txs = _load_transactions(scenario, cache_dir)
+    txs = _load_transactions(scenario, cache_dir, groups_cache_dir=grouping_cache_dir)
     return baseline, symbolic, txs
 
 
@@ -203,6 +206,7 @@ def _result_to_dict(r: ExperimentResult | ExperimentResult) -> dict:
         "grouping_mode": r.grouping_mode,
         "auc": r.auc,
         "n_transactions": r.n_transactions,
+        "n_mixed_dropped": r.n_mixed_dropped,
         "n_features": r.n_features,
         "metrics": r.metrics,
         "results_file": str(r.results_file),
@@ -447,8 +451,13 @@ def main() -> None:
 def _main_body(args: object, scenario: str, results_dir: Path, run_ts: str) -> None:
     cache_dir_fw = CACHE_DIR / "grouping_compare" / scenario / "fixed_2s"
     cache_dir_ab = CACHE_DIR / "grouping_compare" / scenario / "alertbert"
+    # AlertBERT groups live outside the experiment cache so they survive reruns.
+    alertbert_groups_dir = (
+        CACHE_DIR / "alertbert_groups" / scenario / args.alertbert_model_id
+    )
     cache_dir_fw.mkdir(parents=True, exist_ok=True)
     cache_dir_ab.mkdir(parents=True, exist_ok=True)
+    alertbert_groups_dir.mkdir(parents=True, exist_ok=True)
 
     grouping_fw = _fixed_grouping()
     grouping_ab = _alertbert_grouping(
@@ -470,7 +479,11 @@ def _main_body(args: object, scenario: str, results_dir: Path, run_ts: str) -> N
 
     print("\n--- [2/2] alertbert ---")
     baseline_ab, symbolic_ab, txs_ab = _run_pair(
-        scenario, grouping_ab, cache_dir_ab, args.filter_config
+        scenario,
+        grouping_ab,
+        cache_dir_ab,
+        args.filter_config,
+        grouping_cache_dir=alertbert_groups_dir,
     )
 
     stats_fw = _compute_tx_stats(txs_fw)

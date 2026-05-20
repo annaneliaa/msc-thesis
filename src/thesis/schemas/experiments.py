@@ -27,6 +27,7 @@ class SymbolicExperimentConfig:
     test_frac: float = 0.3
     cache_dir: Path = field(default_factory=lambda: CACHE_DIR)
     grouping: GroupingConfig = field(default_factory=GroupingConfig)
+    grouping_cache_dir: Path | None = None
 
 
 @dataclass
@@ -38,6 +39,7 @@ class BaselineExperimentConfig:
     test_frac: float = 0.3
     cache_dir: Path = field(default_factory=lambda: CACHE_DIR)
     grouping: GroupingConfig = field(default_factory=GroupingConfig)
+    grouping_cache_dir: Path | None = None
 
 
 @dataclass
@@ -53,4 +55,5 @@ class ExperimentResult:
     metrics: dict
     results_file: Path
     grouping_mode: str
+    n_mixed_dropped: int = 0
     symbolic_schema_path: Path | None = None

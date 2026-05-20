@@ -237,11 +237,12 @@ def run_symbolic_experiment(
     alerts_path = _convert_alerts_to_json(config.scenario)
 
     # 2. Tokenise + ingest into cache
+    grouping_cache_dir = config.grouping_cache_dir
     print("[2/8] Processing alert batch...")
     _process_alert_batch(
         config.scenario,
         alerts_path,
-        config.cache_dir,
+        grouping_cache_dir if grouping_cache_dir is not None else config.cache_dir,
         grouping_mode=config.grouping.mode,
         grouping=config.grouping,
     )
@@ -252,7 +253,9 @@ def run_symbolic_experiment(
 
     # 4. Build transactions from closed groups
     print("[4/8] Building transactions from cache...")
-    transactions = _load_transactions(config.scenario, config.cache_dir)
+    transactions = _load_transactions(
+        config.scenario, config.cache_dir, groups_cache_dir=grouping_cache_dir
+    )
 
     transactions_path = (
         config.cache_dir / config.scenario / "transactions" / "transactions_raw.json"
@@ -290,6 +293,13 @@ def run_symbolic_experiment(
     print(f"[7/8] Training '{config.model_name}' v{effective_version}...")
     y = df["tx_label"].map({"benign": 0, "attack": 1})
     X = df.drop(columns=["tx_label"])
+    mask = y.notna()
+    n_mixed = int((~mask).sum())
+    if n_mixed:
+        print(
+            f"  [warn] Dropping {n_mixed} transactions with unlabelled/mixed tx_label"
+        )
+        X, y = X[mask], y[mask]
     output_dir = get_model_path(config.scenario, config.model_name, effective_version)
 
     summary = train_model_for_schema(
@@ -367,6 +377,7 @@ def run_symbolic_experiment(
                     ),
                 },
                 "n_transactions": len(df),
+                "n_mixed_dropped": n_mixed,
                 "n_features": summary.n_features,
                 "test_size": summary.test_size,
                 "metrics": full_metrics,
@@ -387,6 +398,7 @@ def run_symbolic_experiment(
         symbolic_schema_path=symbolic_schema_path,
         auc=summary.auc,
         n_transactions=len(df),
+        n_mixed_dropped=n_mixed,
         n_features=summary.n_features,
         metrics=full_metrics,
         results_file=results_file,
