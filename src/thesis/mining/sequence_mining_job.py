@@ -106,6 +106,13 @@ def run_transaction_prefixspan_job(
             run_dir=run_dir,
         )
 
+        n_mixed = sum(1 for tx in transactions if tx.tx_label == "mixed")
+        if n_mixed:
+            print(
+                f"  [warn] Dropping {n_mixed} mixed-label transactions before sequence mining"
+            )
+            transactions = [tx for tx in transactions if tx.tx_label != "mixed"]
+
         all_labels = sorted(
             {tx.tx_label for tx in transactions if tx.tx_label is not None}
         )
@@ -353,6 +360,13 @@ def run_transaction_itemset_prefixspan_job(
             path=transactions_path,
             run_dir=run_dir,
         )
+
+        n_mixed = sum(1 for tx in transactions if tx.tx_label == "mixed")
+        if n_mixed:
+            print(
+                f"  [warn] Dropping {n_mixed} mixed-label transactions before sequence mining"
+            )
+            transactions = [tx for tx in transactions if tx.tx_label != "mixed"]
 
         all_labels = sorted(
             {tx.tx_label for tx in transactions if tx.tx_label is not None}
