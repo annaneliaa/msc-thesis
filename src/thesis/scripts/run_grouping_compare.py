@@ -9,7 +9,8 @@ Usage:
         --alertbert-model-id mlm_1l_1h_16d_original_1_60k \\
         [--alertbert-models-path external/AlertBERT/saved_models] \\
         [--filter-config src/thesis/configs/mining_filters_strict.yaml] \\
-        [--force]
+        [--force] [--force-grouping] \\
+        [--replot]
 
 Output (all under artifacts/experiments/run_grouping_compare/):
     <scenario>/grouping_compare_<ts>.json
@@ -24,6 +25,7 @@ from __future__ import annotations
 import argparse
 import gc
 import json
+import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -171,21 +173,9 @@ def _compute_tx_stats(txs: list) -> dict[str, Any]:
     }
 
     if has_labels:
-        n_mixed = sum(
-            1 for t in txs if t.alert_labels is not None and len(t.alert_labels) > 1
-        )
-        n_pure_attack = sum(
-            1
-            for t in txs
-            if t.tx_label == "attack"
-            and (t.alert_labels is None or t.alert_labels == {"attack"})
-        )
-        n_pure_benign = sum(
-            1
-            for t in txs
-            if t.tx_label == "benign"
-            and (t.alert_labels is None or t.alert_labels == {"benign"})
-        )
+        n_pure_benign = sum(1 for t in txs if t.tx_label == "benign")
+        n_pure_attack = sum(1 for t in txs if t.tx_label == "attack")
+        n_mixed = sum(1 for t in txs if t.tx_label == "mixed")
         stats["n_mixed"] = n_mixed
         stats["n_pure_attack"] = n_pure_attack
         stats["n_pure_benign"] = n_pure_benign
@@ -217,9 +207,72 @@ def _stats_for_json(stats: dict) -> dict:
     return {k: v for k, v in stats.items() if k != "sizes"}
 
 
+def _result_from_dict(d: dict, scenario: str) -> ExperimentResult:
+    return ExperimentResult(
+        scenario=scenario,
+        model_name=d.get("model_name", "logreg"),
+        model_version=d.get("model_version", "0.1.0"),
+        schema_name=d.get("schema_name", ""),
+        schema_version=d.get("schema_version", ""),
+        auc=d.get("auc", float("nan")),
+        n_transactions=d.get("n_transactions", 0),
+        n_mixed_dropped=d.get("n_mixed_dropped", 0),
+        n_features=d.get("n_features", 0),
+        metrics=d.get("metrics", {}),
+        results_file=Path(d.get("results_file", ".")),
+        grouping_mode=d.get("grouping_mode", ""),
+    )
+
+
 def _latest_json(directory: Path, prefix: str) -> Path | None:
     candidates = sorted(directory.glob(f"{prefix}_*.json"))
     return candidates[-1] if candidates else None
+
+
+# ---------------------------------------------------------------------------
+# Confusion matrix
+# ---------------------------------------------------------------------------
+
+
+def _cm_block(result: ExperimentResult, label: str) -> str:
+    m = result.metrics
+    tp = m.get("tp", "?")
+    tn = m.get("tn", "?")
+    fp = m.get("fp", "?")
+    fn = m.get("fn", "?")
+    lines = [
+        f"  {label}",
+        f"    {'':22s} Predicted benign  Predicted attack",
+        f"    {'Actual benign':<22s} {str(tn):>16}  {str(fp):>15}",
+        f"    {'Actual attack':<22s} {str(fn):>16}  {str(tp):>15}",
+    ]
+    return "\n".join(lines)
+
+
+def save_confusion_matrices(
+    results: dict[str, dict[str, ExperimentResult]],
+    scenario: str,
+    timestamp: str,
+    out_dir: Path,
+) -> Path:
+    """Write confusion matrices for all method×experiment combinations to a text file."""
+    sep = "─" * 56
+    blocks = [
+        f"Confusion Matrices — scenario: {scenario} — {timestamp}",
+        sep,
+    ]
+    for method, method_label in [("fixed_2s", "Fixed 2 s"), ("alertbert", "AlertBERT")]:
+        for exp_key, exp_label in [("baseline", "Baseline"), ("symbolic", "Symbolic")]:
+            result = results[method][exp_key]
+            header = f"{method_label} / {exp_label}"
+            blocks.append(_cm_block(result, header))
+            blocks.append("")
+    blocks.append(sep)
+
+    out = out_dir / f"confusion_matrices_{timestamp}.txt"
+    out.write_text("\n".join(blocks), encoding="utf-8")
+    print(f"  Confusion matrices → {out}")
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -404,8 +457,8 @@ def main() -> None:
     parser.add_argument("scenario", help="Scenario name (e.g. fox)")
     parser.add_argument(
         "--alertbert-model-id",
-        required=True,
-        help="AlertBERT model ID (subdirectory inside models path).",
+        default=None,
+        help="AlertBERT model ID (subdirectory inside models path). Required unless --replot is used.",
     )
     parser.add_argument(
         "--alertbert-models-path",
@@ -421,7 +474,17 @@ def main() -> None:
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Re-run even if grouping_compare results already exist.",
+        help="Re-run even if grouping_compare results already exist (reuses grouping cache).",
+    )
+    parser.add_argument(
+        "--force-grouping",
+        action="store_true",
+        help="Re-run and also discard the AlertBERT grouping cache, forcing groups to be recomputed. Implies --force.",
+    )
+    parser.add_argument(
+        "--replot",
+        action="store_true",
+        help="Reload existing results JSON and regenerate confusion matrix and metrics plot without re-running experiments.",
     )
     args = parser.parse_args()
 
@@ -430,7 +493,51 @@ def main() -> None:
     results_dir.mkdir(parents=True, exist_ok=True)
 
     existing = _latest_json(results_dir, "grouping_compare")
-    if existing and not args.force:
+
+    if args.replot:
+        if not existing:
+            print(
+                f"[error] No existing results found in {results_dir}. Run without --replot first."
+            )
+            return
+        print(f"[replot] Loading {existing.name}")
+        with existing.open() as f:
+            data = json.load(f)
+        ts = data["timestamp"]
+        results = {
+            "fixed_2s": {
+                "baseline": _result_from_dict(data["fixed_2s"]["baseline"], scenario),
+                "symbolic": _result_from_dict(data["fixed_2s"]["symbolic"], scenario),
+            },
+            "alertbert": {
+                "baseline": _result_from_dict(data["alertbert"]["baseline"], scenario),
+                "symbolic": _result_from_dict(data["alertbert"]["symbolic"], scenario),
+            },
+        }
+        save_confusion_matrices(results, scenario, ts, results_dir)
+        plot_dir = EXPERIMENTS_DIR / "plots" / f"{scenario}_grouping"
+        plot_dir.mkdir(parents=True, exist_ok=True)
+        plot_data = {
+            "scenario": scenario,
+            "fixed_2s": {
+                "baseline": results["fixed_2s"]["baseline"],
+                "symbolic": results["fixed_2s"]["symbolic"],
+                "tx_stats": data["fixed_2s"]["tx_stats"],
+            },
+            "alertbert": {
+                "baseline": results["alertbert"]["baseline"],
+                "symbolic": results["alertbert"]["symbolic"],
+                "tx_stats": data["alertbert"]["tx_stats"],
+            },
+        }
+        plot_metrics(plot_data, plot_dir)
+        print("Done.")
+        return
+
+    if not args.alertbert_model_id:
+        parser.error("--alertbert-model-id is required when not using --replot")
+
+    if existing and not args.force and not args.force_grouping:
         print(f"[skip] Existing results: {existing.name}. Use --force to re-run.")
         return
 
@@ -455,6 +562,13 @@ def _main_body(args: object, scenario: str, results_dir: Path, run_ts: str) -> N
     alertbert_groups_dir = (
         CACHE_DIR / "alertbert_groups" / scenario / args.alertbert_model_id
     )
+    if args.force_grouping:
+        tx_cache = cache_dir_ab / scenario / "transactions"
+        for stale in (alertbert_groups_dir, tx_cache):
+            if stale.exists():
+                shutil.rmtree(stale)
+                print(f"  [force-grouping] Cleared {stale}")
+
     cache_dir_fw.mkdir(parents=True, exist_ok=True)
     cache_dir_ab.mkdir(parents=True, exist_ok=True)
     alertbert_groups_dir.mkdir(parents=True, exist_ok=True)
@@ -527,6 +641,16 @@ def _main_body(args: object, scenario: str, results_dir: Path, run_ts: str) -> N
     with out_json.open("w") as f:
         json.dump(combined, f, indent=2)
     print(f"\n  Combined results → {out_json}")
+
+    save_confusion_matrices(
+        {
+            "fixed_2s": {"baseline": baseline_fw, "symbolic": symbolic_fw},
+            "alertbert": {"baseline": baseline_ab, "symbolic": symbolic_ab},
+        },
+        scenario,
+        timestamp,
+        results_dir,
+    )
 
     # Summary table
     print(f"\n{'─'*56}")

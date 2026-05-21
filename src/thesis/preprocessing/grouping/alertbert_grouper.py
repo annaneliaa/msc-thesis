@@ -6,21 +6,6 @@ from pathlib import Path
 import numpy as np
 import torch
 
-# graph_tool references numpy.float128 which doesn't exist on macOS
-if not hasattr(np, "float128"):
-    np.float128 = np.longdouble  # type: ignore[attr-defined]
-
-from alertbert.models import (
-    AlertBERT,
-    MaskedLanguageModel,
-    MaskedLangModelInferenceWrapper,
-)
-from alertbert.preprocessing import (
-    BaseSequenceCollate,
-    default_collate_fn,
-    load_feature_vocabs,
-)
-
 from thesis.schemas.preprocessing import GroupingRecord, TokenizedAlert
 
 ALERTBERT_METHOD = "alertbert"
@@ -72,91 +57,17 @@ class _InferenceDataset:
             idx_array = idx_array % len(self)
         return {k: self.data[k][idx_array] for k in self.keys}
 
-
-class _AlertBERTFixed(AlertBERT):
-    """AlertBERT subclass with a corrected get_embeddings.
-
-    The upstream version has an UnboundLocalError when the dataset is smaller
-    than readout (the loop variable `i` is referenced after a loop that never
-    ran). This override handles that case and fixes the remainder-index arithmetic.
-
-    Chunking strategy
-    -----------------
-    Each forward pass sees `readout + 2*padding` alerts (capped at the context
-    window). The model embeds them all, but we only keep the central `readout`
-    embeddings, discarding the padding on each side. This gives every alert
-    neighbours on both sides for better contextual representations.
-
-    For datasets smaller than `readout` we skip chunking and embed everything
-    in one shot — no padding trimming needed.
-    """
-
-    def get_embeddings(
-        self,
-        data: _InferenceDataset,
-        apply_dim_red: bool = True,
-        add_time: bool = True,
-    ) -> np.ndarray:
-        n = len(data)
-        embeddings_list: list[np.ndarray] = []
-
-        if n <= self.readout:
-            # Fits in a single forward pass — process without padding trimming.
-            batch = self.collate_fn([data[0:n]])
-            batch = self.model(batch)
-            embeddings_list.append(batch["output"][0].cpu().numpy())
-        else:
-            num_full_chunks = n // self.readout
-            remainder = n % self.readout
-
-            for i in range(num_full_chunks):
-                start = i * self.readout - self.padding
-                stop = (i + 1) * self.readout + self.padding
-                batch = self.collate_fn([data[start:stop]])
-                batch = self.model(batch)
-                embeddings_list.append(
-                    batch["output"][0, self.padding : -self.padding].cpu().numpy()
-                )
-                if num_full_chunks >= 500 and (i + 1) % 200 == 0:
-                    pct = 100 * (i + 1) / num_full_chunks
-                    print(
-                        f"        [{pct:.0f}%] {i + 1}/{num_full_chunks} embedding chunks",
-                        flush=True,
-                    )
-
-            if remainder:
-                # Remaining alerts after the last full chunk.
-                start = num_full_chunks * self.readout - self.padding
-                stop = n + self.padding
-                batch = self.collate_fn([data[start:stop]])
-                batch = self.model(batch)
-                embeddings_list.append(
-                    batch["output"][0, self.padding : -self.padding].cpu().numpy()
-                )
-
-        embeddings = np.concatenate(embeddings_list)
-
-        if apply_dim_red and self.dim_reduction is not None:
-            n_components = self.dim_reduction.n_components
-            if n > n_components:
-                embeddings = self.dim_reduction.fit_transform(embeddings)
-            # else: too few samples for PCA — leave embeddings at full d_model
-
-        if add_time:
-            embeddings = np.concatenate(
-                (embeddings, data.data["raw_time"].reshape(-1, 1)),
-                axis=1,
-            )
-
-        return embeddings
+    def __iter__(self):
+        for i in range(len(self)):
+            yield {k: self.data[k][i] for k in self.keys}
 
 
 class AlertBERTGrouper:
     """Groups a list[TokenizedAlert] using a pre-trained AlertBERT checkpoint.
 
-    The model is loaded once at construction. Call .group() for each batch of
-    alerts. Alerts are expected to cover one scenario's worth of data — the
-    whole sequence is embedded and clustered together for best results.
+    The model is loaded lazily on first non-empty call to .group(). This means
+    instantiation is cheap and theta/delta validation errors surface immediately,
+    while missing-model errors surface only when grouping is actually attempted.
 
     Parameters
     ----------
@@ -197,16 +108,118 @@ class AlertBERTGrouper:
         readout: int = 2048,
         device: str = "cpu",
     ) -> None:
-        checkpoint_dir = Path(checkpoint_dir)
-        self._device = torch.device(device)
+        if theta < delta:
+            raise ValueError(
+                f"theta ({theta}) must be >= delta ({delta}): theta controls the "
+                "cosine-distance scale and must be at least as large as the time-gap delta"
+            )
+        self._checkpoint_dir = Path(checkpoint_dir)
+        self._delta = delta
+        self._theta = theta
+        self._dim_reduction = dim_reduction
+        self._padding = padding
+        self._readout = readout
+        self._device_str = device
+        self._grouper = None  # loaded lazily by _load_model()
 
-        with (checkpoint_dir / "report.json").open() as f:
+    def _load_model(self) -> None:
+        if self._grouper is not None:
+            return
+
+        # graph_tool (transitive via alertbert.models) references numpy.float128
+        # which doesn't exist on macOS — patch before importing.
+        if not hasattr(np, "float128"):
+            np.float128 = np.longdouble  # type: ignore[attr-defined]
+
+        from alertbert.models import (  # noqa: PLC0415
+            AlertBERT,
+            MaskedLanguageModel,
+            MaskedLangModelInferenceWrapper,
+        )
+        from alertbert.preprocessing import (  # noqa: PLC0415
+            BaseSequenceCollate,
+            default_collate_fn,
+            load_feature_vocabs,
+        )
+
+        # Defined here so AlertBERT is in scope — graph_tool must be available.
+        class _AlertBERTFixed(AlertBERT):
+            """AlertBERT subclass with a corrected get_embeddings.
+
+            The upstream version has an UnboundLocalError when the dataset is smaller
+            than readout (the loop variable `i` is referenced after a loop that never
+            ran). This override handles that case and fixes the remainder-index arithmetic.
+            """
+
+            def get_embeddings(
+                self,
+                data: _InferenceDataset,
+                apply_dim_red: bool = True,
+                add_time: bool = True,
+            ) -> np.ndarray:
+                n = len(data)
+                embeddings_list: list[np.ndarray] = []
+
+                if n <= self.readout:
+                    batch = self.collate_fn([data[0:n]])
+                    batch = self.model(batch)
+                    embeddings_list.append(batch["output"][0].cpu().numpy())
+                else:
+                    num_full_chunks = n // self.readout
+                    remainder = n % self.readout
+
+                    for i in range(num_full_chunks):
+                        start = i * self.readout - self.padding
+                        stop = (i + 1) * self.readout + self.padding
+                        batch = self.collate_fn([data[start:stop]])
+                        batch = self.model(batch)
+                        embeddings_list.append(
+                            batch["output"][0, self.padding : -self.padding]
+                            .cpu()
+                            .numpy()
+                        )
+                        if num_full_chunks >= 500 and (i + 1) % 200 == 0:
+                            pct = 100 * (i + 1) / num_full_chunks
+                            print(
+                                f"        [{pct:.0f}%] {i + 1}/{num_full_chunks} embedding chunks",
+                                flush=True,
+                            )
+
+                    if remainder:
+                        start = num_full_chunks * self.readout - self.padding
+                        stop = n + self.padding
+                        batch = self.collate_fn([data[start:stop]])
+                        batch = self.model(batch)
+                        embeddings_list.append(
+                            batch["output"][0, self.padding : -self.padding]
+                            .cpu()
+                            .numpy()
+                        )
+
+                embeddings = np.concatenate(embeddings_list)
+
+                if apply_dim_red and self.dim_reduction is not None:
+                    n_components = self.dim_reduction.n_components
+                    if n > n_components:
+                        embeddings = self.dim_reduction.fit_transform(embeddings)
+
+                if add_time:
+                    embeddings = np.concatenate(
+                        (embeddings, data.data["raw_time"].reshape(-1, 1)),
+                        axis=1,
+                    )
+
+                return embeddings
+
+        device = torch.device(self._device_str)
+
+        with (self._checkpoint_dir / "report.json").open() as f:
             report = json.load(f)
         params = report["params"]
 
         vocab_features = list(set(params["features"]) | set(params["targets"]))
         vocabs = load_feature_vocabs(
-            str(checkpoint_dir), vocab_features, params["min_freq"]
+            str(self._checkpoint_dir), vocab_features, params["min_freq"]
         )
 
         collate_fn_map = {**vocabs, params["encoding"]: default_collate_fn}
@@ -215,12 +228,12 @@ class AlertBERTGrouper:
         model = MaskedLanguageModel(params=params, vocabs=vocabs)
         model.load_state_dict(
             torch.load(
-                checkpoint_dir / "model.pt",
+                self._checkpoint_dir / "model.pt",
                 weights_only=True,
-                map_location=self._device,
+                map_location=device,
             )
         )
-        model.to(self._device)
+        model.to(device)
         model.eval()
 
         inference_wrapper = MaskedLangModelInferenceWrapper(model)
@@ -228,11 +241,11 @@ class AlertBERTGrouper:
         self._grouper = _AlertBERTFixed(
             model=inference_wrapper,
             collate_fn=collate_fn,
-            dim_reduction=dim_reduction,
-            delta=delta,
-            theta=theta,
-            padding=padding,
-            readout=readout,
+            dim_reduction=self._dim_reduction,
+            delta=self._delta,
+            theta=self._theta,
+            padding=self._padding,
+            readout=self._readout,
         )
 
     # Default time-window size for batched grouping (seconds).
@@ -260,6 +273,7 @@ class AlertBERTGrouper:
         if not alerts:
             return []
 
+        self._load_model()
         sorted_alerts = sorted(alerts, key=lambda a: a.ts)
         t_start = sorted_alerts[0].ts
         t_end = sorted_alerts[-1].ts
@@ -346,3 +360,6 @@ class AlertBERTGrouper:
             )
             for i in range(len(dataset))
         ]
+
+
+_TokenizedAlertDataset = _InferenceDataset

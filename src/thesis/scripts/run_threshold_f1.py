@@ -202,8 +202,14 @@ def _plot_curves(
     metrics = ["f1", "precision", "recall"]
     ylabels = ["F1", "Precision", "Recall"]
 
+    # Draw symbolic first so baseline (drawn on top) stays visible when curves overlap.
+    draw_order = [k for k in _STYLE if k in curves and k.startswith("symbolic")] + [
+        k for k in _STYLE if k in curves and k.startswith("baseline")
+    ]
+
     for ax, metric, ylabel in zip(axes, metrics, ylabels):
-        for key, df in curves.items():
+        for key in draw_order:
+            df = curves[key]
             style = _STYLE[key]
             # find best F1 threshold for annotation
             best_idx = df["f1"].idxmax()
@@ -272,6 +278,11 @@ def main() -> None:
         default=101,
         help="Number of threshold steps between 0 and 1 (default: 101)",
     )
+    parser.add_argument(
+        "--clear-parquets",
+        action="store_true",
+        help="Delete cached parquets before running (forces re-encoding)",
+    )
     args = parser.parse_args()
 
     scenario: str = args.scenario
@@ -301,6 +312,15 @@ def _main_body(args, scenario: str, results_dir: Path, run_ts: str) -> None:
     for d in [cache_dir_fw, cache_dir_ab, alertbert_groups_dir]:
         d.mkdir(parents=True, exist_ok=True)
 
+    if args.clear_parquets:
+        print("--- Clearing cached parquets ---")
+        for cache_dir in [cache_dir_fw, cache_dir_ab]:
+            tx_dir = cache_dir / scenario / "transactions"
+            if tx_dir.exists():
+                for pq in tx_dir.glob("*.parquet"):
+                    print(f"  Deleting {pq.name}")
+                    pq.unlink()
+
     grouping_fw = _fixed_grouping()
     grouping_ab = _alertbert_grouping(
         args.alertbert_model_id, args.alertbert_models_path
@@ -324,20 +344,28 @@ def _main_body(args, scenario: str, results_dir: Path, run_ts: str) -> None:
 
     def _run_and_record(label: str, cache_dir: Path, schema_name: str) -> None:
         print(f"  {label} ...", end=" ", flush=True)
-        y_test, proba_test = _extract_probas(
-            cache_dir=cache_dir,
-            scenario=scenario,
-            schema_name=schema_name,
-        )
-        df_curve = _scan_thresholds(y_test, proba_test, n_thresholds=args.thresholds)
-        df_curve.insert(0, "config", label)
-        curves[label] = df_curve
-        all_rows.append(df_curve)
-        best = df_curve.loc[df_curve["f1"].idxmax()]
-        print(
-            f"best F1={best['f1']:.4f} @ threshold={best['threshold']:.2f} "
-            f"(P={best['precision']:.4f}, R={best['recall']:.4f})"
-        )
+        try:
+            y_test, proba_test = _extract_probas(
+                cache_dir=cache_dir,
+                scenario=scenario,
+                schema_name=schema_name,
+            )
+            df_curve = _scan_thresholds(
+                y_test, proba_test, n_thresholds=args.thresholds
+            )
+            df_curve.insert(0, "config", label)
+            curves[label] = df_curve
+            all_rows.append(df_curve)
+            best = df_curve.loc[df_curve["f1"].idxmax()]
+            print(
+                f"best F1={best['f1']:.4f} @ threshold={best['threshold']:.2f} "
+                f"(P={best['precision']:.4f}, R={best['recall']:.4f})"
+            )
+        except Exception as e:
+            print(f"FAILED: {e}")
+            import traceback
+
+            traceback.print_exc()
 
     print("\n--- [1/4] baseline × fixed_2s ---")
     run_baseline_experiment(
@@ -393,6 +421,17 @@ def _main_body(args, scenario: str, results_dir: Path, run_ts: str) -> None:
     # 3. Save CSV
     # ------------------------------------------------------------------
     csv_path = results_dir / f"threshold_f1_{run_ts}.csv"
+    if not all_rows:
+        print("ERROR: No curves were extracted! Check errors above.")
+        return
+
+    if len(curves) < 4:
+        print(
+            f"\nWARNING: Only {len(curves)}/4 curves extracted:"
+            f" {list(curves.keys())}"
+        )
+        print("Run with --clear-parquets to force fresh encoding.")
+
     pd.concat(all_rows, ignore_index=True).to_csv(csv_path, index=False)
     print(f"\nCSV saved → {csv_path}")
 

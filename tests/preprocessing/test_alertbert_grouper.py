@@ -8,6 +8,7 @@ in the environment, so CI stays green without pre-trained weights.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -102,7 +103,7 @@ class TestTokenizedAlertDataset:
     def test_keys(self):
         assert set(self.ds.keys) == {"raw_time", "short", "host"}
 
-    def test_missing_short_host_becomes_empty_string(self):
+    def test_missing_short_host_becomes_unk(self):
         alert = TokenizedAlert(
             alert_id="x",
             ts=0,
@@ -113,8 +114,8 @@ class TestTokenizedAlertDataset:
             short=None,
         )
         ds = _TokenizedAlertDataset([alert])
-        assert ds[0]["short"] == ""
-        assert ds[0]["host"] == ""
+        assert ds[0]["short"] == "<UNK>"
+        assert ds[0]["host"] == "<UNK>"
 
 
 # ---------------------------------------------------------------------------
@@ -140,8 +141,7 @@ def test_alertbert_method_constant_consistent():
 def test_grouper_validates_theta_delta():
     with pytest.raises(ValueError, match="theta"):
         AlertBERTGrouper(
-            model_id="dummy",
-            models_path="/tmp",
+            checkpoint_dir="/tmp/dummy",
             delta=3.0,
             theta=1.0,  # theta < delta → invalid
         )
@@ -149,8 +149,7 @@ def test_grouper_validates_theta_delta():
 
 def test_grouper_group_empty_returns_empty():
     grouper = AlertBERTGrouper(
-        model_id="dummy",
-        models_path="/tmp",
+        checkpoint_dir="/tmp/dummy",
         delta=2.0,
         theta=2.0,
     )
@@ -170,8 +169,7 @@ def test_full_grouper_returns_one_record_per_alert():
     model_id = os.environ["ALERTBERT_MODEL_ID"]
     models_path = os.environ.get("ALERTBERT_MODELS_PATH", "artifacts/alertbert")
     grouper = AlertBERTGrouper(
-        model_id=model_id,
-        models_path=models_path,
+        checkpoint_dir=Path(models_path) / model_id,
         delta=2.0,
         theta=2.0,
         dim_reduction=2,

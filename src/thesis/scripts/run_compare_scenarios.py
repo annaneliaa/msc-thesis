@@ -86,7 +86,6 @@ sys.path.insert(0, str(_REPO / "src"))
 # Configuration
 # ---------------------------------------------------------------------------
 
-FILTER_CONFIG = _REPO / "src/thesis/configs/mining_filters_strict.yaml"
 EXPERIMENTS_DIR = _REPO / "artifacts" / "experiments" / "run_compare"
 
 
@@ -134,7 +133,7 @@ def _load_compare_result(scenario: str) -> dict | None:
 
 def _run_compare(
     scenario: str,
-    filter_config: Path = FILTER_CONFIG,
+    filter_config: Path | None,
     model_name: str = "logreg",
 ) -> dict:
     print(f"\n{'='*60}")
@@ -463,8 +462,8 @@ def main() -> None:
     parser.add_argument(
         "--filter-config",
         type=Path,
-        default=FILTER_CONFIG,
-        help=f"Path to the mining filter YAML (default: {FILTER_CONFIG})",
+        default=None,
+        help="Path to the mining filter YAML. If omitted, mining runs without filtering.",
     )
     parser.add_argument(
         "--model-name",
