@@ -17,17 +17,19 @@ Parameters swept:
   min_confidence_benign  Minimum fraction of benign transactions containing the
                          pattern; ensures sufficient benign coverage.
 
-Results are cached per sweep point so re-running only fills in missing points.
+Each run creates a new timestamped directory. Re-running adds new sweep points.
+Use --no-run to plot from the most recent run's results without running new points.
 
 Usage:
     python src/thesis/scripts/run_sweep.py fox
     python src/thesis/scripts/run_sweep.py fox --params min_support max_overlap
-    python src/thesis/scripts/run_sweep.py fox --no-run   # plot from cached results
+    python src/thesis/scripts/run_sweep.py fox --no-run   # plot from most recent run
 
-Output (all under artifacts/experiments/run_sweep/<scenario>/):
-    results.csv                          all sweep results
-    plots/<scenario>_sweep_<param>.png   dual-axis plot per parameter
-    plots/<scenario>_sweep_overview.png  2×2 summary grid
+Output (all under artifacts/experiments/run_sweep/sweep_<run_ts>/):
+    scenario/<scenario>/results.csv             all sweep results for this run
+    plots/<scenario>_sweep_<param>.png          dual-axis plot per parameter
+    plots/<scenario>_sweep_overview.png         2×2 summary grid
+    plots/sweep_<run_ts>.log
 """
 
 from __future__ import annotations
@@ -204,9 +206,24 @@ def _run_point(scenario: str, sweep_param: str, value: float, tmp_dir: Path) -> 
 # ---------------------------------------------------------------------------
 
 
-def _load_cached(csv_path: Path) -> pd.DataFrame:
+def _find_latest_csv(scenario: str) -> Path | None:
+    """Find the most recent results.csv across all sweep run dirs for this scenario."""
+    candidates = sorted(
+        (_REPO / "artifacts" / "experiments" / "run_sweep").glob(
+            f"*/scenario/{scenario}/results.csv"
+        )
+    )
+    return candidates[-1] if candidates else None
+
+
+def _load_cached(csv_path: Path, scenario: str | None = None) -> pd.DataFrame:
     if csv_path.exists():
         return pd.read_csv(csv_path)
+    if scenario is not None:
+        latest = _find_latest_csv(scenario)
+        if latest is not None:
+            print(f"  [cache] Loading sweep results from previous run: {latest}")
+            return pd.read_csv(latest)
     return pd.DataFrame()
 
 
@@ -370,22 +387,23 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    sweep_dir = _REPO / "artifacts" / "experiments" / "run_sweep" / args.scenario
-    sweep_dir.mkdir(parents=True, exist_ok=True)
-    plots_dir = sweep_dir / "plots"
+    run_ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    run_dir = _REPO / "artifacts" / "experiments" / "run_sweep" / f"sweep_{run_ts}"
+    scenario_dir = run_dir / "scenario" / args.scenario
+    plots_dir = run_dir / "plots"
+    scenario_dir.mkdir(parents=True, exist_ok=True)
     plots_dir.mkdir(parents=True, exist_ok=True)
-    csv_path = sweep_dir / "results.csv"
-    tmp_dir = sweep_dir / "_tmp"
+    csv_path = scenario_dir / "results.csv"
+    tmp_dir = run_dir / "_tmp"
     tmp_dir.mkdir(exist_ok=True)
 
-    run_ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    log_path = sweep_dir / f"sweep_{run_ts}.log"
+    log_path = plots_dir / f"sweep_{run_ts}.log"
     tee = _Tee(log_path)
     sys.stdout = tee
     print(f"Logging to {log_path}")
 
     try:
-        _sweep_body(args, sweep_dir, plots_dir, csv_path, tmp_dir)
+        _sweep_body(args, plots_dir, csv_path, tmp_dir)
     finally:
         sys.stdout = sys.__stdout__
         tee.close()
@@ -394,12 +412,11 @@ def main() -> None:
 
 def _sweep_body(
     args: object,
-    sweep_dir: Path,
     plots_dir: Path,
     csv_path: Path,
     tmp_dir: Path,
 ) -> None:
-    cached = _load_cached(csv_path)
+    cached = _load_cached(csv_path, scenario=args.scenario if args.no_run else None)
 
     if not args.no_run:
         for param in args.params:

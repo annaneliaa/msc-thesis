@@ -9,15 +9,18 @@ Usage:
     python src/thesis/scripts/run_compare_scenarios.py fox --force
     python src/thesis/scripts/run_compare_scenarios.py fox wheeler --no-run
 
-Output (all under artifacts/experiments/run_compare/):
-    <scenarios>/compare_<ts>.json        per-scenario result
-    plots/<scenarios>/compare_table.csv
-    plots/<scenarios>/compare_delta_table.csv
-    plots/<scenarios>/compare_table.txt
-    plots/<scenarios>/compare_auc.png
-    plots/<scenarios>/compare_metrics.png
-    plots/<scenarios>/compare_features.png
-    plots/<scenarios>/compare_fp.png
+Output (all under artifacts/experiments/run_compare/compare_<run_ts>/):
+    scenario/<scenario>/compare_<ts>.json     per-scenario result
+    scenario/<scenario>/baseline_<ts>.json    baseline experiment result
+    scenario/<scenario>/symbolic_<ts>.json    symbolic experiment result
+    plots/compare_<run_ts>.log
+    plots/compare_table.csv
+    plots/compare_delta_table.csv
+    plots/compare_table.txt
+    plots/compare_auc.png
+    plots/compare_metrics.png
+    plots/compare_features.png
+    plots/compare_fp.png
 """
 
 from __future__ import annotations
@@ -100,13 +103,11 @@ def _latest_json(directory: Path, prefix: str) -> Path | None:
 
 
 def _load_compare_result(scenario: str) -> dict | None:
-    """Load the most recent compare_*.json for a scenario, if it exists."""
-    scenario_dir = EXPERIMENTS_DIR / scenario
-    if not scenario_dir.exists():
+    """Load the most recent compare_*.json for a scenario across all run dirs."""
+    candidates = sorted(EXPERIMENTS_DIR.glob(f"*/scenario/{scenario}/compare_*.json"))
+    if not candidates:
         return None
-    path = _latest_json(scenario_dir, "compare")
-    if path is None:
-        return None
+    path = candidates[-1]
     with path.open() as f:
         data = json.load(f)
     return {
@@ -134,15 +135,23 @@ def _load_compare_result(scenario: str) -> dict | None:
 def _run_compare(
     scenario: str,
     filter_config: Path | None,
+    run_dir: Path,
     model_name: str = "logreg",
 ) -> dict:
     print(f"\n{'='*60}")
     print(f" Running compare: {scenario}")
     print(f"{'='*60}")
 
+    scenario_dir = run_dir / "scenario" / scenario
+    scenario_dir.mkdir(parents=True, exist_ok=True)
+
     print("\n--- Phase 1/2: baseline ---")
     baseline = run_baseline_experiment(
-        BaselineExperimentConfig(scenario=scenario, model_name=model_name)
+        BaselineExperimentConfig(
+            scenario=scenario,
+            model_name=model_name,
+            results_dir=scenario_dir,
+        )
     )
 
     print("\n--- Phase 2/2: symbolic ---")
@@ -152,12 +161,14 @@ def _run_compare(
             filter_config=filter_config,
             abstraction_map_path=ABSTRACTION_MAP_PATH,
             model_name=model_name,
+            results_dir=scenario_dir,
         )
     )
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    results_dir = EXPERIMENTS_DIR / scenario
-    results_dir.mkdir(parents=True, exist_ok=True)
+
+    def _auc_or_null(v: float):
+        return None if v != v else v  # NaN check
 
     combined = {
         "experiment": "compare",
@@ -168,7 +179,7 @@ def _run_compare(
         "baseline": {
             "schema_name": baseline.schema_name,
             "schema_version": baseline.schema_version,
-            "auc": baseline.auc,
+            "auc": _auc_or_null(baseline.auc),
             "n_features": baseline.n_features,
             "n_transactions": baseline.n_transactions,
             "metrics": baseline.metrics,
@@ -177,19 +188,23 @@ def _run_compare(
         "symbolic": {
             "schema_name": symbolic.schema_name,
             "schema_version": symbolic.schema_version,
-            "auc": symbolic.auc,
+            "auc": _auc_or_null(symbolic.auc),
             "n_features": symbolic.n_features,
             "n_transactions": symbolic.n_transactions,
             "metrics": symbolic.metrics,
             "results_file": str(symbolic.results_file),
         },
         "delta": {
-            "auc": round(symbolic.auc - baseline.auc, 6),
+            "auc": (
+                None
+                if (baseline.auc != baseline.auc or symbolic.auc != symbolic.auc)
+                else round(symbolic.auc - baseline.auc, 6)
+            ),
             "n_features": symbolic.n_features - baseline.n_features,
         },
     }
 
-    out_path = results_dir / f"compare_{timestamp}.json"
+    out_path = scenario_dir / f"compare_{timestamp}.json"
     with out_path.open("w") as f:
         json.dump(combined, f, indent=2)
     print(f"  Saved → {out_path}")
@@ -473,23 +488,23 @@ def main() -> None:
     args = parser.parse_args()
 
     run_ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    subdir_name = "_".join(args.scenarios)
-    log_dir = EXPERIMENTS_DIR / "plots" / subdir_name
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = log_dir / f"compare_{run_ts}.log"
+    run_dir = EXPERIMENTS_DIR / f"compare_{run_ts}"
+    plots_dir = run_dir / "plots"
+    plots_dir.mkdir(parents=True, exist_ok=True)
+    log_path = plots_dir / f"compare_{run_ts}.log"
     tee = _Tee(log_path)
     sys.stdout = tee
     print(f"Logging to {log_path}")
 
     try:
-        _run_main(args, run_ts, subdir_name)
+        _run_main(args, run_dir)
     finally:
         sys.stdout = sys.__stdout__
         tee.close()
         print(f"Log saved → {log_path}")
 
 
-def _run_main(args: object, run_ts: str, subdir_name: str) -> None:
+def _run_main(args: object, run_dir: Path) -> None:
     all_results: list[dict] = []
 
     for scenario in args.scenarios:
@@ -511,7 +526,10 @@ def _run_main(args: object, run_ts: str, subdir_name: str) -> None:
             continue
 
         r = _run_compare(
-            scenario, filter_config=args.filter_config, model_name=args.model_name
+            scenario,
+            filter_config=args.filter_config,
+            run_dir=run_dir,
+            model_name=args.model_name,
         )
         all_results.append(r)
 
@@ -522,7 +540,7 @@ def _run_main(args: object, run_ts: str, subdir_name: str) -> None:
     long_df = _build_long_table(all_results)
     delta_df = _build_delta_table(all_results)
 
-    out_dir = EXPERIMENTS_DIR / "plots" / subdir_name
+    out_dir = run_dir / "plots"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     csv_path = out_dir / "compare_table.csv"

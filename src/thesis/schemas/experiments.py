@@ -28,6 +28,7 @@ class SymbolicExperimentConfig:
     cache_dir: Path = field(default_factory=lambda: CACHE_DIR)
     grouping: GroupingConfig = field(default_factory=GroupingConfig)
     grouping_cache_dir: Path | None = None
+    results_dir: Path | None = None
 
 
 @dataclass
@@ -40,6 +41,7 @@ class BaselineExperimentConfig:
     cache_dir: Path = field(default_factory=lambda: CACHE_DIR)
     grouping: GroupingConfig = field(default_factory=GroupingConfig)
     grouping_cache_dir: Path | None = None
+    results_dir: Path | None = None
 
 
 @dataclass

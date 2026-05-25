@@ -12,12 +12,15 @@ Usage:
         [--force] [--force-grouping] \\
         [--replot]
 
-Output (all under artifacts/experiments/run_grouping_compare/):
-    <scenario>/grouping_compare_<ts>.json
-    plots/<scenario>_grouping/
-        metrics.png        -- AUC / F1 / Precision / Recall per method
-        transactions.png   -- transaction count + size distribution
-        purity.png         -- transaction label purity (if label data available)
+Output (all under artifacts/experiments/run_grouping_compare/grouping_compare_<run_ts>/):
+    scenario/<scenario>/grouping_compare_<ts>.json
+    scenario/<scenario>/confusion_matrices_<ts>.txt
+    scenario/<scenario>/baseline_<ts>.json
+    scenario/<scenario>/symbolic_<ts>.json
+    plots/metrics.png        -- AUC / F1 / Precision / Recall per method
+    plots/transactions.png   -- transaction count + size distribution
+    plots/purity.png         -- transaction label purity (if label data available)
+    plots/grouping_compare_<run_ts>.log
 """
 
 from __future__ import annotations
@@ -125,6 +128,7 @@ def _run_pair(
     grouping: GroupingConfig,
     cache_dir: Path,
     filter_config: Path | None,
+    results_dir: Path,
     grouping_cache_dir: Path | None = None,
 ) -> tuple[ExperimentResult, ExperimentResult, list]:
     baseline = run_baseline_experiment(
@@ -133,6 +137,7 @@ def _run_pair(
             cache_dir=cache_dir,
             grouping=grouping,
             grouping_cache_dir=grouping_cache_dir,
+            results_dir=results_dir,
         )
     )
     symbolic = run_symbolic_experiment(
@@ -143,6 +148,7 @@ def _run_pair(
             filter_config=filter_config,
             abstraction_map_path=ABSTRACTION_MAP_PATH,
             grouping_cache_dir=grouping_cache_dir,
+            results_dir=results_dir,
         )
     )
     txs = _load_transactions(scenario, cache_dir, groups_cache_dir=grouping_cache_dir)
@@ -489,18 +495,24 @@ def main() -> None:
     args = parser.parse_args()
 
     scenario = args.scenario
-    results_dir = EXPERIMENTS_DIR / scenario
-    results_dir.mkdir(parents=True, exist_ok=True)
-
-    existing = _latest_json(results_dir, "grouping_compare")
 
     if args.replot:
+        existing = next(
+            iter(
+                sorted(
+                    EXPERIMENTS_DIR.glob(
+                        f"*/scenario/{scenario}/grouping_compare_*.json"
+                    )
+                )[-1:]
+            ),
+            None,
+        )
         if not existing:
             print(
-                f"[error] No existing results found in {results_dir}. Run without --replot first."
+                f"[error] No existing results found under {EXPERIMENTS_DIR}. Run without --replot first."
             )
             return
-        print(f"[replot] Loading {existing.name}")
+        print(f"[replot] Loading {existing}")
         with existing.open() as f:
             data = json.load(f)
         ts = data["timestamp"]
@@ -514,9 +526,10 @@ def main() -> None:
                 "symbolic": _result_from_dict(data["alertbert"]["symbolic"], scenario),
             },
         }
-        save_confusion_matrices(results, scenario, ts, results_dir)
-        plot_dir = EXPERIMENTS_DIR / "plots" / f"{scenario}_grouping"
+        scenario_dir = existing.parent
+        plot_dir = existing.parent.parent.parent / "plots"
         plot_dir.mkdir(parents=True, exist_ok=True)
+        save_confusion_matrices(results, scenario, ts, scenario_dir)
         plot_data = {
             "scenario": scenario,
             "fixed_2s": {
@@ -537,25 +550,45 @@ def main() -> None:
     if not args.alertbert_model_id:
         parser.error("--alertbert-model-id is required when not using --replot")
 
-    if existing and not args.force and not args.force_grouping:
-        print(f"[skip] Existing results: {existing.name}. Use --force to re-run.")
+    existing_json = next(
+        iter(
+            sorted(
+                EXPERIMENTS_DIR.glob(f"*/scenario/{scenario}/grouping_compare_*.json")
+            )[-1:]
+        ),
+        None,
+    )
+    if existing_json and not args.force and not args.force_grouping:
+        print(f"[skip] Existing results: {existing_json}. Use --force to re-run.")
         return
 
     run_ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    log_path = results_dir / f"grouping_compare_{run_ts}.log"
+    run_dir = EXPERIMENTS_DIR / f"grouping_compare_{run_ts}"
+    scenario_dir = run_dir / "scenario" / scenario
+    plots_dir = run_dir / "plots"
+    scenario_dir.mkdir(parents=True, exist_ok=True)
+    plots_dir.mkdir(parents=True, exist_ok=True)
+
+    log_path = plots_dir / f"grouping_compare_{run_ts}.log"
     tee = _Tee(log_path)
     sys.stdout = tee
     print(f"Logging to {log_path}")
 
     try:
-        _main_body(args, scenario, results_dir, run_ts)
+        _main_body(args, scenario, scenario_dir, plots_dir, run_ts)
     finally:
         sys.stdout = sys.__stdout__
         tee.close()
         print(f"Log saved → {log_path}")
 
 
-def _main_body(args: object, scenario: str, results_dir: Path, run_ts: str) -> None:
+def _main_body(
+    args: object,
+    scenario: str,
+    scenario_dir: Path,
+    plots_dir: Path,
+    run_ts: str,
+) -> None:
     cache_dir_fw = CACHE_DIR / "grouping_compare" / scenario / "fixed_2s"
     cache_dir_ab = CACHE_DIR / "grouping_compare" / scenario / "alertbert"
     # AlertBERT groups live outside the experiment cache so they survive reruns.
@@ -584,7 +617,11 @@ def _main_body(args: object, scenario: str, results_dir: Path, run_ts: str) -> N
 
     print("\n--- [1/2] fixed_2s ---")
     baseline_fw, symbolic_fw, txs_fw = _run_pair(
-        scenario, grouping_fw, cache_dir_fw, args.filter_config
+        scenario,
+        grouping_fw,
+        cache_dir_fw,
+        args.filter_config,
+        results_dir=scenario_dir,
     )
 
     # Free fixed_2s allocations (DataFrames, transactions, schemas) before
@@ -597,6 +634,7 @@ def _main_body(args: object, scenario: str, results_dir: Path, run_ts: str) -> N
         grouping_ab,
         cache_dir_ab,
         args.filter_config,
+        results_dir=scenario_dir,
         grouping_cache_dir=alertbert_groups_dir,
     )
 
@@ -637,7 +675,7 @@ def _main_body(args: object, scenario: str, results_dir: Path, run_ts: str) -> N
         },
     }
 
-    out_json = results_dir / f"grouping_compare_{timestamp}.json"
+    out_json = scenario_dir / f"grouping_compare_{timestamp}.json"
     with out_json.open("w") as f:
         json.dump(combined, f, indent=2)
     print(f"\n  Combined results → {out_json}")
@@ -649,7 +687,7 @@ def _main_body(args: object, scenario: str, results_dir: Path, run_ts: str) -> N
         },
         scenario,
         timestamp,
-        results_dir,
+        scenario_dir,
     )
 
     # Summary table
@@ -683,11 +721,7 @@ def _main_body(args: object, scenario: str, results_dir: Path, run_ts: str) -> N
         )
     print(f"{'─'*56}")
 
-    # Plots
-    plot_dir = EXPERIMENTS_DIR / "plots" / f"{scenario}_grouping"
-    plot_dir.mkdir(parents=True, exist_ok=True)
-    print(f"\n[plots] Saving to {plot_dir}")
-
+    print(f"\n[plots] Saving to {plots_dir}")
     plot_data = {
         "scenario": scenario,
         "fixed_2s": {
@@ -702,9 +736,9 @@ def _main_body(args: object, scenario: str, results_dir: Path, run_ts: str) -> N
         },
     }
 
-    plot_metrics(plot_data, plot_dir)
-    plot_transactions(plot_data, plot_dir)
-    plot_purity(plot_data, plot_dir)
+    plot_metrics(plot_data, plots_dir)
+    plot_transactions(plot_data, plots_dir)
+    plot_purity(plot_data, plots_dir)
 
     print("\nDone.")
 

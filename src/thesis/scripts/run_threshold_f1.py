@@ -18,10 +18,10 @@ Usage:
         [--filter-config src/thesis/configs/mining_filters_strict.yaml] \\
         [--thresholds 101]
 
-Output (under artifacts/experiments/run_threshold_f1/<scenario>/):
-    threshold_f1_<ts>.csv     -- F1/P/R at each threshold for each config
-    threshold_f1_<ts>.png     -- F1 curve plot
-    threshold_f1_<ts>.log
+Output (under artifacts/experiments/run_threshold_f1/threshold_f1_<run_ts>/):
+    scenario/<scenario>/threshold_f1_<ts>.csv    -- F1/P/R at each threshold
+    plots/threshold_f1_<ts>.png                  -- F1 curve plot
+    plots/threshold_f1_<ts>.log
 """
 
 from __future__ import annotations
@@ -288,22 +288,27 @@ def main() -> None:
     scenario: str = args.scenario
     run_ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
 
-    results_dir = EXPERIMENTS_DIR / scenario
-    results_dir.mkdir(parents=True, exist_ok=True)
+    run_dir = EXPERIMENTS_DIR / f"threshold_f1_{run_ts}"
+    scenario_dir = run_dir / "scenario" / scenario
+    plots_dir = run_dir / "plots"
+    scenario_dir.mkdir(parents=True, exist_ok=True)
+    plots_dir.mkdir(parents=True, exist_ok=True)
 
-    log_path = results_dir / f"threshold_f1_{run_ts}.log"
+    log_path = plots_dir / f"threshold_f1_{run_ts}.log"
     _tee = _Tee(log_path)
     sys.stdout = _tee
     print(f"Log saved → {log_path}")
 
     try:
-        _main_body(args, scenario, results_dir, run_ts)
+        _main_body(args, scenario, scenario_dir, plots_dir, run_ts)
     finally:
         sys.stdout = sys.__stdout__
         _tee.close()
 
 
-def _main_body(args, scenario: str, results_dir: Path, run_ts: str) -> None:
+def _main_body(
+    args, scenario: str, scenario_dir: Path, plots_dir: Path, run_ts: str
+) -> None:
     cache_dir_fw = CACHE_DIR / "grouping_compare" / scenario / "fixed_2s"
     cache_dir_ab = CACHE_DIR / "grouping_compare" / scenario / "alertbert"
     alertbert_groups_dir = (
@@ -420,7 +425,7 @@ def _main_body(args, scenario: str, results_dir: Path, run_ts: str) -> None:
     # ------------------------------------------------------------------
     # 3. Save CSV
     # ------------------------------------------------------------------
-    csv_path = results_dir / f"threshold_f1_{run_ts}.csv"
+    csv_path = scenario_dir / f"threshold_f1_{run_ts}.csv"
     if not all_rows:
         print("ERROR: No curves were extracted! Check errors above.")
         return
@@ -438,7 +443,7 @@ def _main_body(args, scenario: str, results_dir: Path, run_ts: str) -> None:
     # ------------------------------------------------------------------
     # 4. Plot
     # ------------------------------------------------------------------
-    plot_path = results_dir / f"threshold_f1_{run_ts}.png"
+    plot_path = plots_dir / f"threshold_f1_{run_ts}.png"
     _plot_curves(curves, scenario, plot_path)
 
     # ------------------------------------------------------------------

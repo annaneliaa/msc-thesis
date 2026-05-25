@@ -67,9 +67,23 @@ def train_model_for_schema(
     )
 
     if result["model"] is None:
-        raise ValueError(
-            f"Training for schema '{schema.schema_name}' produced no fitted model "
-            f"(single-class split)."
+        print(
+            f"  [warn] Schema '{schema.schema_name}': single-class split "
+            f"(train={pd.Series(y_train).value_counts().to_dict()}, "
+            f"test={pd.Series(y_test).value_counts().to_dict()}). Skipping model fit."
+        )
+        return TrainedModelSummary(
+            model_name=model_name,
+            model_version=model_version,
+            schema_name=schema.schema_name,
+            schema_version=schema.schema_version,
+            output_dir=str(output_dir),
+            auc=float("nan"),
+            n_features=len(feature_names),
+            feature_names=feature_names,
+            test_idx_start=int(X_train.shape[0]),
+            test_size=int(X_test.shape[0]),
+            single_class_split=True,
         )
 
     feature_sparsity = float((X_train == 0).values.mean())

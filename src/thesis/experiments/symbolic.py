@@ -317,8 +317,11 @@ def run_symbolic_experiment(
     _, metadata_path, _ = resolve_model_paths(
         config.scenario, config.model_name, effective_version
     )
-    with metadata_path.open("r", encoding="utf-8") as f:
-        full_metrics = json.load(f).get("metrics", {})
+    if summary.single_class_split:
+        full_metrics = {"single_class_split": True}
+    else:
+        with metadata_path.open("r", encoding="utf-8") as f:
+            full_metrics = json.load(f).get("metrics", {})
 
     # Enrich feature importances with feature types
     if schema.symbolic is not None:
@@ -344,7 +347,11 @@ def run_symbolic_experiment(
                 full_metrics["top_feature_importances"][importance_type] = enriched
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    results_dir = _EXPERIMENTS_DIR / config.scenario
+    results_dir = (
+        config.results_dir
+        if config.results_dir is not None
+        else _EXPERIMENTS_DIR / config.scenario
+    )
     results_dir.mkdir(parents=True, exist_ok=True)
     results_file = results_dir / f"symbolic_{timestamp}.json"
 

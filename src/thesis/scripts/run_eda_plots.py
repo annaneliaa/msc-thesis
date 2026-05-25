@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import matplotlib
@@ -76,9 +77,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument(
         "--out-dir",
-        default="artifacts/experiments/run_eda_plots",
+        default=None,
         metavar="PATH",
-        help="Output directory for figures (default: artifacts/experiments/run_eda_plots).",
+        help="Output directory for figures (default: artifacts/experiments/run_eda_plots/eda_<ts>/plots/).",
     )
     p.add_argument(
         "--bin-hours",
@@ -119,7 +120,18 @@ def main(argv: list[str] | None = None) -> None:
         print("Specify scenario names or --all.  Use -h for help.")
         sys.exit(1)
 
-    out_dir = Path(args.out_dir)
+    if args.out_dir is not None:
+        out_dir = Path(args.out_dir)
+    else:
+        run_ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        out_dir = (
+            ROOT
+            / "artifacts"
+            / "experiments"
+            / "run_eda_plots"
+            / f"eda_{run_ts}"
+            / "plots"
+        )
     out_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"Loading alerts for: {', '.join(scenarios)}")
