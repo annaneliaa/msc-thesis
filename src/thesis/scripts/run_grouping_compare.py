@@ -60,7 +60,6 @@ _HERE = Path(__file__).resolve()
 _REPO = next(p for p in _HERE.parents if (p / "pyproject.toml").exists())
 sys.path.insert(0, str(_REPO / "src"))
 EXPERIMENTS_DIR = _REPO / "artifacts" / "experiments" / "run_grouping_compare"
-_DEFAULT_FILTER = _REPO / "src/thesis/configs/mining_filters_strict.yaml"
 
 # Fixed AlertBERT hyperparameters — change here to tune for the scenario
 _AB_DELTA = 2.0

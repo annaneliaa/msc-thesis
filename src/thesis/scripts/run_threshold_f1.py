@@ -56,7 +56,7 @@ _REPO = next(p for p in _HERE.parents if (p / "pyproject.toml").exists())
 sys.path.insert(0, str(_REPO / "src"))
 
 EXPERIMENTS_DIR = _REPO / "artifacts" / "experiments" / "run_threshold_f1"
-_DEFAULT_FILTER = _REPO / "src/thesis/configs/mining_filters_strict.yaml"
+
 
 _STYLE = {
     "baseline_fixed_2s": {
@@ -114,6 +114,7 @@ def _extract_probas(
     cache_dir: Path,
     scenario: str,
     schema_name: str,
+    grouping_mode: str,
     model_name: str = "logreg",
     test_frac: float = 0.3,
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -129,7 +130,8 @@ def _extract_probas(
     parquet_path = (
         cache_dir / scenario / "transactions" / f"transactions_{safe_name}.parquet"
     )
-    model_version = f"0.1.0_{safe_name}"
+    grouping_tag = grouping_mode.replace("-", "_")
+    model_version = f"0.1.0_{safe_name}_{grouping_tag}"
     model_path, metadata_path, _ = resolve_model_paths(
         scenario, model_name, model_version
     )
@@ -270,7 +272,7 @@ def main() -> None:
     parser.add_argument(
         "--filter-config",
         type=Path,
-        default=_DEFAULT_FILTER if _DEFAULT_FILTER.exists() else None,
+        default=None,
     )
     parser.add_argument(
         "--thresholds",
@@ -338,22 +340,24 @@ def _main_body(
     print(f" Threshold F1 experiment: {scenario}")
     print(f"{'='*60}")
 
-    # All four experiments share the same model output paths (keyed only by
-    # schema name, not grouping).  Running fixed_2s first and alertbert second
-    # would overwrite the fixed_2s model before we can load it.  Extract
-    # probabilities immediately after each experiment so we always read the
-    # model that was just written.
+    # Model paths are scoped by both schema name and grouping mode, so
+    # fixed_2s and alertbert models do not collide.  Probabilities are still
+    # extracted immediately after each experiment so the parquet and model
+    # are always in sync.
 
     curves: dict[str, pd.DataFrame] = {}
     all_rows: list[dict] = []
 
-    def _run_and_record(label: str, cache_dir: Path, schema_name: str) -> None:
+    def _run_and_record(
+        label: str, cache_dir: Path, schema_name: str, grouping_mode: str
+    ) -> None:
         print(f"  {label} ...", end=" ", flush=True)
         try:
             y_test, proba_test = _extract_probas(
                 cache_dir=cache_dir,
                 scenario=scenario,
                 schema_name=schema_name,
+                grouping_mode=grouping_mode,
             )
             df_curve = _scan_thresholds(
                 y_test, proba_test, n_thresholds=args.thresholds
@@ -381,7 +385,7 @@ def _main_body(
         )
     )
     print("\n--- Extracting probabilities ---")
-    _run_and_record("baseline_fixed_2s", cache_dir_fw, "base")
+    _run_and_record("baseline_fixed_2s", cache_dir_fw, "base", grouping_fw.mode)
 
     print("\n--- [2/4] symbolic × fixed_2s ---")
     run_symbolic_experiment(
@@ -394,7 +398,9 @@ def _main_body(
         )
     )
     print("\n--- Extracting probabilities ---")
-    _run_and_record("symbolic_fixed_2s", cache_dir_fw, "base+symbolic")
+    _run_and_record(
+        "symbolic_fixed_2s", cache_dir_fw, "base+symbolic", grouping_fw.mode
+    )
 
     print("\n--- [3/4] baseline × alertbert ---")
     run_baseline_experiment(
@@ -406,7 +412,7 @@ def _main_body(
         )
     )
     print("\n--- Extracting probabilities ---")
-    _run_and_record("baseline_alertbert", cache_dir_ab, "base")
+    _run_and_record("baseline_alertbert", cache_dir_ab, "base", grouping_ab.mode)
 
     print("\n--- [4/4] symbolic × alertbert ---")
     run_symbolic_experiment(
@@ -420,7 +426,9 @@ def _main_body(
         )
     )
     print("\n--- Extracting probabilities ---")
-    _run_and_record("symbolic_alertbert", cache_dir_ab, "base+symbolic")
+    _run_and_record(
+        "symbolic_alertbert", cache_dir_ab, "base+symbolic", grouping_ab.mode
+    )
 
     # ------------------------------------------------------------------
     # 3. Save CSV
