@@ -474,7 +474,7 @@ def main() -> None:
     parser.add_argument(
         "--filter-config",
         type=Path,
-        default=_DEFAULT_FILTER if _DEFAULT_FILTER.exists() else None,
+        default=None,
         help="Mining filter YAML for the symbolic experiment.",
     )
     parser.add_argument(

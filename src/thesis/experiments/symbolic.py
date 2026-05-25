@@ -99,6 +99,21 @@ def _mine_and_register_symbolic_schema(
     eclat_df = eclat_result.mined_df.copy()
     item_seq_df = item_seq_result.mined_df.copy()
 
+    mining_stats: dict = {
+        "n_itemsets_mined": len(eclat_df),
+        "n_sequences_mined": len(item_seq_df),
+        "n_or_mined": len(eclat_result.or_df) if eclat_result.or_df is not None else 0,
+        "abstraction_applied": abstraction_map_path is not None,
+        "abstraction_level": abstraction_level
+        if abstraction_map_path is not None
+        else None,
+        "n_itemsets_after_abstraction": None,
+        "n_sequences_after_abstraction": None,
+        "n_or_after_abstraction": None,
+        "n_itemsets_after_filter": None,
+        "n_sequences_after_filter": None,
+    }
+
     if abstraction_map_path is not None:
         print("--- Applying token abstraction ---")
         abstraction_map = load_abstraction_map(abstraction_map_path)
@@ -112,12 +127,15 @@ def _mine_and_register_symbolic_schema(
             f"sequences {n_seq_before}→{len(item_seq_df)} "
             f"(level={abstraction_level})"
         )
+        mining_stats["n_itemsets_after_abstraction"] = len(eclat_df)
+        mining_stats["n_sequences_after_abstraction"] = len(item_seq_df)
         if eclat_result.or_df is not None and not eclat_result.or_df.empty:
             n_or_before = len(eclat_result.or_df)
             eclat_result.or_df = abstract_or_clauses_df(
                 eclat_result.or_df, abstraction_map, level=abstraction_level
             )
             print(f"  OR patterns {n_or_before}→{len(eclat_result.or_df)}")
+            mining_stats["n_or_after_abstraction"] = len(eclat_result.or_df)
 
     print("--- Filtering mining results ---")
     if filter_config is not None:
@@ -155,6 +173,8 @@ def _mine_and_register_symbolic_schema(
         print(
             f"  After filtering: {len(eclat_df)} itemsets, {len(item_seq_df)} sequences"
         )
+    mining_stats["n_itemsets_after_filter"] = len(eclat_df)
+    mining_stats["n_sequences_after_filter"] = len(item_seq_df)
 
     eclat_df["mining_type"] = "itemset"
     item_seq_df = item_seq_df.rename(columns={"sequence": "itemset"})
@@ -189,21 +209,23 @@ def _mine_and_register_symbolic_schema(
         os.path.join(run_dir, "final_combined_mining_df.csv"), index=False
     )
     n_or = len(eclat_result.or_df) if eclat_result.or_df is not None else 0
+    mining_stats["n_candidate_features"] = len(combined_df)
     print(
         f"  Combined {len(eclat_df)} itemsets + {len(item_seq_df)} sequences "
         f"+ {n_or} OR patterns = {len(combined_df)} candidate features"
     )
 
     print("--- Building and saving symbolic schema ---")
-    schema_path = build_persist_and_register_symbolic_schema(
+    schema_path, schema_build_stats = build_persist_and_register_symbolic_schema(
         df=combined_df,
         scenario_name=scenario,
         source_label=target_label,
         schema_name="symbolic",
         root_dir=_ROOT / "artifacts" / "features",
     )
+    mining_stats.update(schema_build_stats)
     print(f"  Symbolic schema registered → {schema_path}")
-    return schema_path
+    return schema_path, mining_stats
 
 
 # ---------------------------------------------------------------------------
@@ -264,7 +286,7 @@ def run_symbolic_experiment(
     # 5. Mine and register symbolic schema
     print("[5/8] Mining transactions...")
     run_name = f"symbolic_{config.scenario}"
-    symbolic_schema_path = _mine_and_register_symbolic_schema(
+    symbolic_schema_path, mining_stats = _mine_and_register_symbolic_schema(
         scenario=config.scenario,
         transactions_path=transactions_path,
         run_name=run_name,
@@ -289,7 +311,10 @@ def run_symbolic_experiment(
     )
 
     # 7. Train model
-    effective_version = f"{config.model_version}_{config.schema_name.replace('+', '_')}"
+    grouping_tag = config.grouping.mode.replace("-", "_")
+    effective_version = (
+        f"{config.model_version}_{config.schema_name.replace('+', '_')}_{grouping_tag}"
+    )
     print(f"[7/8] Training '{config.model_name}' v{effective_version}...")
     y = df["tx_label"].map({"benign": 0, "attack": 1})
     X = df.drop(columns=["tx_label"])
@@ -382,6 +407,7 @@ def run_symbolic_experiment(
                         if config.filter_config is not None
                         else None
                     ),
+                    **mining_stats,
                 },
                 "n_transactions": len(df),
                 "n_mixed_dropped": n_mixed,

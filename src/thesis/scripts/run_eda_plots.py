@@ -31,9 +31,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-import matplotlib
-
-from src.thesis.visualization.eda import (
+from thesis.visualization.eda import (
     SCENARIOS,
     load_alerts,
     plot_alert_volume_concatenated,
@@ -45,11 +43,12 @@ from src.thesis.visualization.eda import (
     plot_top_alert_names,
 )
 
+import matplotlib
 
 matplotlib.use("Agg")
 
 ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "src"))
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

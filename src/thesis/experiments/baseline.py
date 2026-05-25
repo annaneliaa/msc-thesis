@@ -318,7 +318,10 @@ def run_baseline_experiment(
     )
 
     # 6. Train model
-    effective_version = f"{config.model_version}_{config.schema_name.replace('+', '_')}"
+    grouping_tag = config.grouping.mode.replace("-", "_")
+    effective_version = (
+        f"{config.model_version}_{config.schema_name.replace('+', '_')}_{grouping_tag}"
+    )
     print(f"[6/7] Training '{config.model_name}' v{effective_version}...")
     y = df["tx_label"].map({"benign": 0, "attack": 1})
     X = df.drop(columns=["tx_label"])

@@ -657,7 +657,7 @@ def mine_transactions(
             f"into {len(combined_df)} features."
         )
 
-        schema_path = build_persist_and_register_symbolic_schema(
+        schema_path, _ = build_persist_and_register_symbolic_schema(
             df=combined_df,
             scenario_name=eclat_result.scenario_name,
             source_label=eclat_result.target_label,

@@ -18,7 +18,7 @@ def build_persist_and_register_symbolic_schema(
     feature_selection: FeatureSelectionConfig | None = None,
     root_dir: Path = Path("artifacts/features"),
     bump: str = "patch",
-) -> Path:
+) -> tuple[Path, dict]:
     """
     Build symbolic features from mined itemsets, persist them versioned,
     and register them in the scenario manifest.
@@ -55,6 +55,10 @@ def build_persist_and_register_symbolic_schema(
         schema_version=schema_version,
     )
 
+    n_candidates = len(df)
+    n_after_dedup = len(symbolic_schema.features)
+    n_duplicates_dropped = n_candidates - n_after_dedup
+
     if feature_selection is not None:
         features = list(symbolic_schema.features)
         if feature_selection.min_utility_score is not None:
@@ -90,4 +94,9 @@ def build_persist_and_register_symbolic_schema(
         schema_version=schema_version,
     )
 
-    return schema_path
+    schema_build_stats = {
+        "n_duplicates_dropped": n_duplicates_dropped,
+        "n_features_after_dedup": n_after_dedup,
+        "n_features_final": len(symbolic_schema.features),
+    }
+    return schema_path, schema_build_stats
