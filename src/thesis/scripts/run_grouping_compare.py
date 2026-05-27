@@ -67,8 +67,20 @@ _AB_THETA = 6.0
 _AB_DIM_REDUCTION = 2
 _AB_DEVICE = "cpu"
 
-_LABELS = {"fixed_2s": "Fixed 2 s", "alertbert": "AlertBERT"}
-_COLORS = {"fixed_2s": "#4C72B0", "alertbert": "#DD8452"}
+_LABELS = {
+    "fixed_window": "Fixed window",
+    "fixed_window_host": "Fixed window (host)",
+    "time_delta": "Time-delta",
+    "time_delta_host": "Time-delta (host)",
+    "alertbert": "AlertBERT",
+}
+_COLORS = {
+    "fixed_window": "#4C72B0",
+    "fixed_window_host": "#9EC8E8",
+    "time_delta": "#55A868",
+    "time_delta_host": "#A8D5B5",
+    "alertbert": "#DD8452",
+}
 
 
 class _Tee:
@@ -100,7 +112,19 @@ class _Tee:
 
 
 def _fixed_grouping() -> GroupingConfig:
-    return GroupingConfig(mode="fixed_2s")
+    return GroupingConfig(mode="fixed_window")
+
+
+def _time_delta_grouping() -> GroupingConfig:
+    return GroupingConfig(mode="time_delta")
+
+
+def _fixed_window_host_grouping() -> GroupingConfig:
+    return GroupingConfig(mode="fixed_window_host")
+
+
+def _time_delta_host_grouping() -> GroupingConfig:
+    return GroupingConfig(mode="time_delta_host")
 
 
 def _alertbert_grouping(model_id: str, models_path: str) -> GroupingConfig:
@@ -169,17 +193,30 @@ def _run_pair(
 
 def _compute_tx_stats(txs: list) -> dict[str, Any]:
     if not txs:
-        return {"n_transactions": 0, "sizes": [], "has_label_data": False}
+        return {
+            "n_transactions": 0,
+            "sizes": [],
+            "item_sizes": [],
+            "unique_types": [],
+            "has_label_data": False,
+        }
 
     sizes = [t.n_alerts for t in txs]
+    item_sizes = [len(t.abs_items) for t in txs]
+    # number of distinct alert token-sets per transaction (alert type diversity)
+    unique_types = [len({frozenset(s) for s in t.sorted_items}) for t in txs]
     has_labels = any(t.alert_labels is not None for t in txs)
 
     stats: dict[str, Any] = {
         "n_transactions": len(txs),
         "sizes": sizes,
+        "item_sizes": item_sizes,
+        "unique_types": unique_types,
         "mean_alerts_per_tx": float(np.mean(sizes)),
         "median_alerts_per_tx": float(np.median(sizes)),
         "max_alerts_per_tx": int(max(sizes)),
+        "mean_items_per_tx": float(np.mean(item_sizes)),
+        "mean_unique_types_per_tx": float(np.mean(unique_types)),
         "n_benign": sum(1 for t in txs if t.tx_label == "benign"),
         "n_attack": sum(1 for t in txs if t.tx_label == "attack"),
         "has_label_data": has_labels,
@@ -216,8 +253,11 @@ def _result_to_dict(r: ExperimentResult | ExperimentResult) -> dict:
     }
 
 
+_STATS_LIST_KEYS = {"sizes", "item_sizes", "unique_types"}
+
+
 def _stats_for_json(stats: dict) -> dict:
-    return {k: v for k, v in stats.items() if k != "sizes"}
+    return {k: v for k, v in stats.items() if k not in _STATS_LIST_KEYS}
 
 
 def _result_from_dict(d: dict, scenario: str) -> ExperimentResult:
@@ -274,10 +314,10 @@ def save_confusion_matrices(
         f"Confusion Matrices — scenario: {scenario} — {timestamp}",
         sep,
     ]
-    for method, method_label in [("fixed_2s", "Fixed 2 s"), ("alertbert", "AlertBERT")]:
+    for method in ["fixed_window", "time_delta", "alertbert"]:
         for exp_key, exp_label in [("baseline", "Baseline"), ("symbolic", "Symbolic")]:
             result = results[method][exp_key]
-            header = f"{method_label} / {exp_label}"
+            header = f"{_LABELS[method]} / {exp_label}"
             blocks.append(_cm_block(result, header))
             blocks.append("")
     blocks.append(sep)
@@ -308,19 +348,19 @@ def plot_metrics(data: dict, out_dir: Path) -> None:
         ("recall", "Recall"),
     ]
     exp_types = [("baseline", "Baseline"), ("symbolic", "Symbolic")]
-    methods = ["fixed_2s", "alertbert"]
+    methods = ["fixed_window", "time_delta", "alertbert"]
 
     fig, axes = plt.subplots(2, 2, figsize=(10, 8))
     axes = axes.flatten()
     x = np.arange(len(exp_types))
-    w = 0.35
+    w = 0.25
+    offsets = [-w, 0, w]
 
     for ax, (metric, title) in zip(axes, metric_pairs):
         for j, method in enumerate(methods):
             vals = [_metric(data[method][exp_key], metric) for exp_key, _ in exp_types]
-            offset = (j - 0.5) * w
             bars = ax.bar(
-                x + offset, vals, w, label=_LABELS[method], color=_COLORS[method]
+                x + offsets[j], vals, w, label=_LABELS[method], color=_COLORS[method]
             )
             for bar, val in zip(bars, vals):
                 if not np.isnan(val):
@@ -350,13 +390,29 @@ def plot_metrics(data: dict, out_dir: Path) -> None:
     print(f"  Saved → {out}")
 
 
-def plot_transactions(data: dict, out_dir: Path) -> None:
-    """Left: transaction count. Right: alerts-per-transaction box plot."""
-    methods = ["fixed_2s", "alertbert"]
-    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+def _boxplot(ax, box_data, methods, ylabel, title):
+    bp = ax.boxplot(
+        box_data,
+        labels=[_LABELS[m] for m in methods],
+        patch_artist=True,
+        medianprops={"color": "black", "linewidth": 2},
+        flierprops={"marker": ".", "markersize": 3, "alpha": 0.4},
+    )
+    for patch, method in zip(bp["boxes"], methods):
+        patch.set_facecolor(_COLORS[method])
+        patch.set_alpha(0.75)
+    ax.set_ylabel(ylabel)
+    ax.set_title(title)
+    ax.grid(axis="y", alpha=0.3)
 
-    # Left — transaction count
-    ax = axes[0]
+
+def plot_transactions(data: dict, out_dir: Path) -> None:
+    """2×2 grid: transaction count, alerts/tx, itemset size, unique alert types."""
+    methods = ["fixed_window", "time_delta", "alertbert"]
+    fig, axes = plt.subplots(2, 2, figsize=(10, 8))
+
+    # (0,0) — transaction count
+    ax = axes[0, 0]
     counts = [data[m]["tx_stats"]["n_transactions"] for m in methods]
     bars = ax.bar(
         [_LABELS[m] for m in methods],
@@ -379,22 +435,33 @@ def plot_transactions(data: dict, out_dir: Path) -> None:
     ax.set_title("Transaction count")
     ax.grid(axis="y", alpha=0.3)
 
-    # Right — alerts-per-transaction box plot
-    ax = axes[1]
-    box_data = [data[m]["tx_stats"]["sizes"] for m in methods]
-    bp = ax.boxplot(
-        box_data,
-        labels=[_LABELS[m] for m in methods],
-        patch_artist=True,
-        medianprops={"color": "black", "linewidth": 2},
-        flierprops={"marker": ".", "markersize": 3, "alpha": 0.4},
+    # (0,1) — alerts per transaction
+    _boxplot(
+        axes[0, 1],
+        [data[m]["tx_stats"]["sizes"] for m in methods],
+        methods,
+        "Alerts per transaction",
+        "Transaction size (# alerts)",
     )
-    for patch, method in zip(bp["boxes"], methods):
-        patch.set_facecolor(_COLORS[method])
-        patch.set_alpha(0.75)
-    ax.set_ylabel("Alerts per transaction")
-    ax.set_title("Transaction size distribution")
-    ax.grid(axis="y", alpha=0.3)
+
+    # (1,0) — itemset size (unique items/tokens per transaction)
+    _boxplot(
+        axes[1, 0],
+        [data[m]["tx_stats"].get("item_sizes", []) for m in methods],
+        methods,
+        "Unique items per transaction",
+        "Itemset size (# unique tokens)",
+    )
+
+    # (1,1) — unique alert types per transaction
+    # (distinct per-alert token-sets, i.e. distinct (short, host, sig) combinations)
+    _boxplot(
+        axes[1, 1],
+        [data[m]["tx_stats"].get("unique_types", []) for m in methods],
+        methods,
+        "Unique alert types per transaction",
+        "Alert type diversity\n(distinct token-sets)",
+    )
 
     fig.suptitle(f"Transaction structure — {data['scenario']}", fontsize=12)
     fig.tight_layout()
@@ -406,7 +473,7 @@ def plot_transactions(data: dict, out_dir: Path) -> None:
 
 def plot_purity(data: dict, out_dir: Path) -> None:
     """Stacked horizontal bar: pure-benign / pure-attack / mixed per grouping method."""
-    methods = ["fixed_2s", "alertbert"]
+    methods = ["fixed_window", "time_delta", "alertbert"]
 
     if not any(data[m]["tx_stats"]["has_label_data"] for m in methods):
         print("  [skip purity.png] No alert_labels data available.")
@@ -524,9 +591,17 @@ def main() -> None:
             data = json.load(f)
         ts = data["timestamp"]
         results = {
-            "fixed_2s": {
-                "baseline": _result_from_dict(data["fixed_2s"]["baseline"], scenario),
-                "symbolic": _result_from_dict(data["fixed_2s"]["symbolic"], scenario),
+            "fixed_window": {
+                "baseline": _result_from_dict(
+                    data["fixed_window"]["baseline"], scenario
+                ),
+                "symbolic": _result_from_dict(
+                    data["fixed_window"]["symbolic"], scenario
+                ),
+            },
+            "time_delta": {
+                "baseline": _result_from_dict(data["time_delta"]["baseline"], scenario),
+                "symbolic": _result_from_dict(data["time_delta"]["symbolic"], scenario),
             },
             "alertbert": {
                 "baseline": _result_from_dict(data["alertbert"]["baseline"], scenario),
@@ -539,10 +614,15 @@ def main() -> None:
         save_confusion_matrices(results, scenario, ts, scenario_dir)
         plot_data = {
             "scenario": scenario,
-            "fixed_2s": {
-                "baseline": results["fixed_2s"]["baseline"],
-                "symbolic": results["fixed_2s"]["symbolic"],
-                "tx_stats": data["fixed_2s"]["tx_stats"],
+            "fixed_window": {
+                "baseline": results["fixed_window"]["baseline"],
+                "symbolic": results["fixed_window"]["symbolic"],
+                "tx_stats": data["fixed_window"]["tx_stats"],
+            },
+            "time_delta": {
+                "baseline": results["time_delta"]["baseline"],
+                "symbolic": results["time_delta"]["symbolic"],
+                "tx_stats": data["time_delta"]["tx_stats"],
             },
             "alertbert": {
                 "baseline": results["alertbert"]["baseline"],
@@ -551,6 +631,8 @@ def main() -> None:
             },
         }
         plot_metrics(plot_data, plot_dir)
+        plot_transactions(plot_data, plot_dir)
+        plot_purity(plot_data, plot_dir)
         print("Done.")
         return
 
@@ -610,6 +692,7 @@ def _main_body(
     alertbert_groups_dir.mkdir(parents=True, exist_ok=True)
 
     grouping_fw = _fixed_grouping()
+    grouping_td = _time_delta_grouping()
     grouping_ab = _alertbert_grouping(
         args.alertbert_model_id, args.alertbert_models_path
     )
@@ -618,21 +701,32 @@ def _main_body(
     print(f" Grouping comparison: {scenario}")
     print(f"{'='*60}")
 
-    print("\n--- [1/2] fixed_2s ---")
+    print("\n--- [1/3] fixed_window ---")
     baseline_fw, symbolic_fw, txs_fw = _run_pair(
         scenario,
         grouping_fw,
         cache_dir,
         args.filter_config,
         results_dir=scenario_dir,
-        transactions_dir=scenario_dir / "fixed_2s" / "transactions",
+        transactions_dir=scenario_dir / "fixed_window" / "transactions",
     )
 
-    # Free fixed_2s allocations (DataFrames, transactions, schemas) before
-    # loading torch + AlertBERT model for the second run.
     gc.collect()
 
-    print("\n--- [2/2] alertbert ---")
+    print("\n--- [2/3] time_delta ---")
+    baseline_td, symbolic_td, txs_td = _run_pair(
+        scenario,
+        grouping_td,
+        cache_dir,
+        args.filter_config,
+        results_dir=scenario_dir,
+        transactions_dir=scenario_dir / "time_delta" / "transactions",
+    )
+
+    # Free allocations before loading torch + AlertBERT model.
+    gc.collect()
+
+    print("\n--- [3/3] alertbert ---")
     baseline_ab, symbolic_ab, txs_ab = _run_pair(
         scenario,
         grouping_ab,
@@ -644,6 +738,7 @@ def _main_body(
     )
 
     stats_fw = _compute_tx_stats(txs_fw)
+    stats_td = _compute_tx_stats(txs_td)
     stats_ab = _compute_tx_stats(txs_ab)
 
     timestamp = run_ts
@@ -652,11 +747,17 @@ def _main_body(
         "scenario": scenario,
         "timestamp": timestamp,
         "alertbert_config": grouping_ab.alertbert.model_dump(),
-        "fixed_2s": {
-            "grouping": {"mode": "fixed_2s", "params": None},
+        "fixed_window": {
+            "grouping": {"mode": "fixed_window", "params": None},
             "baseline": _result_to_dict(baseline_fw),
             "symbolic": _result_to_dict(symbolic_fw),
             "tx_stats": _stats_for_json(stats_fw),
+        },
+        "time_delta": {
+            "grouping": {"mode": "time_delta", "params": None},
+            "baseline": _result_to_dict(baseline_td),
+            "symbolic": _result_to_dict(symbolic_td),
+            "tx_stats": _stats_for_json(stats_td),
         },
         "alertbert": {
             "grouping": {
@@ -667,17 +768,6 @@ def _main_body(
             "symbolic": _result_to_dict(symbolic_ab),
             "tx_stats": _stats_for_json(stats_ab),
         },
-        "delta": {
-            "baseline_auc": round(baseline_ab.auc - baseline_fw.auc, 6),
-            "symbolic_auc": round(symbolic_ab.auc - symbolic_fw.auc, 6),
-            "baseline_f1": round(
-                baseline_ab.metrics.get("f1", 0) - baseline_fw.metrics.get("f1", 0), 6
-            ),
-            "symbolic_f1": round(
-                symbolic_ab.metrics.get("f1", 0) - symbolic_fw.metrics.get("f1", 0), 6
-            ),
-            "n_transactions": stats_ab["n_transactions"] - stats_fw["n_transactions"],
-        },
     }
 
     out_json = scenario_dir / f"grouping_compare_{timestamp}.json"
@@ -687,7 +777,8 @@ def _main_body(
 
     save_confusion_matrices(
         {
-            "fixed_2s": {"baseline": baseline_fw, "symbolic": symbolic_fw},
+            "fixed_window": {"baseline": baseline_fw, "symbolic": symbolic_fw},
+            "time_delta": {"baseline": baseline_td, "symbolic": symbolic_td},
             "alertbert": {"baseline": baseline_ab, "symbolic": symbolic_ab},
         },
         scenario,
@@ -696,43 +787,47 @@ def _main_body(
     )
 
     # Summary table
-    print(f"\n{'─'*56}")
-    print(f"  {'':20s} {'fixed_2s':>10} {'alertbert':>10} {'Δ':>8}")
-    print(f"{'─'*56}")
-    for label, fw_val, ab_val in [
-        ("baseline AUC", baseline_fw.auc, baseline_ab.auc),
-        ("symbolic AUC", symbolic_fw.auc, symbolic_ab.auc),
+    print(f"\n{'─'*72}")
+    print(f"  {'':20s} {'fixed_window':>10} {'time_delta':>10} {'alertbert':>10}")
+    print(f"{'─'*72}")
+    for label, fw_val, td_val, ab_val in [
+        ("baseline AUC", baseline_fw.auc, baseline_td.auc, baseline_ab.auc),
+        ("symbolic AUC", symbolic_fw.auc, symbolic_td.auc, symbolic_ab.auc),
         (
             "baseline F1",
             baseline_fw.metrics.get("f1", float("nan")),
+            baseline_td.metrics.get("f1", float("nan")),
             baseline_ab.metrics.get("f1", float("nan")),
         ),
         (
             "symbolic F1",
             symbolic_fw.metrics.get("f1", float("nan")),
+            symbolic_td.metrics.get("f1", float("nan")),
             symbolic_ab.metrics.get("f1", float("nan")),
         ),
         (
             "n_transactions",
             float(stats_fw["n_transactions"]),
+            float(stats_td["n_transactions"]),
             float(stats_ab["n_transactions"]),
         ),
     ]:
         fmt = ".4f" if label != "n_transactions" else ".0f"
-        delta = ab_val - fw_val
-        sign = "+" if delta >= 0 else ""
-        print(
-            f"  {label:<20s} {fw_val:>10{fmt}} {ab_val:>10{fmt}} {sign}{delta:>7{fmt}}"
-        )
-    print(f"{'─'*56}")
+        print(f"  {label:<20s} {fw_val:>10{fmt}} {td_val:>10{fmt}} {ab_val:>10{fmt}}")
+    print(f"{'─'*72}")
 
     print(f"\n[plots] Saving to {plots_dir}")
     plot_data = {
         "scenario": scenario,
-        "fixed_2s": {
+        "fixed_window": {
             "baseline": baseline_fw,
             "symbolic": symbolic_fw,
             "tx_stats": stats_fw,
+        },
+        "time_delta": {
+            "baseline": baseline_td,
+            "symbolic": symbolic_td,
+            "tx_stats": stats_td,
         },
         "alertbert": {
             "baseline": baseline_ab,

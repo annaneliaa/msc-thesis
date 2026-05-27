@@ -120,6 +120,20 @@ AlertBERT embeds the full alert sequence of a scenario in order. Because the ups
 
 Each forward pass through the transformer sees `readout + 2 × padding` alerts. The model embeds all of them, but only the central `readout` embeddings are kept — the padding alerts on each side are discarded. This ensures boundary alerts in each chunk still see neighbours on both sides, giving them richer contextual representations. For scenarios smaller than `readout`, chunking is skipped and everything is embedded in a single pass.
 
+### Model inputs vs. transaction item content
+
+AlertBERT uses only three fields from each `TokenizedAlert` to decide how to group alerts:
+
+| Field | Role |
+|---|---|
+| `short` | Detector/rule short name — looked up in the model's vocab |
+| `host` | Host name — looked up in the model's vocab |
+| `ts` | Unix timestamp — used as `raw_time` for time-gap pre-clustering |
+
+The whitelisted signature tokens (`sig:login`, `sig:failed`, etc., derived from `alert.name` by `tokenization.py`) are **not** used by AlertBERT to determine group membership. They exist only in `alert.tokens`.
+
+However, signature tokens **do** end up in the resulting transactions for both grouping methods. After grouping, `cache_ingestor.py` builds each group's itemset by unioning `alert.tokens` across all member alerts. Since both the fixed-2s grouper and AlertBERT operate on the same `TokenizedAlert` objects — with the same `tokens` field — the transaction item content is symmetric. The only difference between the two methods is which alerts are assigned to the same group.
+
 ### Run
 
 AlertBERT grouping is invoked as part of the preprocessing pipeline. Configure the grouping method in the experiment config and run via the CLI or experiment scripts:

@@ -14,7 +14,7 @@ def create_cache_query(
     limit: int | None = None,
 ) -> CacheQuery:
     return CacheQuery(
-        allowed_methods=allowed_methods or {"fixed_2s", "alertbert"},
+        allowed_methods=allowed_methods or {"fixed_window", "alertbert"},
         only_closed=only_closed,
         allowed_statuses=allowed_statuses or {"closed"},
         min_start_ts=min_start_ts,

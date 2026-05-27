@@ -13,7 +13,7 @@ SCENARIO = "test_scenario"
 def make_group_entry(
     *,
     group_id: str,
-    method: str = "fixed_2s",
+    method: str = "fixed_window",
     status: str = "closed",
     start_ts: int,
     end_ts: int,
@@ -45,7 +45,7 @@ def test_create_cache_query_builds_expected_defaults():
     query = create_cache_query()
 
     assert isinstance(query, CacheQuery)
-    assert query.allowed_methods == {"fixed_2s", "alertbert"}
+    assert query.allowed_methods == {"fixed_window", "alertbert"}
     assert query.only_closed is True
     assert query.allowed_statuses == {"closed"}
     assert query.min_start_ts is None
@@ -55,7 +55,7 @@ def test_create_cache_query_builds_expected_defaults():
 
 def test_create_cache_query_overrides_defaults():
     query = create_cache_query(
-        allowed_methods={"fixed_2s"},
+        allowed_methods={"fixed_window"},
         only_closed=False,
         allowed_statuses={"open", "closed"},
         min_start_ts=100,
@@ -63,7 +63,7 @@ def test_create_cache_query_overrides_defaults():
         limit=5,
     )
 
-    assert query.allowed_methods == {"fixed_2s"}
+    assert query.allowed_methods == {"fixed_window"}
     assert query.only_closed is False
     assert query.allowed_statuses == {"open", "closed"}
     assert query.min_start_ts == 100
@@ -76,7 +76,7 @@ def test_cache_query_returns_matching_groups_only(tmp_path):
 
     g1 = make_group_entry(
         group_id="g1",
-        method="fixed_2s",
+        method="fixed_window",
         status="closed",
         start_ts=200,
         end_ts=201,
@@ -111,7 +111,7 @@ def test_cache_query_returns_matching_groups_only(tmp_path):
 
     response = cache.query(
         CacheQuery(
-            allowed_methods={"fixed_2s", "alertbert"},
+            allowed_methods={"fixed_window", "alertbert"},
             only_closed=True,
             allowed_statuses={"closed"},
         )
@@ -148,7 +148,7 @@ def test_cache_query_returns_only_closed_groups_when_requested(tmp_path):
 
     response = cache.query(
         CacheQuery(
-            allowed_methods={"fixed_2s", "alertbert"},
+            allowed_methods={"fixed_window", "alertbert"},
             only_closed=True,
             allowed_statuses={"closed"},
         )
@@ -174,7 +174,7 @@ def test_cache_query_returns_empty_response_when_no_groups_match(tmp_path):
 
     response = cache.query(
         CacheQuery(
-            allowed_methods={"fixed_2s"},
+            allowed_methods={"fixed_window"},
             only_closed=True,
             allowed_statuses={"closed"},
         )
@@ -189,7 +189,7 @@ def test_select_group_snapshots_from_response_without_labels():
         groups=[
             make_group_entry(
                 group_id="g1",
-                method="fixed_2s",
+                method="fixed_window",
                 status="closed",
                 start_ts=200,
                 end_ts=201,
@@ -214,7 +214,7 @@ def test_select_group_snapshots_from_response_without_labels():
     snap = snapshots[0]
     assert isinstance(snap, GroupSnapshot)
     assert snap.group_id == "g1"
-    assert snap.method == "fixed_2s"
+    assert snap.method == "fixed_window"
     assert snap.version == 1
     assert snap.start_ts == 200
     assert snap.end_ts == 201
@@ -389,7 +389,7 @@ def test_select_group_snapshots_queries_cache_and_returns_snapshots(tmp_path):
 
     g1 = make_group_entry(
         group_id="g1",
-        method="fixed_2s",
+        method="fixed_window",
         status="closed",
         start_ts=200,
         end_ts=201,
@@ -419,7 +419,7 @@ def test_select_group_snapshots_queries_cache_and_returns_snapshots(tmp_path):
 
     snapshots = select_group_snapshots(
         cache=cache,
-        allowed_methods={"fixed_2s", "alertbert"},
+        allowed_methods={"fixed_window", "alertbert"},
         limit=None,
         min_start_ts=None,
         max_end_ts=None,
@@ -429,7 +429,7 @@ def test_select_group_snapshots_queries_cache_and_returns_snapshots(tmp_path):
     assert [snap.group_id for snap in snapshots] == ["g1", "g2"]
 
     s1 = snapshots[0]
-    assert s1.method == "fixed_2s"
+    assert s1.method == "fixed_window"
     assert s1.version == 1
     assert s1.start_ts == 200
     assert s1.end_ts == 201

@@ -178,10 +178,10 @@ def preprocess_alert_batch(
         "artifacts/cache", help="Directory where cache files are stored."
     ),
     grouping_mode: str = typer.Option(
-        "fixed_2s",
+        "fixed_window",
         "--grouping-mode",
         "-g",
-        help="Grouping method: 'fixed_2s' or 'alertbert'.",
+        help="Grouping method: 'fixed_window' or 'alertbert'.",
     ),
     alertbert_model_id: str = typer.Option(
         "",

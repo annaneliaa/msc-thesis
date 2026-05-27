@@ -2,8 +2,8 @@
 run_threshold_f1.py
 
 For a given scenario, runs all four experiment configurations:
-  - baseline  × fixed_2s
-  - symbolic  × fixed_2s
+  - baseline  × fixed_window
+  - symbolic  × fixed_window
   - baseline  × alertbert
   - symbolic  × alertbert
 
@@ -59,15 +59,15 @@ EXPERIMENTS_DIR = _REPO / "artifacts" / "experiments" / "run_threshold_f1"
 
 
 _STYLE = {
-    "baseline_fixed_2s": {
+    "baseline_fixed_window": {
         "color": "#2166ac",
         "ls": "-",
-        "label": "baseline / fixed_2s",
+        "label": "baseline / fixed_window",
     },
-    "symbolic_fixed_2s": {
+    "symbolic_fixed_window": {
         "color": "#4dac26",
         "ls": "-",
-        "label": "symbolic / fixed_2s",
+        "label": "symbolic / fixed_window",
     },
     "baseline_alertbert": {
         "color": "#d6604d",
@@ -88,7 +88,7 @@ _STYLE = {
 
 
 def _fixed_grouping() -> GroupingConfig:
-    return GroupingConfig(mode="fixed_2s")
+    return GroupingConfig(mode="fixed_window")
 
 
 def _alertbert_grouping(model_id: str, models_path: str) -> GroupingConfig:
@@ -258,7 +258,7 @@ def _plot_curves(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="F1-vs-threshold curves for baseline/symbolic × fixed_2s/alertbert"
+        description="F1-vs-threshold curves for baseline/symbolic × fixed_window/alertbert"
     )
     parser.add_argument("scenario", help="Scenario name (e.g. fox)")
     parser.add_argument(
@@ -311,7 +311,7 @@ def main() -> None:
 def _main_body(
     args, scenario: str, scenario_dir: Path, plots_dir: Path, run_ts: str
 ) -> None:
-    cache_dir_fw = CACHE_DIR / "grouping_compare" / scenario / "fixed_2s"
+    cache_dir_fw = CACHE_DIR / "grouping_compare" / scenario / "fixed_window"
     cache_dir_ab = CACHE_DIR / "grouping_compare" / scenario / "alertbert"
     alertbert_groups_dir = (
         CACHE_DIR / "alertbert_groups" / scenario / args.alertbert_model_id
@@ -341,7 +341,7 @@ def _main_body(
     print(f"{'='*60}")
 
     # Model paths are scoped by both schema name and grouping mode, so
-    # fixed_2s and alertbert models do not collide.  Probabilities are still
+    # fixed_window and alertbert models do not collide.  Probabilities are still
     # extracted immediately after each experiment so the parquet and model
     # are always in sync.
 
@@ -376,7 +376,7 @@ def _main_body(
 
             traceback.print_exc()
 
-    print("\n--- [1/4] baseline × fixed_2s ---")
+    print("\n--- [1/4] baseline × fixed_window ---")
     run_baseline_experiment(
         BaselineExperimentConfig(
             scenario=scenario,
@@ -385,9 +385,9 @@ def _main_body(
         )
     )
     print("\n--- Extracting probabilities ---")
-    _run_and_record("baseline_fixed_2s", cache_dir_fw, "base", grouping_fw.mode)
+    _run_and_record("baseline_fixed_window", cache_dir_fw, "base", grouping_fw.mode)
 
-    print("\n--- [2/4] symbolic × fixed_2s ---")
+    print("\n--- [2/4] symbolic × fixed_window ---")
     run_symbolic_experiment(
         SymbolicExperimentConfig(
             scenario=scenario,
@@ -399,7 +399,7 @@ def _main_body(
     )
     print("\n--- Extracting probabilities ---")
     _run_and_record(
-        "symbolic_fixed_2s", cache_dir_fw, "base+symbolic", grouping_fw.mode
+        "symbolic_fixed_window", cache_dir_fw, "base+symbolic", grouping_fw.mode
     )
 
     print("\n--- [3/4] baseline × alertbert ---")

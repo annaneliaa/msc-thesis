@@ -53,7 +53,7 @@ class AlertBERTConfig(BaseModel):
 class GroupingConfig(BaseModel):
     """Selects the alert-grouping strategy for preprocessing."""
 
-    mode: str = "fixed_2s"  # "fixed_2s" | "alertbert"
+    mode: str = "fixed_window"  # "fixed_window" | "alertbert"
     alertbert: AlertBERTConfig = AlertBERTConfig()
 
 

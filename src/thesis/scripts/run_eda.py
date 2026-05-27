@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import re
 import sys
 from collections import Counter
 from datetime import datetime, timezone
@@ -30,6 +29,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from thesis.visualization.eda import SCENARIOS, load_alerts
+from thesis.preprocessing.tokenization import (
+    extract_signature_tokens,
+)
 
 import matplotlib
 
@@ -41,92 +43,6 @@ _REPO = next(p for p in _HERE.parents if (p / "pyproject.toml").exists())
 EXPERIMENTS_DIR = _REPO / "artifacts" / "experiments" / "run_eda"
 DATA_DIR = _REPO / "data" / "alerts_csv"
 TRANSACTIONS_DIR = _REPO / "artifacts" / "transactions"
-
-
-SIGNATURE_TOKEN_WHITELIST = {
-    "access",
-    "apache",
-    "authentication",
-    "code",
-    "database",
-    "directory",
-    "dns",
-    "domain",
-    "entropy",
-    "failed",
-    "forbidden",
-    "handshake",
-    "invalid",
-    "login",
-    "message",
-    "parameter",
-    "query",
-    "request",
-    "server",
-    "status",
-    "success",
-    "suspicious",
-    "tls",
-    "update",
-    "url",
-    "user",
-}
-
-SIGNATURE_TOKEN_BLACKLIST = {
-    # vendor / product / engine names
-    "wazuh",
-    "suricata",
-    "aminer",
-    "clamav",
-    "dovecot",
-    "pam",
-    "apache2",
-    # generic / noisy meta words
-    "alert",
-    "alerts",
-    "info",
-    "event",
-    "events",
-    "log",
-    "logs",
-    "attempt",
-    "attempts",
-    "new",
-    "same",
-    "source",
-    # short / noisy protocol crumbs
-    "id",
-    "ip",
-    "et",
-    "tld",
-    "biz",
-    # generic filler
-    "the",
-    "and",
-    "or",
-    "to",
-    "for",
-    "from",
-    "in",
-    "of",
-    "on",
-    "by",
-    "with",
-    "a",
-    "an",
-}
-
-
-def extract_signature_tokens(
-    signature: str,
-    whitelist: set[str] = SIGNATURE_TOKEN_WHITELIST,
-    blacklist: set[str] = SIGNATURE_TOKEN_BLACKLIST,
-) -> set[str]:
-    if pd.isna(signature):
-        return set()
-    text = str(signature).lower()
-    raw_tokens = re.findall(r"[a-z]+", text)
-    return {tok for tok in raw_tokens if tok in whitelist and tok not in blacklist}
 
 
 def extract_short_tokens(short_value: str) -> set[str]:

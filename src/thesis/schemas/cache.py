@@ -16,7 +16,7 @@ class AlertCacheEntry:
 @dataclass(slots=True)
 class GroupCacheEntry:
     group_id: str
-    method: str  # "fixed_2s" | "alertbert"
+    method: str  # "fixed_window" | "alertbert"
     status: str  # "open" | "stale" | "closed" | "mined"
 
     last_update_ts: int
@@ -45,7 +45,7 @@ class GroupCacheEntry:
 @dataclass(slots=True)
 class CacheQuery:
     # grouping / experiment control
-    allowed_methods: Optional[set[str]] = None  # {"fixed_2s", "alertbert"}
+    allowed_methods: Optional[set[str]] = None  # {"fixed_window", "alertbert"}
 
     # lifecycle filtering
     only_closed: bool = True

@@ -115,14 +115,14 @@ class TokenizedAlert:
 class GroupingRecord:
     alert_id: str
     group_id: str
-    method: str  # "fixed_2s"
+    method: str  # "fixed_window"
 
 
 @dataclass(slots=True)
 class GroupSnapshot:  # stable snapshot
     # identity
     group_id: str
-    method: str  # "fixed_2s" | "alertbert"
+    method: str  # "fixed_window" | "alertbert"
     version: int
 
     # temporal scope
@@ -151,7 +151,7 @@ class GroupSnapshot:  # stable snapshot
 class Transaction:  # mining input (with weight)
     transaction_id: str
     group_id: str
-    method: str  # "fixed_2s" | "alertbert"
+    method: str  # "fixed_window" | "alertbert"
 
     start_ts: int
     end_ts: int
