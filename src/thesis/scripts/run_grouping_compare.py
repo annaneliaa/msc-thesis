@@ -129,6 +129,7 @@ def _run_pair(
     filter_config: Path | None,
     results_dir: Path,
     grouping_cache_dir: Path | None = None,
+    transactions_dir: Path | None = None,
 ) -> tuple[ExperimentResult, ExperimentResult, list]:
     baseline = run_baseline_experiment(
         BaselineExperimentConfig(
@@ -137,6 +138,7 @@ def _run_pair(
             grouping=grouping,
             grouping_cache_dir=grouping_cache_dir,
             results_dir=results_dir,
+            transactions_dir=transactions_dir,
         )
     )
     symbolic = run_symbolic_experiment(
@@ -148,9 +150,15 @@ def _run_pair(
             abstraction_map_path=ABSTRACTION_MAP_PATH,
             grouping_cache_dir=grouping_cache_dir,
             results_dir=results_dir,
+            transactions_dir=transactions_dir,
         )
     )
-    txs = _load_transactions(scenario, cache_dir, groups_cache_dir=grouping_cache_dir)
+    txs = _load_transactions(
+        scenario,
+        cache_dir,
+        groups_cache_dir=grouping_cache_dir,
+        transactions_dir=transactions_dir,
+    )
     return baseline, symbolic, txs
 
 
@@ -588,21 +596,17 @@ def _main_body(
     plots_dir: Path,
     run_ts: str,
 ) -> None:
-    cache_dir_fw = CACHE_DIR / "grouping_compare" / scenario / "fixed_2s"
-    cache_dir_ab = CACHE_DIR / "grouping_compare" / scenario / "alertbert"
-    # AlertBERT groups live outside the experiment cache so they survive reruns.
+    # Both methods share the main scenario cache for alerts and groups.
+    cache_dir = CACHE_DIR / scenario
     alertbert_groups_dir = (
         CACHE_DIR / "alertbert_groups" / scenario / args.alertbert_model_id
     )
     if args.force_grouping:
-        tx_cache = cache_dir_ab / scenario / "transactions"
-        for stale in (alertbert_groups_dir, tx_cache):
-            if stale.exists():
-                shutil.rmtree(stale)
-                print(f"  [force-grouping] Cleared {stale}")
+        if alertbert_groups_dir.exists():
+            shutil.rmtree(alertbert_groups_dir)
+            print(f"  [force-grouping] Cleared {alertbert_groups_dir}")
 
-    cache_dir_fw.mkdir(parents=True, exist_ok=True)
-    cache_dir_ab.mkdir(parents=True, exist_ok=True)
+    cache_dir.mkdir(parents=True, exist_ok=True)
     alertbert_groups_dir.mkdir(parents=True, exist_ok=True)
 
     grouping_fw = _fixed_grouping()
@@ -618,9 +622,10 @@ def _main_body(
     baseline_fw, symbolic_fw, txs_fw = _run_pair(
         scenario,
         grouping_fw,
-        cache_dir_fw,
+        cache_dir,
         args.filter_config,
         results_dir=scenario_dir,
+        transactions_dir=scenario_dir / "fixed_2s" / "transactions",
     )
 
     # Free fixed_2s allocations (DataFrames, transactions, schemas) before
@@ -631,10 +636,11 @@ def _main_body(
     baseline_ab, symbolic_ab, txs_ab = _run_pair(
         scenario,
         grouping_ab,
-        cache_dir_ab,
+        cache_dir,
         args.filter_config,
         results_dir=scenario_dir,
         grouping_cache_dir=alertbert_groups_dir,
+        transactions_dir=scenario_dir / "alertbert" / "transactions",
     )
 
     stats_fw = _compute_tx_stats(txs_fw)

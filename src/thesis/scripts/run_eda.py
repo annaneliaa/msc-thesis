@@ -1,13 +1,47 @@
-import pandas as pd
+"""
+Exploratory Data Analysis for one or more alert scenarios.
+
+Usage:
+    # all scenarios
+    python src/thesis/scripts/run_eda.py --all
+
+    # one or more specific scenarios
+    python src/thesis/scripts/run_eda.py fox harrison
+
+Output (all under artifacts/experiments/run_eda/run_<ts>/):
+    <scenario>/                               -- per-scenario CSVs and plots
+    summary/<scenario>_eda_summary.txt        -- per-scenario text summary
+    summary/signatures/                       -- unique signature count CSVs
+    overview_table.csv                        -- cross-scenario statistics table
+    overview_table.pdf                        -- same table as a figure
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import re
 import sys
+from collections import Counter
+from datetime import datetime, timezone
+from itertools import combinations
 from pathlib import Path
 import matplotlib.pyplot as plt
-from itertools import combinations
-from collections import Counter
 import numpy as np
-import os
-import argparse
-import re
+import pandas as pd
+from thesis.visualization.eda import SCENARIOS, load_alerts
+
+import matplotlib
+
+matplotlib.use("Agg")
+
+
+_HERE = Path(__file__).resolve()
+_REPO = next(p for p in _HERE.parents if (p / "pyproject.toml").exists())
+EXPERIMENTS_DIR = _REPO / "artifacts" / "experiments" / "run_eda"
+DATA_DIR = _REPO / "data" / "alerts_csv"
+TRANSACTIONS_DIR = _REPO / "artifacts" / "transactions"
+
 
 SIGNATURE_TOKEN_WHITELIST = {
     "access",
@@ -88,45 +122,21 @@ def extract_signature_tokens(
     whitelist: set[str] = SIGNATURE_TOKEN_WHITELIST,
     blacklist: set[str] = SIGNATURE_TOKEN_BLACKLIST,
 ) -> set[str]:
-    """
-    Extract whitelisted semantic tokens from a raw alert signature string.
-
-    Example:
-        'Wazuh: ClamAV database update'
-        -> {'database', 'update'}
-    """
     if pd.isna(signature):
         return set()
-
     text = str(signature).lower()
-
-    # split into alphabetic tokens only
     raw_tokens = re.findall(r"[a-z]+", text)
-
-    tokens = {tok for tok in raw_tokens if tok in whitelist and tok not in blacklist}
-
-    return tokens
+    return {tok for tok in raw_tokens if tok in whitelist and tok not in blacklist}
 
 
 def extract_short_tokens(short_value: str) -> set[str]:
-    """
-    Split alert descriptor on '-' and keep non-empty parts as separate items.
-
-    Example:
-        'W-Acc-Req'
-        -> {'W', 'Acc', 'Req'}
-
-        'A-Acc-Http'
-        -> {'A', 'Acc', 'Http'}
-    """
     if pd.isna(short_value):
         return set()
-
     parts = [part.strip() for part in str(short_value).split("-")]
     return {part for part in parts if part}
 
 
-def time_of_day_bucket(ts):
+def time_of_day_bucket(ts) -> str:
     if pd.isna(ts):
         return "unknown"
     h = ts.hour
@@ -151,10 +161,9 @@ def build_labeled_window_transactions(
     signature_col: str = "name",
     benign_label: str = "false_positive",
     window_size_s: int = 2,
-):
+) -> pd.DataFrame:
     out = df.copy()
 
-    # Clean
     needed = [time_col, detector_col, host_col, label_col]
     out = out.dropna(subset=needed).copy()
     out[time_col] = pd.to_numeric(out[time_col], errors="coerce")
@@ -166,18 +175,13 @@ def build_labeled_window_transactions(
     )
     out["time_of_day"] = out["time_norm"].apply(time_of_day_bucket)
     out["time_epoch"] = (out["time_norm"].astype("int64") // 10**9).astype("int64")
-    # Window assignment
     out["window_start"] = (out[time_col] // window_size_s) * window_size_s
     out["window_end"] = out["window_start"] + window_size_s
 
-    # Flat items
     out["detector_item"] = out[detector_col].astype(str)
     out["host_item"] = out[host_col].astype(str)
-
-    # Alert descriptor ("short") items
     out["detector_subtokens"] = out[detector_col].apply(extract_short_tokens)
 
-    # Signature-derived items
     if signature_col in out.columns:
         out["signature_tokens"] = out[signature_col].apply(extract_signature_tokens)
     else:
@@ -187,7 +191,6 @@ def build_labeled_window_transactions(
         labels = set(labels.astype(str))
         has_benign = benign_label in labels
         has_attack = any(lbl != benign_label for lbl in labels)
-
         if has_attack and has_benign:
             return "mixed"
         elif has_attack:
@@ -197,17 +200,10 @@ def build_labeled_window_transactions(
 
     def _build_items(g: pd.DataFrame) -> set[str]:
         items = set(g["detector_item"]).union(set(g["host_item"]))
-
-        detector_subtokens = set()
         for toks in g["detector_subtokens"]:
-            detector_subtokens.update(toks)
-
-        sig_items = set()
+            items.update(toks)
         for toks in g["signature_tokens"]:
-            sig_items.update(toks)
-
-        items.update(detector_subtokens)
-        items.update(sig_items)
+            items.update(toks)
         return items
 
     tx = (
@@ -219,11 +215,6 @@ def build_labeled_window_transactions(
                     "items": _build_items(g),
                     "alert_labels": set(g[label_col].astype(str)),
                     "tx_label": _label_window(g[label_col]),
-                    # "time_of_day": (
-                    #     g["time_of_day"].mode().iloc[0]
-                    #     if not g["time_of_day"].mode().empty
-                    #     else "unknown"
-                    # ),
                 }
             ),
             include_groups=False,
@@ -235,17 +226,13 @@ def build_labeled_window_transactions(
 
 
 def count_pair_frequency(df: pd.DataFrame, items_col: str = "items") -> pd.DataFrame:
-    pair_counter = Counter()
-
+    pair_counter: Counter = Counter()
     for items in df[items_col]:
-        items = sorted(set(items))
-        for pair in combinations(items, 2):
+        for pair in combinations(sorted(set(items)), 2):
             pair_counter[pair] += 1
-
     out = pd.DataFrame(
         [{"pair": pair, "pair_count": count} for pair, count in pair_counter.items()]
     ).sort_values("pair_count", ascending=False)
-
     return out.reset_index(drop=True)
 
 
@@ -258,7 +245,6 @@ def all_pair_metrics(
     attack_df = tx[tx[label_col] == "attack"]
     benign_df = tx[tx[label_col] == "benign"]
 
-    # Count pairs in each class
     attack_pairs = count_pair_frequency(attack_df, items_col).rename(
         columns={"pair_count": "attack_count"}
     )
@@ -267,7 +253,6 @@ def all_pair_metrics(
     )
 
     pair_df = attack_pairs.merge(benign_pairs, on="pair", how="outer").fillna(0)
-
     pair_df["attack_count"] = pair_df["attack_count"].astype(int)
     pair_df["benign_count"] = pair_df["benign_count"].astype(int)
     pair_df["total_count"] = pair_df["attack_count"] + pair_df["benign_count"]
@@ -281,12 +266,10 @@ def all_pair_metrics(
     denom = pair_df["support_attack"] + pair_df["support_benign"]
     pair_df["confidence_attack"] = pair_df["support_attack"] / denom.replace(0, pd.NA)
     pair_df["confidence_benign"] = pair_df["support_benign"] / denom.replace(0, pd.NA)
-
     pair_df["confidence_attack"] = pair_df["confidence_attack"].fillna(0.0)
     pair_df["confidence_benign"] = pair_df["confidence_benign"].fillna(0.0)
 
     pair_df = pair_df[pair_df["total_count"] >= min_total_count].copy()
-
     return pair_df.sort_values(
         ["attack_count", "support_attack", "total_count"], ascending=False
     ).reset_index(drop=True)
@@ -297,131 +280,71 @@ def compute_pair_tfidf_by_class(
     n_attack_windows: int,
     n_benign_windows: int,
 ) -> pd.DataFrame:
-    """
-    Compute class-aware TF-IDF-like scores for pairs.
-
-    Expected columns:
-      - pair
-      - attack_count
-      - benign_count
-
-    Interpretation:
-      tf_attack  = fraction of attack windows containing the pair
-      idf_global = penalizes pairs common across both classes/windows
-      tfidf_attack = attack-specific importance
-
-    Returns added columns:
-      - tf_attack
-      - tf_benign
-      - window_frequency
-      - idf_global
-      - tfidf_attack
-      - tfidf_benign
-    """
     df = pair_df.copy()
-
     N = n_attack_windows + n_benign_windows
     df["window_frequency"] = df["attack_count"] + df["benign_count"]
-
     df["tf_attack"] = df["attack_count"] / max(n_attack_windows, 1)
     df["tf_benign"] = df["benign_count"] / max(n_benign_windows, 1)
-
-    df["idf_global"] = np.log((N + 1) / (1 + df["window_frequency"]))
-    df["idf_global"] = df["idf_global"].clip(lower=0)
-
+    df["idf_global"] = np.log((N + 1) / (1 + df["window_frequency"])).clip(lower=0)
     df["tfidf_attack"] = df["tf_attack"] * df["idf_global"]
     df["tfidf_benign"] = df["tf_benign"] * df["idf_global"]
-
     return df
 
 
 def compute_uniq_signature_counts(df: pd.DataFrame, sig_col: str) -> pd.DataFrame:
-    signature_counts = df[sig_col].value_counts().reset_index()
-    signature_counts.columns = ["signature", "count"]
+    counts = df[sig_col].value_counts().reset_index()
+    counts.columns = ["signature", "count"]
+    return counts
 
-    return signature_counts
 
-
-def main(dataset_name, scenario):
-    root = Path.cwd().parent.parent
-    sys.path.insert(0, str(root / "thesis"))
-
-    data_path = root.parent / "data" / dataset_name
-    out_path = root.parent / "out" / "eda" / dataset_name / scenario
-    summary_path = root.parent / "out" / "eda" / dataset_name / "summary"
-
+def run_scenario(
+    df: pd.DataFrame, scenario: str, out_path: Path, summary_path: Path
+) -> None:
     os.makedirs(out_path, exist_ok=True)
     os.makedirs(summary_path, exist_ok=True)
 
-    # create text file to store EDA summary
     with open(summary_path / f"{scenario}_eda_summary.txt", "w") as f:
         f.write(f"Exploratory Data Analysis for {scenario} scenario\n")
         f.write("=" * 50 + "\n\n")
 
-        # Load the dataset
-        file_path = os.path.join(data_path, f"{scenario}_alerts.txt")
-
-        # Load the file into a DataFrame
-        df = pd.read_csv(file_path)
-
-        # Basic information about the dataset
         f.write("Basic Information:\n")
         f.write(f"Number of rows: {len(df)}\n")
         f.write(f"Number of columns: {len(df.columns)}\n")
         f.write(f"Columns: {', '.join(df.columns)}\n\n")
 
-        # Check for missing values
         f.write("Missing Values:\n")
-        missing_values = df.isnull().sum()
-        f.write(missing_values.to_string() + "\n\n")
+        f.write(df.isnull().sum().to_string() + "\n\n")
 
-        # Distribution of labels
         if "time_label" in df.columns:
             f.write("Time label Distribution:\n")
-            alert_type_counts = df["time_label"].value_counts()
-            f.write(alert_type_counts.to_string() + "\n\n")
+            f.write(df["time_label"].value_counts().to_string() + "\n\n")
 
-        # Min and max timestamps
         if "time" in df.columns:
-            min_time = df["time"].min()
-            max_time = df["time"].max()
-            f.write(f"Min timestamp: {min_time}\n")
-            f.write(f"Max timestamp: {max_time}\n\n")
+            f.write(f"Min timestamp: {df['time'].min()}\n")
+            f.write(f"Max timestamp: {df['time'].max()}\n\n")
 
-        transactions = build_labeled_window_transactions(
-            df,
-            window_size_s=2,
-        )
-
+        transactions = build_labeled_window_transactions(df, window_size_s=2)
+        transactions.to_csv(out_path / f"{scenario}_transactions.csv", index=False)
+        TRANSACTIONS_DIR.mkdir(parents=True, exist_ok=True)
         transactions.to_csv(
-            os.path.join(out_path, f"{scenario}_transactions.csv"), index=False
+            TRANSACTIONS_DIR / f"{scenario}_transactions.csv", index=False
         )
 
-        benign_transactions = transactions[transactions["tx_label"] == "benign"].copy()
-        attack_transactions = transactions[transactions["tx_label"] == "attack"].copy()
-        mixed_transactions = transactions[transactions["tx_label"] == "mixed"].copy()
+        benign_tx = transactions[transactions["tx_label"] == "benign"].copy()
+        attack_tx = transactions[transactions["tx_label"] == "attack"].copy()
+        mixed_tx = transactions[transactions["tx_label"] == "mixed"].copy()
 
         f.write("Transaction label distribution:\n")
         f.write(transactions["tx_label"].value_counts().to_string() + "\n\n")
 
-        benign_transactions.to_csv(
-            os.path.join(out_path, f"{scenario}_benign_transactions.csv"), index=False
-        )
-        attack_transactions.to_csv(
-            os.path.join(out_path, f"{scenario}_attack_transactions.csv"), index=False
-        )
-        mixed_transactions.to_csv(
-            os.path.join(out_path, f"{scenario}_mixed_transactions.csv"), index=False
-        )
+        benign_tx.to_csv(out_path / f"{scenario}_benign_transactions.csv", index=False)
+        attack_tx.to_csv(out_path / f"{scenario}_attack_transactions.csv", index=False)
+        mixed_tx.to_csv(out_path / f"{scenario}_mixed_transactions.csv", index=False)
 
-        # Transaction size
         tx = transactions.copy()
-
         tx["tx_size"] = tx["items"].apply(len)
 
-        # Summary stats per class
         size_summary = tx.groupby("tx_label")["tx_size"].describe()
-
         size_counts = (
             tx.groupby(["tx_label", "tx_size"])
             .size()
@@ -435,114 +358,83 @@ def main(dataset_name, scenario):
         f.write(size_counts.to_string(index=False) + "\n\n")
 
         plt.figure(figsize=(10, 6))
-
-        colors = {"benign": "blue", "attack": "red"}
-
-        for label in ["benign", "attack"]:
+        for label, color in [("benign", "blue"), ("attack", "red")]:
             subset = tx.loc[tx["tx_label"] == label, "tx_size"]
-            plt.hist(subset, bins=20, alpha=0.7, color=colors[label], label=label)
-
+            plt.hist(subset, bins=20, alpha=0.7, color=color, label=label)
         plt.title(f"Distribution of transaction size (scenario={scenario})")
         plt.xlabel("Number of items in transaction")
         plt.ylabel("Count")
         plt.yscale("log")
         plt.legend()
+        plt.savefig(out_path / f"{scenario}_transaction_size_distribution.png")
+        plt.close()
 
-        plt.savefig(
-            os.path.join(out_path, f"{scenario}_transaction_size_distribution.png")
-        )
-
-        # Pair frequency
         pair_freq_all = count_pair_frequency(tx)
-        pair_freq_all.to_csv(
-            os.path.join(out_path, f"{scenario}_pair_frequencies.csv"), index=False
-        )
-
+        pair_freq_all.to_csv(out_path / f"{scenario}_pair_frequencies.csv", index=False)
         f.write("Top 20 most common item pairs across all transactions:\n")
         f.write(pair_freq_all.head(20).to_string(index=False) + "\n\n")
 
-        pair_freq_benign = count_pair_frequency(benign_transactions)
+        pair_freq_benign = count_pair_frequency(benign_tx)
         pair_freq_benign.to_csv(
-            os.path.join(out_path, f"{scenario}_benign_pair_frequencies.csv"),
-            index=False,
+            out_path / f"{scenario}_benign_pair_frequencies.csv", index=False
         )
-
         f.write("Top 20 most common item pairs in BENIGN transactions:\n")
         f.write(pair_freq_benign.head(20).to_string(index=False) + "\n\n")
 
-        pair_freq_attack = count_pair_frequency(attack_transactions)
+        pair_freq_attack = count_pair_frequency(attack_tx)
         pair_freq_attack.to_csv(
-            os.path.join(out_path, f"{scenario}_attack_pair_frequencies.csv"),
-            index=False,
+            out_path / f"{scenario}_attack_pair_frequencies.csv", index=False
         )
-
         f.write("Top 20 most common item pairs in ATTACK transactions:\n")
         f.write(pair_freq_attack.head(20).to_string(index=False) + "\n\n")
 
-        # Intersection
         intersection = pd.merge(
             pair_freq_benign.rename(columns={"pair_count": "benign_count"}),
             pair_freq_attack.rename(columns={"pair_count": "attack_count"}),
             on="pair",
             how="inner",
         ).fillna(0)
-
         intersection.to_csv(
-            os.path.join(out_path, f"{scenario}_pair_frequency_intersection.csv"),
-            index=False,
+            out_path / f"{scenario}_pair_frequency_intersection.csv", index=False
         )
 
-        # compare the total number of pairs existing with the number of pairs that exist in both classes
         total_pairs = len(pair_freq_all)
         intersection_pairs = len(intersection)
-
         f.write(f"Total unique pairs: {total_pairs}\n")
         f.write(f"Pairs in both classes: {intersection_pairs}\n")
         f.write(
             f"Percentage of pairs in both classes: {intersection_pairs / total_pairs:.2%}\n\n"
         )
-
         f.write(
             "Top 20 most common item pairs in both BENIGN and ATTACK transactions:\n"
         )
         f.write(intersection.head(20).to_string(index=False) + "\n\n")
 
-        # Support + confidence
         pair_metrics_df = all_pair_metrics(tx)
-        pair_metrics_df.to_csv(
-            os.path.join(out_path, f"{scenario}_pair_metrics.csv"), index=False
-        )
-
+        pair_metrics_df.to_csv(out_path / f"{scenario}_pair_metrics.csv", index=False)
         f.write("Top 20 item pairs by attack count + attack support:\n")
         f.write(pair_metrics_df.head(20).to_string(index=False) + "\n\n")
 
-        pair_df = pair_metrics_df.copy()
-
         plt.figure()
-
-        plt.scatter(pair_df["support_benign"], pair_df["support_attack"], alpha=0.5)
-
+        plt.scatter(
+            pair_metrics_df["support_benign"],
+            pair_metrics_df["support_attack"],
+            alpha=0.5,
+        )
         plt.yscale("log")
         plt.xscale("log")
         plt.xlabel("Support (benign)")
         plt.ylabel("Support (attack)")
         plt.title(f"Pair support: attack vs benign (scenario={scenario})")
-        plt.savefig(os.path.join(out_path, f"{scenario}_pair_support_scatter.png"))
-
-        # TF-IDF (class specific)
-        n_attack_windows = len(attack_transactions)
-        n_benign_windows = len(benign_transactions)
+        plt.savefig(out_path / f"{scenario}_pair_support_scatter.png")
+        plt.close()
 
         pair_tfidf = compute_pair_tfidf_by_class(
             pair_df=pair_metrics_df[["pair", "attack_count", "benign_count"]].copy(),
-            n_attack_windows=n_attack_windows,
-            n_benign_windows=n_benign_windows,
+            n_attack_windows=len(attack_tx),
+            n_benign_windows=len(benign_tx),
         )
-
-        pair_tfidf.to_csv(
-            os.path.join(out_path, f"{scenario}_pair_tfidf.csv"), index=False
-        )
-
+        pair_tfidf.to_csv(out_path / f"{scenario}_pair_tfidf.csv", index=False)
         f.write("Top 20 item pairs by attack TF-IDF score:\n")
         f.write(
             pair_tfidf.sort_values("tfidf_attack", ascending=False)
@@ -550,7 +442,6 @@ def main(dataset_name, scenario):
             .to_string(index=False)
             + "\n\n"
         )
-
         f.write("Top 20 item pairs by benign TF-IDF score:\n")
         f.write(
             pair_tfidf.sort_values("tfidf_benign", ascending=False)
@@ -561,32 +452,149 @@ def main(dataset_name, scenario):
 
         sig_counts = compute_uniq_signature_counts(df, sig_col="name")
         f.write(f"Unique signature counts in data: {len(sig_counts)}\n")
-        # apply on original dataset, using 'name' column as signature (which is the most specific identifier of an alert)
         f.write("Top 30 most common signatures:\n")
         f.write(sig_counts.head(30).to_string(index=False) + "\n\n")
-        os.makedirs(os.path.join(summary_path, "signatures"), exist_ok=True)
+
+        sig_dir = summary_path / "signatures"
+        os.makedirs(sig_dir, exist_ok=True)
         sig_counts.to_csv(
-            os.path.join(
-                summary_path, "signatures", f"{scenario}_unique_signature_counts.csv"
-            ),
-            index=False,
+            sig_dir / f"{scenario}_unique_signature_counts.csv", index=False
         )
 
-        print(
-            f"EDA completed for scenario: {scenario}. Results saved to {out_path} and summary to {summary_path}"
+    print(f"  {scenario}: done → {out_path}")
+
+
+def save_overview_table(all_df: pd.DataFrame, run_dir: Path) -> None:
+    scenarios = [s for s in SCENARIOS if s in all_df["scenario"].unique()]
+
+    rows = []
+    for sc in scenarios:
+        sc_df = all_df[all_df["scenario"] == sc]
+        n_total = len(sc_df)
+        n_benign = (~sc_df["is_attack"]).sum()
+        n_attack = sc_df["is_attack"].sum()
+        t_start = pd.to_datetime(sc_df["time"].min(), unit="s", utc=True)
+        t_end = pd.to_datetime(sc_df["time"].max(), unit="s", utc=True)
+        duration_days = (sc_df["time"].max() - sc_df["time"].min()) / 86400
+        n_sig = sc_df["name"].nunique()
+        n_attack_types = sc_df.loc[sc_df["is_attack"], "time_label"].nunique()
+        rows.append(
+            {
+                "scenario": sc,
+                "start": t_start.strftime("%Y-%m-%d"),
+                "end": t_end.strftime("%Y-%m-%d"),
+                "duration_days": round(duration_days, 1),
+                "total_alerts": n_total,
+                "benign_alerts": int(n_benign),
+                "attack_alerts": int(n_attack),
+                "attack_pct": round(100 * n_attack / n_total, 1),
+                "unique_signatures": n_sig,
+                "attack_types": n_attack_types,
+            }
         )
+
+    overview_df = pd.DataFrame(rows)
+    overview_df.to_csv(run_dir / "overview_table.csv", index=False)
+    print(f"  overview_table.csv → {run_dir / 'overview_table.csv'}")
+
+    col_labels = [
+        "Scenario",
+        "Start",
+        "End",
+        "Days",
+        "Total",
+        "Benign",
+        "Attack",
+        "Attack %",
+        "Alert sigs",
+        "Attack types",
+    ]
+    cell_text = [
+        [
+            r["scenario"],
+            r["start"],
+            r["end"],
+            str(r["duration_days"]),
+            f"{r['total_alerts']:,}",
+            f"{r['benign_alerts']:,}",
+            f"{r['attack_alerts']:,}",
+            f"{r['attack_pct']:.1f}%",
+            str(r["unique_signatures"]),
+            str(r["attack_types"]),
+        ]
+        for r in rows
+    ]
+    fig, ax = plt.subplots(figsize=(13, 4))
+    ax.axis("off")
+    tbl = ax.table(
+        cellText=cell_text, colLabels=col_labels, loc="center", cellLoc="center"
+    )
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(9)
+    tbl.scale(1.0, 1.6)
+    for j in range(len(col_labels)):
+        tbl[0, j].set_facecolor("#DDDDDD")
+        tbl[0, j].set_text_props(fontweight="bold")
+    ax.set_title("Dataset overview — per-scenario statistics", fontsize=12, pad=12)
+    plt.tight_layout()
+    fig.savefig(run_dir / "overview_table.pdf", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  overview_table.pdf → {run_dir / 'overview_table.pdf'}")
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    p = argparse.ArgumentParser(
+        description="Exploratory Data Analysis for alert scenarios.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument(
+        "scenarios",
+        nargs="*",
+        metavar="SCENARIO",
+        help=f"Scenario names to analyse. Choices: {', '.join(SCENARIOS)}",
+    )
+    p.add_argument(
+        "--all",
+        dest="all_scenarios",
+        action="store_true",
+        help="Run EDA for all scenarios.",
+    )
+    return p.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
+
+    if args.all_scenarios:
+        scenarios = SCENARIOS
+    elif args.scenarios:
+        unknown = [s for s in args.scenarios if s not in SCENARIOS]
+        if unknown:
+            print(f"Unknown scenario(s): {', '.join(unknown)}")
+            print(f"Valid choices: {', '.join(SCENARIOS)}")
+            sys.exit(1)
+        scenarios = [s for s in SCENARIOS if s in args.scenarios]
+    else:
+        print("Specify scenario names or --all.  Use -h for help.")
+        sys.exit(1)
+
+    run_ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    run_dir = EXPERIMENTS_DIR / f"run_{run_ts}"
+    summary_path = run_dir / "summary"
+
+    print(f"Loading alerts for: {', '.join(scenarios)}")
+    all_df = load_alerts(str(DATA_DIR), scenarios=scenarios)
+    print(f"  {len(all_df):,} alerts loaded.\n")
+
+    for scenario in scenarios:
+        scenario_df = all_df[all_df["scenario"] == scenario].copy()
+        run_scenario(scenario_df, scenario, run_dir / scenario, summary_path)
+
+    print("\nComputing dataset overview table...")
+    save_overview_table(all_df, run_dir)
+
+    print(f"\nAll output saved to: {run_dir.resolve()}")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="EDA script")
-    parser.add_argument(
-        "--dataset_name",
-        required=True,
-        help="Name of the folder containing the dataset (e.g., 'alerts_csv')",
-    )
-    parser.add_argument(
-        "--scenario", required=True, help="Scenario name for output files"
-    )
-
-    args = parser.parse_args()
-    main(args.dataset_name, args.scenario)
+    main()

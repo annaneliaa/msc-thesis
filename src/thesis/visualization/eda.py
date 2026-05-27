@@ -649,19 +649,280 @@ def plot_group_size_distribution(
     return fig, ax
 
 
+def load_transactions(
+    transactions_dir: str, scenarios: list[str] | None = None
+) -> pd.DataFrame:
+    """
+    Load pre-computed transaction CSVs produced by run_eda.py.
+
+    Expects one file per scenario: <transactions_dir>/<scenario>_transactions.csv
+    with at least columns: window_start, window_end, n_alerts, tx_label.
+
+    Returns a combined DataFrame with an added 'scenario' column.
+    """
+    if scenarios is None:
+        scenarios = SCENARIOS
+
+    frames = []
+    for sc in scenarios:
+        path = os.path.join(transactions_dir, f"{sc}_transactions.csv")
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"Transactions CSV not found: {path}")
+        df = pd.read_csv(
+            path,
+            usecols=["window_start", "window_end", "n_alerts", "tx_label"],
+        )
+        df["scenario"] = sc
+        frames.append(df)
+
+    return pd.concat(frames, ignore_index=True)
+
+
+def plot_transaction_volume_concatenated(
+    tx_df: pd.DataFrame,
+    bin_hours: float = 1.0,
+    ncols: int = 4,
+    figsize: tuple = (16, 6),
+    out_path: str | None = None,
+) -> tuple:
+    """
+    Transaction volume over time — one subplot per scenario (2 × 4 grid).
+
+    Mirrors plot_alert_volume_concatenated but counts 2-second transaction
+    windows rather than individual alerts. Benign transactions are blue,
+    attack + mixed transactions are red. Y-axis is log scale.
+    """
+    scenarios = [s for s in SCENARIOS if s in tx_df["scenario"].unique()]
+    nrows = (len(scenarios) + ncols - 1) // ncols
+
+    fig, axes = plt.subplots(nrows, ncols, figsize=figsize, sharey=False)
+    axes_flat = axes.flat
+
+    for i, sc in enumerate(scenarios):
+        ax = axes_flat[i]
+        sc_tx = tx_df[tx_df["scenario"] == sc].copy()
+        t0 = float(sc_tx["window_start"].min())
+        elapsed = (sc_tx["window_start"].astype(float) - t0) / 3600.0
+        duration = float(elapsed.max())
+
+        is_attack = sc_tx["tx_label"].isin(["attack", "mixed"]).values
+        is_benign = (sc_tx["tx_label"] == "benign").values
+
+        bin_edges = np.arange(0, duration + bin_hours, bin_hours)
+        benign_h, _ = np.histogram(elapsed[is_benign], bins=bin_edges)
+        attack_h, _ = np.histogram(elapsed[is_attack], bins=bin_edges)
+
+        xe, ye_b = _step_xy(bin_edges, benign_h)
+        _, ye_a = _step_xy(bin_edges, benign_h + attack_h)
+
+        ax.fill_between(
+            xe, 1, np.maximum(ye_b, 1), color=_C_BENIGN, alpha=0.75, linewidth=0
+        )
+        ax.fill_between(
+            xe,
+            np.maximum(ye_b, 1),
+            np.maximum(ye_a, 1),
+            color=_C_ATTACK,
+            alpha=0.80,
+            linewidth=0,
+        )
+
+        ax.set_yscale("log")
+        ax.set_xlim(0, duration)
+        ax.set_title(sc, fontsize=10, pad=3)
+        ax.tick_params(labelsize=7)
+        ax.grid(axis="y", alpha=0.3, linewidth=0.5)
+
+        row, col = divmod(i, ncols)
+        if row == nrows - 1:
+            ax.set_xlabel("Elapsed time (h)", fontsize=8)
+        if col == 0:
+            ax.set_ylabel(f"Tx / {bin_hours:.0f}h", fontsize=8)
+
+    for j in range(len(scenarios), nrows * ncols):
+        axes_flat[j].set_visible(False)
+
+    fig.legend(
+        handles=[
+            mpatches.Patch(color=_C_BENIGN, alpha=0.75, label="Benign"),
+            mpatches.Patch(color=_C_ATTACK, alpha=0.80, label="Attack / Mixed"),
+        ],
+        loc="lower right",
+        bbox_to_anchor=(1.0, 0.02),
+        fontsize=9,
+        framealpha=0.9,
+    )
+    fig.suptitle("Transaction volume timeline (all scenarios)", fontsize=12, y=1.01)
+    plt.tight_layout()
+    _save(fig, out_path)
+    return fig, axes
+
+
+def plot_transaction_volume_attack_zoom(
+    tx_df: pd.DataFrame,
+    context_hours: float = 0.5,
+    phase_gap_hours: float = 3.0,
+    bin_hours: float = (1 / 60),  # 2sec bins
+    out_path: str | None = None,
+) -> tuple:
+    """
+    Transaction volume zoomed into each attack phase — one row per scenario.
+
+    Attack phases are derived from transactions labelled 'attack' or 'mixed'.
+    Mirrors plot_attack_phase_zoom but operates on transaction windows rather
+    than individual alerts.
+    """
+    scenarios = [s for s in SCENARIOS if s in tx_df["scenario"].unique()]
+
+    scenario_info: list[tuple] = []
+    for sc in scenarios:
+        sc_tx = tx_df[tx_df["scenario"] == sc].copy()
+        t0 = float(sc_tx["window_start"].min())
+        duration_h = (float(sc_tx["window_start"].max()) - t0) / 3600.0
+
+        elapsed_all = (sc_tx["window_start"].values.astype(float) - t0) / 3600.0
+        attack_mask = sc_tx["tx_label"].isin(["attack", "mixed"]).values
+        attack_elapsed = elapsed_all[attack_mask]
+
+        phases = _get_attack_phases(attack_elapsed, phase_gap_hours)
+        windows: list[tuple[float, float]] = []
+        for p_start, p_end in phases:
+            ws = max(0.0, p_start - context_hours)
+            we = min(duration_h, p_end + context_hours)
+            if windows and ws <= windows[-1][1]:
+                windows[-1] = (windows[-1][0], max(windows[-1][1], we))
+            else:
+                windows.append((ws, we))
+
+        scenario_info.append((sc, elapsed_all, attack_mask, windows))
+
+    n_sc = len(scenario_info)
+    fig = plt.figure(figsize=(16, n_sc * 2.0 + 1.2))
+    from matplotlib.gridspec import GridSpec
+
+    outer_gs = GridSpec(
+        n_sc,
+        1,
+        figure=fig,
+        hspace=0.75,
+        top=0.93,
+        bottom=0.06,
+        left=0.07,
+        right=0.97,
+    )
+
+    all_axes: list[list] = []
+
+    for i, (sc, elapsed_all, attack_mask, windows) in enumerate(scenario_info):
+        if not windows:
+            ax = fig.add_subplot(outer_gs[i])
+            ax.text(
+                0.5,
+                0.5,
+                "no attack data",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+                fontsize=8,
+                color="0.5",
+            )
+            ax.set_title(sc, fontsize=9, loc="left", fontweight="bold", pad=2)
+            all_axes.append([ax])
+            continue
+
+        n_panels = len(windows)
+        durations = [we - ws for ws, we in windows]
+        inner_gs = GridSpecFromSubplotSpec(
+            1,
+            n_panels,
+            subplot_spec=outer_gs[i],
+            width_ratios=durations,
+            wspace=0.06,
+        )
+
+        row_axes: list = []
+        for j, (ws, we) in enumerate(windows):
+            ax = fig.add_subplot(inner_gs[0, j])
+            row_axes.append(ax)
+
+            mask = (elapsed_all >= ws) & (elapsed_all <= we)
+            e_win = elapsed_all[mask]
+            is_att = attack_mask[mask]
+
+            bin_edges = np.arange(ws, we + bin_hours, bin_hours)
+            benign_h, _ = np.histogram(e_win[~is_att], bins=bin_edges)
+            attack_h, _ = np.histogram(e_win[is_att], bins=bin_edges)
+
+            xe, ye_b = _step_xy(bin_edges, benign_h)
+            _, ye_a = _step_xy(bin_edges, benign_h + attack_h)
+
+            ax.fill_between(
+                xe, 1, np.maximum(ye_b, 1), color=_C_BENIGN, alpha=0.75, linewidth=0
+            )
+            ax.fill_between(
+                xe,
+                np.maximum(ye_b, 1),
+                np.maximum(ye_a, 1),
+                color=_C_ATTACK,
+                alpha=0.80,
+                linewidth=0,
+            )
+
+            ax.set_yscale("log")
+            ax.set_xlim(ws, we)
+            ax.tick_params(labelsize=7)
+            ax.xaxis.set_major_locator(mticker.MaxNLocator(4, integer=False))
+            ax.grid(axis="y", alpha=0.3, linewidth=0.5)
+
+            if j > 0:
+                ax.spines["left"].set_visible(False)
+                ax.tick_params(left=False, labelleft=False)
+                _draw_break_marks(ax, "left")
+            if j < n_panels - 1:
+                ax.spines["right"].set_visible(False)
+                _draw_break_marks(ax, "right")
+
+            ax.set_xlabel("Elapsed time (h)", fontsize=7)
+
+        row_axes[0].set_title(sc, fontsize=9, loc="left", fontweight="bold", pad=2)
+        row_axes[0].set_ylabel(f"Tx / {bin_hours:.2g}h", fontsize=7)
+        all_axes.append(row_axes)
+
+    fig.legend(
+        handles=[
+            mpatches.Patch(color=_C_BENIGN, alpha=0.75, label="Benign"),
+            mpatches.Patch(color=_C_ATTACK, alpha=0.80, label="Attack / Mixed"),
+        ],
+        loc="upper right",
+        bbox_to_anchor=(0.98, 0.99),
+        fontsize=9,
+        framealpha=0.9,
+    )
+    fig.suptitle(
+        f"Transaction volume timeline — attack phase zoom"
+        f"  (context={context_hours}h, phase_gap={phase_gap_hours}h, bin={bin_hours}h)",
+        fontsize=11,
+    )
+    _save(fig, out_path)
+    return fig, all_axes
+
+
 def plot_scenario_overview(
     df: pd.DataFrame,
-    figsize: tuple = (13, 4),
+    tx_df: pd.DataFrame | None = None,
+    figsize: tuple | None = None,
     out_path: str | None = None,
 ) -> tuple:
     """
     Summary table rendered as a figure — one row per scenario.
 
-    Columns: total alerts, benign count, attack count, attack %, duration (days),
-             number of distinct alert types, number of attack types present.
-    Suitable as Table N in the thesis dataset chapter.
+    Alert columns: start/end date, duration, total/benign/attack counts, attack %,
+    unique alert signatures, attack types present.
+    When tx_df is provided, four transaction columns are appended:
+    Tx Total, Tx Benign, Tx Attack (+mixed), Tx Att %.
     """
     scenarios = [s for s in SCENARIOS if s in df["scenario"].unique()]
+    has_tx = tx_df is not None
 
     rows = []
     for sc in scenarios:
@@ -674,20 +935,30 @@ def plot_scenario_overview(
         duration_days = (sc_df["time"].max() - sc_df["time"].min()) / 86400
         n_sig = sc_df["name"].nunique()
         n_attack_types = sc_df.loc[sc_df["is_attack"], "time_label"].nunique()
-        rows.append(
-            [
-                sc,
-                t_start.strftime("%Y-%m-%d"),
-                t_end.strftime("%Y-%m-%d"),
-                f"{duration_days:.1f}",
-                f"{n_total:,}",
-                f"{n_benign:,}",
-                f"{n_attack:,}",
-                f"{100 * n_attack / n_total:.1f}%",
-                str(n_sig),
-                str(n_attack_types),
+        row = [
+            sc,
+            t_start.strftime("%Y-%m-%d"),
+            t_end.strftime("%Y-%m-%d"),
+            f"{duration_days:.1f}",
+            f"{n_total:,}",
+            f"{n_benign:,}",
+            f"{n_attack:,}",
+            f"{100 * n_attack / n_total:.1f}%",
+            str(n_sig),
+            str(n_attack_types),
+        ]
+        if has_tx:
+            sc_tx = tx_df[tx_df["scenario"] == sc]
+            tx_total = len(sc_tx)
+            tx_benign = (sc_tx["tx_label"] == "benign").sum()
+            tx_attack = sc_tx["tx_label"].isin(["attack", "mixed"]).sum()
+            row += [
+                f"{tx_total:,}",
+                f"{tx_benign:,}",
+                f"{tx_attack:,}",
+                f"{100 * tx_attack / tx_total:.1f}%" if tx_total else "—",
             ]
-        )
+        rows.append(row)
 
     col_labels = [
         "Scenario",
@@ -701,20 +972,19 @@ def plot_scenario_overview(
         "Alert\nsigs",
         "Attack\ntypes",
     ]
+    if has_tx:
+        col_labels += ["Tx\nTotal", "Tx\nBenign", "Tx\nAttack", "Tx\nAtt %"]
+
+    if figsize is None:
+        figsize = (18, 4) if has_tx else (13, 4)
 
     fig, ax = plt.subplots(figsize=figsize)
     ax.axis("off")
-    tbl = ax.table(
-        cellText=rows,
-        colLabels=col_labels,
-        loc="center",
-        cellLoc="center",
-    )
+    tbl = ax.table(cellText=rows, colLabels=col_labels, loc="center", cellLoc="center")
     tbl.auto_set_font_size(False)
     tbl.set_fontsize(9)
     tbl.scale(1.0, 1.6)
 
-    # style header row
     for j in range(len(col_labels)):
         tbl[0, j].set_facecolor("#DDDDDD")
         tbl[0, j].set_text_props(fontweight="bold")

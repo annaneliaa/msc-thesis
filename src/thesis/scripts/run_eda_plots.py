@@ -2,27 +2,31 @@
 Generate EDA plots for the alert dataset.
 
 Loads the raw alert CSVs and produces a set of exploratory figures useful for
-the dataset introduction chapter of the thesis.
+the dataset introduction chapter of the thesis.  Optionally loads pre-computed
+transaction data (produced by run_eda.py) to add transaction volume plots and
+extend the scenario overview table with per-transaction statistics.
 
 Usage:
-    # all scenarios
+    # all scenarios (alert plots only)
     python src/thesis/scripts/run_eda_plots.py --all
+
+    # with transaction volume plots (run run_eda.py first)
+    python src/thesis/scripts/run_eda_plots.py --all --transactions-dir artifacts/transactions
 
     # one or more specific scenarios
     python src/thesis/scripts/run_eda_plots.py fox harrison
 
-    # custom output directory and bin width
-    python src/thesis/scripts/run_eda_plots.py --all --out-dir plots/eda --bin-hours 2
-
 Output (all saved to <out-dir>/):
-    volume_concatenated.pdf   -- alert volume over concatenated timelines
-    volume_attack_zoom.pdf    -- alert volume zoomed into each attack phase
-    class_balance.pdf         -- benign/attack counts + percentages per scenario
-    attack_type_heatmap.pdf   -- attack type × scenario count heatmap
-    top_alert_names.pdf       -- top-20 most frequent IDS signatures
-    inter_arrival_cdf.pdf     -- inter-arrival time CDF per scenario
-    group_size_dist.pdf       -- alert group size distribution (2s window)
-    scenario_overview.pdf     -- per-scenario summary table
+    volume_concatenated.pdf       -- alert volume over concatenated timelines
+    volume_attack_zoom.pdf        -- alert volume zoomed into each attack phase
+    class_balance.pdf             -- benign/attack counts + percentages per scenario
+    attack_type_heatmap.pdf       -- attack type × scenario count heatmap
+    top_alert_names.pdf           -- top-20 most frequent IDS signatures
+    inter_arrival_cdf.pdf         -- inter-arrival time CDF per scenario
+    group_size_dist.pdf           -- alert group size distribution (2s window)
+    scenario_overview.pdf         -- per-scenario summary table (+ tx stats if available)
+    tx_volume_concatenated.pdf    -- transaction volume over concatenated timelines [optional]
+    tx_volume_attack_zoom.pdf     -- transaction volume zoomed into attack phases  [optional]
 """
 
 from __future__ import annotations
@@ -35,6 +39,7 @@ from pathlib import Path
 from thesis.visualization.eda import (
     SCENARIOS,
     load_alerts,
+    load_transactions,
     plot_alert_volume_concatenated,
     plot_attack_phase_zoom,
     plot_attack_type_heatmap,
@@ -43,6 +48,8 @@ from thesis.visualization.eda import (
     plot_inter_arrival_time_cdf,
     plot_scenario_overview,
     plot_top_alert_names,
+    plot_transaction_volume_attack_zoom,
+    plot_transaction_volume_concatenated,
 )
 
 import matplotlib
@@ -75,6 +82,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="data/alerts_csv",
         metavar="PATH",
         help="Directory containing <scenario>_alerts.txt files (default: data/alerts_csv).",
+    )
+    p.add_argument(
+        "--transactions-dir",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Directory containing <scenario>_transactions.csv files produced by run_eda.py "
+            "(default: artifacts/transactions if it exists, otherwise skipped)."
+        ),
     )
     p.add_argument(
         "--out-dir",
@@ -137,7 +153,31 @@ def main(argv: list[str] | None = None) -> None:
 
     print(f"Loading alerts for: {', '.join(scenarios)}")
     df = load_alerts(args.data_dir, scenarios=scenarios)
-    print(f"  {len(df):,} alerts loaded.\n")
+    print(f"  {len(df):,} alerts loaded.")
+
+    # Resolve transactions directory: explicit arg > default location > skip
+    if args.transactions_dir is not None:
+        tx_dir = (
+            Path(args.transactions_dir)
+            if Path(args.transactions_dir).is_absolute()
+            else ROOT / args.transactions_dir
+        )
+    else:
+        tx_dir = ROOT / "artifacts" / "transactions"
+
+    tx_df = None
+    if tx_dir.exists():
+        try:
+            tx_df = load_transactions(str(tx_dir), scenarios=scenarios)
+            print(f"  {len(tx_df):,} transactions loaded from {tx_dir}.")
+        except FileNotFoundError as e:
+            print(f"  Warning: {e}. Transaction plots will be skipped.")
+    else:
+        print(
+            f"  No transactions dir found at {tx_dir}. "
+            "Run run_eda.py first to enable transaction plots."
+        )
+    print()
 
     fmt = args.fmt
 
@@ -179,9 +219,29 @@ def main(argv: list[str] | None = None) -> None:
         ),
         (
             "scenario overview table",
-            lambda: plot_scenario_overview(df, out_path=out("scenario_overview")),
+            lambda: plot_scenario_overview(
+                df, tx_df=tx_df, out_path=out("scenario_overview")
+            ),
         ),
     ]
+
+    if tx_df is not None:
+        plots += [
+            (
+                "transaction volume (concatenated timeline)",
+                lambda: plot_transaction_volume_concatenated(
+                    tx_df,
+                    bin_hours=args.bin_hours,
+                    out_path=out("tx_volume_concatenated"),
+                ),
+            ),
+            (
+                "transaction volume (attack phase zoom)",
+                lambda: plot_transaction_volume_attack_zoom(
+                    tx_df, out_path=out("tx_volume_attack_zoom")
+                ),
+            ),
+        ]
 
     import matplotlib.pyplot as plt
 

@@ -275,13 +275,20 @@ def run_symbolic_experiment(
 
     # 4. Build transactions from closed groups
     print("[4/8] Building transactions from cache...")
+    tx_dir = config.transactions_dir
     transactions = _load_transactions(
-        config.scenario, config.cache_dir, groups_cache_dir=grouping_cache_dir
+        config.scenario,
+        config.cache_dir,
+        groups_cache_dir=grouping_cache_dir,
+        transactions_dir=tx_dir,
     )
 
-    transactions_path = (
-        config.cache_dir / config.scenario / "transactions" / "transactions_raw.json"
+    _resolved_tx_dir = (
+        tx_dir
+        if tx_dir is not None
+        else config.cache_dir / config.scenario / "transactions"
     )
+    transactions_path = _resolved_tx_dir / "transactions_raw.json"
 
     # 5. Mine and register symbolic schema
     print("[5/8] Mining transactions...")
@@ -308,6 +315,7 @@ def run_symbolic_experiment(
         config.schema_name,
         config.cache_dir,
         feature_selection=feature_selection,
+        transactions_dir=tx_dir,
     )
 
     # 7. Train model

@@ -132,9 +132,16 @@ def _process_alert_batch(
 
 
 def _load_transactions(
-    scenario: str, cache_dir: Path, groups_cache_dir: Path | None = None
+    scenario: str,
+    cache_dir: Path,
+    groups_cache_dir: Path | None = None,
+    transactions_dir: Path | None = None,
 ) -> list:
-    out_dir = cache_dir / scenario / "transactions"
+    out_dir = (
+        transactions_dir
+        if transactions_dir is not None
+        else cache_dir / scenario / "transactions"
+    )
     out_path = out_dir / "transactions_raw.json"
 
     if out_path.exists():
@@ -218,11 +225,15 @@ def _encode_transactions(
     schema_name: str,
     cache_dir: Path,
     feature_selection: FeatureSelectionConfig | None = None,
+    transactions_dir: Path | None = None,
 ) -> tuple[pd.DataFrame, object]:
     safe_name = schema_name.replace("+", "_").replace("/", "_")
-    out_path = (
-        cache_dir / scenario / "transactions" / f"transactions_{safe_name}.parquet"
+    _tx_dir = (
+        transactions_dir
+        if transactions_dir is not None
+        else cache_dir / scenario / "transactions"
     )
+    out_path = _tx_dir / f"transactions_{safe_name}.parquet"
 
     registry = FeatureSchemaRegistry(root_dir=_ROOT / "artifacts" / "features")
     schema = registry.load(
@@ -268,6 +279,7 @@ def _encode_transactions(
         axis=1,
     )
 
+    _tx_dir.mkdir(parents=True, exist_ok=True)
     df.to_parquet(out_path, index=False)
     print(f"  Encoded {len(df)} transactions under schema '{schema_name}' → {out_path}")
     return df, schema
@@ -307,14 +319,22 @@ def run_baseline_experiment(
 
     # 4. Build transactions from closed groups
     print("[4/7] Building transactions from cache...")
+    tx_dir = config.transactions_dir
     transactions = _load_transactions(
-        config.scenario, config.cache_dir, groups_cache_dir=grouping_cache_dir
+        config.scenario,
+        config.cache_dir,
+        groups_cache_dir=grouping_cache_dir,
+        transactions_dir=tx_dir,
     )
 
     # 5. Encode under baseline schema
     print(f"[5/7] Encoding transactions (schema='{config.schema_name}')...")
     df, schema = _encode_transactions(
-        config.scenario, transactions, config.schema_name, config.cache_dir
+        config.scenario,
+        transactions,
+        config.schema_name,
+        config.cache_dir,
+        transactions_dir=tx_dir,
     )
 
     # 6. Train model

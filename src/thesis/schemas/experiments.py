@@ -29,6 +29,7 @@ class SymbolicExperimentConfig:
     grouping: GroupingConfig = field(default_factory=GroupingConfig)
     grouping_cache_dir: Path | None = None
     results_dir: Path | None = None
+    transactions_dir: Path | None = None
 
 
 @dataclass
@@ -42,6 +43,7 @@ class BaselineExperimentConfig:
     grouping: GroupingConfig = field(default_factory=GroupingConfig)
     grouping_cache_dir: Path | None = None
     results_dir: Path | None = None
+    transactions_dir: Path | None = None
 
 
 @dataclass
