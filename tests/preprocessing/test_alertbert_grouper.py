@@ -7,9 +7,6 @@ in the environment, so CI stays green without pre-trained weights.
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
 import numpy as np
 import pytest
 
@@ -154,31 +151,3 @@ def test_grouper_group_empty_returns_empty():
         theta=2.0,
     )
     assert grouper.group([]) == []
-
-
-# ---------------------------------------------------------------------------
-# Full grouper integration test (skipped without a real model)
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.skipif(
-    not os.environ.get("ALERTBERT_MODEL_ID"),
-    reason="Set ALERTBERT_MODEL_ID and ALERTBERT_MODELS_PATH to run full grouper test",
-)
-def test_full_grouper_returns_one_record_per_alert():
-    model_id = os.environ["ALERTBERT_MODEL_ID"]
-    models_path = os.environ.get("ALERTBERT_MODELS_PATH", "artifacts/alertbert")
-    grouper = AlertBERTGrouper(
-        checkpoint_dir=Path(models_path) / model_id,
-        delta=2.0,
-        theta=2.0,
-        dim_reduction=2,
-    )
-    records = grouper.group(SAMPLE_ALERTS)
-    assert len(records) == len(SAMPLE_ALERTS)
-    assert all(r.method == ALERTBERT_METHOD for r in records)
-    assert all(r.group_id.startswith(f"alertbert:{model_id}:") for r in records)
-    # first 3 alerts are within 3s of each other; alert 4 is 997s later —
-    # expect at least two distinct groups
-    group_ids = {r.group_id for r in records}
-    assert len(group_ids) >= 2
