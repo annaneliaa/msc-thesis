@@ -61,7 +61,7 @@ _REPO = next(p for p in _HERE.parents if (p / "pyproject.toml").exists())
 sys.path.insert(0, str(_REPO / "src"))
 EXPERIMENTS_DIR = _REPO / "artifacts" / "experiments" / "run_grouping_compare"
 
-# Fixed AlertBERT hyperparameters — change here to tune for the scenario
+# Fixed AlertBERT hyperparameters, change here to tune for the scenario
 _AB_DELTA = 2.0
 _AB_THETA = 6.0
 _AB_DIM_REDUCTION = 2

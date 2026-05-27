@@ -33,6 +33,7 @@ class SequenceFilterConfig(BaseModel):
 class FeatureSelectionConfig(BaseModel):
     top_k: int | None = None
     min_utility_score: float | None = None
+    filter_cross_host_or: bool = False
 
 
 class MiningFilterConfig(BaseModel):

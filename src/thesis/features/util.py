@@ -4,7 +4,11 @@ from pathlib import Path
 import re
 import json
 
-from thesis.schemas.features import FeatureSchema, SymbolicFeatureSchema
+from thesis.schemas.features import (
+    FeatureSchema,
+    SymbolicFeature,
+    SymbolicFeatureSchema,
+)
 from thesis.schemas.mining import FeatureSelectionConfig
 
 _VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
@@ -93,6 +97,15 @@ def register_symbolic_schema_version(
         json.dump(manifest, f, indent=2)
 
 
+def _is_cross_host_or(f: SymbolicFeature) -> bool:
+    if f.mining_type != "or_itemset" or f.clauses is None:
+        return False
+    hosts = {
+        item for clause in f.clauses for item in clause if item.startswith("host:")
+    }
+    return len(hosts) > 1
+
+
 def select_symbolic_features(
     schema: FeatureSchema,
     config: FeatureSelectionConfig,
@@ -101,6 +114,9 @@ def select_symbolic_features(
         return schema
 
     features = list(schema.symbolic.features)
+
+    if config.filter_cross_host_or:
+        features = [f for f in features if not _is_cross_host_or(f)]
 
     if config.min_utility_score is not None:
         features = [f for f in features if f.utility_score >= config.min_utility_score]
