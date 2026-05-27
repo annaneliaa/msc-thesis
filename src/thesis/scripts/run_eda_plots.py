@@ -16,6 +16,7 @@ Usage:
 
 Output (all saved to <out-dir>/):
     volume_concatenated.pdf   -- alert volume over concatenated timelines
+    volume_attack_zoom.pdf    -- alert volume zoomed into each attack phase
     class_balance.pdf         -- benign/attack counts + percentages per scenario
     attack_type_heatmap.pdf   -- attack type × scenario count heatmap
     top_alert_names.pdf       -- top-20 most frequent IDS signatures
@@ -35,6 +36,7 @@ from thesis.visualization.eda import (
     SCENARIOS,
     load_alerts,
     plot_alert_volume_concatenated,
+    plot_attack_phase_zoom,
     plot_attack_type_heatmap,
     plot_class_balance,
     plot_group_size_distribution,
@@ -148,6 +150,10 @@ def main(argv: list[str] | None = None) -> None:
             lambda: plot_alert_volume_concatenated(
                 df, bin_hours=args.bin_hours, out_path=out("volume_concatenated")
             ),
+        ),
+        (
+            "alert volume (attack phase zoom)",
+            lambda: plot_attack_phase_zoom(df, out_path=out("volume_attack_zoom")),
         ),
         (
             "class balance",

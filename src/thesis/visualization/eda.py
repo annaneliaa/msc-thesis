@@ -7,6 +7,7 @@ import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.gridspec import GridSpecFromSubplotSpec
 
 SCENARIOS = [
     "fox",
@@ -186,11 +187,201 @@ def plot_alert_volume_concatenated(
         fontsize=9,
         framealpha=0.9,
     )
-    fig.suptitle("Alert volume over time — all scenarios", fontsize=12, y=1.01)
+    fig.suptitle("Alert volume timeline (all scenarios)", fontsize=12, y=1.01)
     plt.tight_layout()
 
     _save(fig, out_path)
     return fig, axes
+
+
+def _get_attack_phases(
+    attack_elapsed: np.ndarray, gap_hours: float
+) -> list[tuple[float, float]]:
+    """Group contiguous attack timestamps into (start_h, end_h) phases."""
+    if len(attack_elapsed) == 0:
+        return []
+    t = np.sort(attack_elapsed)
+    phases: list[tuple[float, float]] = []
+    p_start = p_end = float(t[0])
+    for ti in t[1:]:
+        if float(ti) - p_end > gap_hours:
+            phases.append((p_start, p_end))
+            p_start = float(ti)
+        p_end = float(ti)
+    phases.append((p_start, p_end))
+    return phases
+
+
+def _draw_break_marks(ax: plt.Axes, side: str) -> None:
+    """Draw two diagonal slash marks on the specified spine to signal a time break."""
+    d_x, d_y = 0.022, 0.065
+    x0 = 1.0 if side == "right" else 0.0
+    kw = dict(
+        transform=ax.transAxes, color="0.40", linewidth=1.1, clip_on=False, zorder=5
+    )
+    for yc in (0.18, 0.33):
+        ax.plot([x0 - d_x, x0 + d_x], [yc - d_y, yc + d_y], **kw)
+
+
+def plot_attack_phase_zoom(
+    df: pd.DataFrame,
+    context_hours: float = 0.5,  # default h before/after phase
+    phase_gap_hours: float = 3.0,
+    bin_hours: float = 0.01,  # default 0.01 h = 36 s for fine-grained view
+    out_path: str | None = None,
+) -> tuple:
+    """
+    Alert-volume histogram zoomed into each attack phase — one row per scenario.
+
+    Each attack phase window is expanded by *context_hours* on both sides.
+    When a scenario has multiple attack phases separated by at least
+    *phase_gap_hours*, the zoomed windows are placed side-by-side with widths
+    proportional to their duration; broken-axis marks (diagonal slashes) on the
+    shared boundary indicate the discontinuity in elapsed time.
+
+    Parameters
+    ----------
+    df               : DataFrame returned by load_alerts()
+    context_hours    : hours of context shown before / after each phase
+    phase_gap_hours  : minimum inter-phase gap (hours) to treat as separate
+    bin_hours        : histogram bin width (default 0.25 h = 15 min)
+    out_path         : optional save path
+    """
+    scenarios = [s for s in SCENARIOS if s in df["scenario"].unique()]
+
+    # 1. Compute zoom windows per scenario
+    scenario_info: list[tuple] = []
+    for sc in scenarios:
+        sc_df = df[df["scenario"] == sc]
+        t0 = float(sc_df["time"].min())
+        duration_h = (float(sc_df["time"].max()) - t0) / 3600.0
+
+        elapsed_all = (sc_df["time"].values.astype(float) - t0) / 3600.0
+        attack_elapsed = elapsed_all[sc_df["is_attack"].values]
+
+        phases = _get_attack_phases(attack_elapsed, phase_gap_hours)
+        windows: list[tuple[float, float]] = []
+        for p_start, p_end in phases:
+            ws = max(0.0, p_start - context_hours)
+            we = min(duration_h, p_end + context_hours)
+            if windows and ws <= windows[-1][1]:
+                windows[-1] = (windows[-1][0], max(windows[-1][1], we))
+            else:
+                windows.append((ws, we))
+
+        scenario_info.append((sc, sc_df, t0, elapsed_all, windows))
+
+    # 2. Figure layout: one row per scenario, columns per phase window
+    n_sc = len(scenario_info)
+    fig = plt.figure(figsize=(16, n_sc * 2.0 + 1.2))
+    from matplotlib.gridspec import GridSpec
+
+    outer_gs = GridSpec(
+        n_sc,
+        1,
+        figure=fig,
+        hspace=0.75,
+        top=0.93,
+        bottom=0.06,
+        left=0.07,
+        right=0.97,
+    )
+
+    all_axes: list[list] = []
+
+    for i, (sc, sc_df, t0, elapsed_all, windows) in enumerate(scenario_info):
+        if not windows:
+            ax = fig.add_subplot(outer_gs[i])
+            ax.text(
+                0.5,
+                0.5,
+                "no attack data",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+                fontsize=8,
+                color="0.5",
+            )
+            ax.set_title(sc, fontsize=9, loc="left", fontweight="bold", pad=2)
+            all_axes.append([ax])
+            continue
+
+        n_panels = len(windows)
+        durations = [we - ws for ws, we in windows]
+
+        inner_gs = GridSpecFromSubplotSpec(
+            1,
+            n_panels,
+            subplot_spec=outer_gs[i],
+            width_ratios=durations,
+            wspace=0.06,
+        )
+
+        row_axes: list = []
+        for j, (ws, we) in enumerate(windows):
+            ax = fig.add_subplot(inner_gs[0, j])
+            row_axes.append(ax)
+
+            mask = (elapsed_all >= ws) & (elapsed_all <= we)
+            e_win = elapsed_all[mask]
+            is_att = sc_df["is_attack"].values[mask]
+
+            bin_edges = np.arange(ws, we + bin_hours, bin_hours)
+            benign_h, _ = np.histogram(e_win[~is_att], bins=bin_edges)
+            attack_h, _ = np.histogram(e_win[is_att], bins=bin_edges)
+
+            xe, ye_b = _step_xy(bin_edges, benign_h)
+            _, ye_a = _step_xy(bin_edges, benign_h + attack_h)
+
+            ax.fill_between(
+                xe, 1, np.maximum(ye_b, 1), color=_C_BENIGN, alpha=0.75, linewidth=0
+            )
+            ax.fill_between(
+                xe,
+                np.maximum(ye_b, 1),
+                np.maximum(ye_a, 1),
+                color=_C_ATTACK,
+                alpha=0.80,
+                linewidth=0,
+            )
+
+            ax.set_yscale("log")
+            ax.set_xlim(ws, we)
+            ax.tick_params(labelsize=7)
+            ax.xaxis.set_major_locator(mticker.MaxNLocator(4, integer=False))
+            ax.grid(axis="y", alpha=0.3, linewidth=0.5)
+
+            if j > 0:
+                ax.spines["left"].set_visible(False)
+                ax.tick_params(left=False, labelleft=False)
+                _draw_break_marks(ax, "left")
+            if j < n_panels - 1:
+                ax.spines["right"].set_visible(False)
+                _draw_break_marks(ax, "right")
+
+            ax.set_xlabel("Elapsed time (h)", fontsize=7)
+
+        row_axes[0].set_title(sc, fontsize=9, loc="left", fontweight="bold", pad=2)
+        row_axes[0].set_ylabel(f"Alerts / {bin_hours:.2g}h", fontsize=7)
+        all_axes.append(row_axes)
+
+    fig.legend(
+        handles=[
+            mpatches.Patch(color=_C_BENIGN, alpha=0.75, label="Benign"),
+            mpatches.Patch(color=_C_ATTACK, alpha=0.80, label="Attack"),
+        ],
+        loc="upper right",
+        bbox_to_anchor=(0.98, 0.99),
+        fontsize=9,
+        framealpha=0.9,
+    )
+    fig.suptitle(
+        f"Alert volume timeline - attack phase zoom"
+        f"  (all scenarios, context={context_hours}h, phase_gap={phase_gap_hours}h, bin={bin_hours}h)",
+        fontsize=11,
+    )
+    _save(fig, out_path)
+    return fig, all_axes
 
 
 def plot_class_balance(
