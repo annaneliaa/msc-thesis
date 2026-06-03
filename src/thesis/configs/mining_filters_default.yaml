@@ -24,6 +24,14 @@ item_sequences:
   max_overlap: null           # no overlap filter
   remove_subsumed: false
 
+or_features:
+  min_abs_support_diff: 0.0   # no additional filter — OR mining already applies 0.05
+  min_confidence_attack: 0.0
+  max_confidence_attack: null
+  min_confidence_benign: 0.0
+  max_n_clauses: null         # no arity limit
+
 feature_selection:
   top_k: null                 # no limit
   min_utility_score: null     # no threshold
+  filter_cross_host_or: true  # drop OR features that span distinct hosts

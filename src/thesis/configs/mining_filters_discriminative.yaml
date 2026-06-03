@@ -25,6 +25,14 @@ item_sequences:
   max_overlap: 0.4
   remove_subsumed: true       # drop A->B when A->B->C also passes
 
+or_features:
+  min_abs_support_diff: 0.10  # same class-separation bar as itemsets
+  min_confidence_attack: 0.0
+  max_confidence_attack: null
+  min_confidence_benign: 0.0
+  max_n_clauses: null
+
 feature_selection:
   top_k: null
   min_utility_score: null
+  filter_cross_host_or: true  # drop OR features that span distinct hosts

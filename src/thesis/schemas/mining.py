@@ -36,10 +36,21 @@ class FeatureSelectionConfig(BaseModel):
     filter_cross_host_or: bool = False
 
 
+class OrFilterConfig(BaseModel):
+    min_abs_support_diff: float = 0.0
+    min_confidence_attack: float = 0.0
+    max_confidence_attack: float | None = None
+    min_confidence_benign: float = 0.0
+    max_n_clauses: int | None = None
+
+
 class MiningFilterConfig(BaseModel):
     itemsets: ItemsetFilterConfig = ItemsetFilterConfig()
     item_sequences: SequenceFilterConfig = SequenceFilterConfig()
-    itemset_sequences: SequenceFilterConfig = SequenceFilterConfig()
+    itemset_sequences: SequenceFilterConfig = (
+        SequenceFilterConfig()
+    )  # defined but not yet applied
+    or_features: OrFilterConfig = OrFilterConfig()
     feature_selection: FeatureSelectionConfig = FeatureSelectionConfig()
 
 

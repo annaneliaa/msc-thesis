@@ -251,6 +251,7 @@ def _encode_transactions(
     if feature_selection is not None and (
         feature_selection.top_k is not None
         or feature_selection.min_utility_score is not None
+        or feature_selection.filter_cross_host_or
     ):
         before = len(schema.symbolic.features) if schema.symbolic else 0
         schema = select_symbolic_features(schema, feature_selection)

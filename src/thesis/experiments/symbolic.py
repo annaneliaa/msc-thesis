@@ -45,7 +45,11 @@ from thesis.mining.token_abstraction import (
     abstract_or_clauses_df,
     load_abstraction_map,
 )
-from thesis.mining.util import filter_mined_itemsets, filter_mined_sequences
+from thesis.mining.util import (
+    filter_mined_itemsets,
+    filter_mined_sequences,
+    filter_or_patterns,
+)
 from thesis.paths import ensure_artifact_dirs
 from thesis.schemas.experiments import SymbolicExperimentConfig, ExperimentResult
 from thesis.registry.models import get_model_path, resolve_model_paths
@@ -170,11 +174,29 @@ def _mine_and_register_symbolic_schema(
             max_overlap=f.max_overlap,
             remove_subsumed=f.remove_subsumed,
         )
+
+        if eclat_result.or_df is not None and not eclat_result.or_df.empty:
+            f = mining_filters.or_features
+            eclat_result.or_df = filter_or_patterns(
+                eclat_result.or_df,
+                min_abs_support_diff=f.min_abs_support_diff,
+                min_confidence_attack=f.min_confidence_attack,
+                max_confidence_attack=f.max_confidence_attack,
+                min_confidence_benign=f.min_confidence_benign,
+                max_n_clauses=f.max_n_clauses,
+            )
+
+        n_or_after = len(eclat_result.or_df) if eclat_result.or_df is not None else 0
         print(
-            f"  After filtering: {len(eclat_df)} itemsets, {len(item_seq_df)} sequences"
+            f"  After filtering: {len(eclat_df)} itemsets, "
+            f"{len(item_seq_df)} sequences, {n_or_after} OR patterns"
         )
+
     mining_stats["n_itemsets_after_filter"] = len(eclat_df)
     mining_stats["n_sequences_after_filter"] = len(item_seq_df)
+    mining_stats["n_or_after_filter"] = (
+        len(eclat_result.or_df) if eclat_result.or_df is not None else 0
+    )
 
     eclat_df["mining_type"] = "itemset"
     item_seq_df = item_seq_df.rename(columns={"sequence": "itemset"})
@@ -251,6 +273,7 @@ def run_symbolic_experiment(
         if (
             mining_filters.feature_selection.top_k is not None
             or mining_filters.feature_selection.min_utility_score is not None
+            or mining_filters.feature_selection.filter_cross_host_or
         ):
             feature_selection = mining_filters.feature_selection
 

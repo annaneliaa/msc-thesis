@@ -365,6 +365,51 @@ def filter_mined_itemsets(
     return out
 
 
+def filter_or_patterns(
+    df: pd.DataFrame,
+    *,
+    min_abs_support_diff: float = 0.0,
+    min_confidence_attack: float = 0.0,
+    max_confidence_attack: float | None = None,
+    min_confidence_benign: float = 0.0,
+    max_n_clauses: int | None = None,
+) -> pd.DataFrame:
+    """
+    Apply quality filters to a mined OR-pattern DataFrame.
+
+    OR patterns bypass the itemset/sequence filter step and need their own
+    post-mining gate.  The DataFrame must have columns produced by
+    mine_or_disjunctions (support_diff, confidence_attack, confidence_benign,
+    n_clauses) which are present on eclat_result.or_df before column trimming.
+
+    Parameters
+    ----------
+    min_abs_support_diff : minimum |support_benign - support_attack|.
+    min_confidence_attack : minimum confidence_attack.
+    max_confidence_attack : maximum confidence_attack (None = no limit).
+    min_confidence_benign : minimum confidence_benign.
+    max_n_clauses : drop OR patterns with more than this many clauses (None = no limit).
+    """
+    if df.empty:
+        return df.copy()
+
+    out = df.copy()
+    mask = pd.Series(True, index=out.index)
+
+    if min_abs_support_diff > 0.0 and "support_diff" in out.columns:
+        mask &= out["support_diff"].abs() >= min_abs_support_diff
+    if min_confidence_attack > 0.0 and "confidence_attack" in out.columns:
+        mask &= out["confidence_attack"] >= min_confidence_attack
+    if max_confidence_attack is not None and "confidence_attack" in out.columns:
+        mask &= out["confidence_attack"] <= max_confidence_attack
+    if min_confidence_benign > 0.0 and "confidence_benign" in out.columns:
+        mask &= out["confidence_benign"] >= min_confidence_benign
+    if max_n_clauses is not None and "n_clauses" in out.columns:
+        mask &= out["n_clauses"] <= max_n_clauses
+
+    return out.loc[mask].reset_index(drop=True)
+
+
 # ---------------------------------------------------------------------
 # Sequence mining utilities
 # ---------------------------------------------------------------------

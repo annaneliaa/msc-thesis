@@ -26,6 +26,14 @@ item_sequences:
   max_overlap: null           # same reasoning as itemsets
   remove_subsumed: true
 
+or_features:
+  min_abs_support_diff: 0.05
+  min_confidence_attack: 0.65 # must be attack-leaning, matching itemset threshold
+  max_confidence_attack: null
+  min_confidence_benign: 0.0
+  max_n_clauses: null
+
 feature_selection:
   top_k: null
   min_utility_score: null
+  filter_cross_host_or: true  # drop OR features that span distinct hosts
