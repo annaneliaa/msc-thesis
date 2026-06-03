@@ -1,5 +1,6 @@
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.neural_network import MLPClassifier
 from typing import Callable, Any
 
 from thesis.training.lstm_classifier import LSTMClassifier
@@ -25,6 +26,13 @@ MODEL_FACTORIES = {
         class_weight="balanced",
         random_state=42,
         n_jobs=-1,
+    ),
+    "mlp": lambda: MLPClassifier(
+        hidden_layer_sizes=(128, 64),
+        max_iter=500,
+        random_state=42,
+        early_stopping=True,
+        validation_fraction=0.1,
     ),
     "lstm": lambda: LSTMClassifier(),
 }

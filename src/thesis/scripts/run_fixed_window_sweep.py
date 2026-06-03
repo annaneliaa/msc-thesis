@@ -58,8 +58,9 @@ _BENIGN_LABEL = "false_positive"
 # ---------------------------------------------------------------------------
 
 
-def load_and_tokenize(scenario: str) -> list[TokenizedAlert]:
-    alerts_path = _PROCESSED_DATA_DIR / scenario / "alerts.json"
+def load_and_tokenize(scenario: str, filtered: bool = False) -> list[TokenizedAlert]:
+    filename = "alerts_filtered.json" if filtered else "alerts.json"
+    alerts_path = _PROCESSED_DATA_DIR / scenario / filename
     if not alerts_path.exists():
         raise FileNotFoundError(f"Processed alerts not found: {alerts_path}")
 
@@ -406,7 +407,9 @@ def _set_window_xticks(ax: plt.Axes, windows: list[float]) -> None:
     ax.xaxis.set_minor_formatter(mticker.NullFormatter())
 
 
-def plot_sweep(results: list[dict], scenario: str, out_dir: Path) -> None:
+def plot_sweep(
+    results: list[dict], scenario: str, out_dir: Path, filtered: bool = False
+) -> None:
     methods = list(dict.fromkeys(r["method"] for r in results))
     windows = sorted({r["window_val"] for r in results})
 
@@ -546,6 +549,16 @@ def plot_sweep(results: list[dict], scenario: str, out_dir: Path) -> None:
     ax.grid(alpha=0.3, linewidth=0.5)
 
     plt.tight_layout()
+    fig.text(
+        0.99,
+        0.01,
+        "data: filtered" if filtered else "data: raw",
+        ha="right",
+        va="bottom",
+        fontsize=7,
+        color="gray",
+        transform=fig.transFigure,
+    )
     out_path = out_dir / "sweep_plots.png"
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -593,6 +606,11 @@ def main() -> None:
         default=_EXPERIMENTS_DIR,
         help="Output directory for saved results",
     )
+    parser.add_argument(
+        "--filtered",
+        action="store_true",
+        help="Use detector-filtered alerts (alerts_filtered.json) instead of alerts.json.",
+    )
     args = parser.parse_args()
 
     scenario: str = args.scenario
@@ -605,7 +623,7 @@ def main() -> None:
     print(f"Output: {out_dir}")
 
     print(f"\nLoading and tokenizing alerts for '{scenario}'...")
-    alerts = load_and_tokenize(scenario)
+    alerts = load_and_tokenize(scenario, filtered=args.filtered)
     print(f"  Tokenized {len(alerts)} alerts.")
 
     methods = [
@@ -643,7 +661,7 @@ def main() -> None:
 
     # Save plots
     print("\nGenerating plots...")
-    plot_sweep(results, scenario, out_dir)
+    plot_sweep(results, scenario, out_dir, filtered=args.filtered)
 
 
 if __name__ == "__main__":

@@ -17,11 +17,27 @@ Usage:
   python detector_filter.py
 """
 
+import sys
 import pandas as pd
 import numpy as np
 from pathlib import Path
 
 from thesis.paths import ROOT
+
+
+class _Tee:
+    """Write to multiple streams simultaneously."""
+
+    def __init__(self, *streams):
+        self._streams = streams
+
+    def write(self, data):
+        for s in self._streams:
+            s.write(data)
+
+    def flush(self):
+        for s in self._streams:
+            s.flush()
 
 
 # ---------------------------------------------------------------------------
@@ -396,47 +412,77 @@ if __name__ == "__main__":
     PROCESSED_DATA_DIR = ROOT / "artifacts" / "processed-data"
     THRESHOLD = 0.7
 
-    scores_df, alerts_df = compute_detector_scores(ALERTS_DIR, LABELS_PATH)
+    log_path = PROCESSED_DATA_DIR / "detector_filter.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    _log_file = open(log_path, "w", encoding="utf-8")
+    sys.stdout = _Tee(sys.__stdout__, _log_file)
 
-    print("\n--- Detector scores ---")
-    print(scores_df.to_string(index=False))
+    try:
+        scores_df, alerts_df = compute_detector_scores(ALERTS_DIR, LABELS_PATH)
 
-    print(f"\n--- Filtering at threshold {THRESHOLD} ---")
-    filtered_df = filter_by_score(alerts_df, scores_df, threshold=THRESHOLD)
+        print("\n--- Detector scores ---")
+        print(scores_df.to_string(index=False))
 
-    # Per-scenario reduction rates
-    print("\n--- Reduction rate per scenario ---")
-    per_scenario_rates = []
-    for scenario in SCENARIOS:
-        n_before = len(alerts_df[alerts_df["scenario"] == scenario])
-        n_after = len(filtered_df[filtered_df["scenario"] == scenario])
-        if n_before > 0:
-            rate = 1 - (n_after / n_before)
-            per_scenario_rates.append(rate)
-            print(f"  {scenario}: {rate*100:.2f}%")
+        print(f"\n--- Filtering at threshold {THRESHOLD} ---")
+        filtered_df = filter_by_score(alerts_df, scores_df, threshold=THRESHOLD)
 
-    avg_reduction = np.mean(per_scenario_rates)
-    print(f"\nAverage reduction rate: {avg_reduction*100:.2f}%")
+        # Per-scenario reduction rates
+        print("\n--- Reduction rate per scenario ---")
+        per_scenario_rates = []
+        for scenario in SCENARIOS:
+            scen_before = alerts_df[alerts_df["scenario"] == scenario]
+            scen_after = filtered_df[filtered_df["scenario"] == scenario]
+            n_before = len(scen_before)
+            n_after = len(scen_after)
+            if n_before > 0:
+                rate = 1 - (n_after / n_before)
+                per_scenario_rates.append(rate)
+                print(f"  {scenario}: {rate*100:.2f}% ({n_before - n_after:,} removed)")
+                removed = scen_before[~scen_before.index.isin(scen_after.index)]
+                label_counts = removed["time_label"].value_counts()
+                label_totals = scen_before["time_label"].value_counts()
+                for label, count in label_counts.items():
+                    total = label_totals.get(label, 0)
+                    print(f"    {label}: {count:,} / {total:,}")
 
-    # Save detector scores at the top of processed-data/
-    scores_out = PROCESSED_DATA_DIR / "detector_scores.csv"
-    scores_df.to_csv(scores_out, index=False)
-    print(f"\nSaved: {scores_out}")
+        avg_reduction = np.mean(per_scenario_rates)
+        print(f"\nAverage reduction rate: {avg_reduction*100:.2f}%")
 
-    # Save filtered alerts per scenario
-    for scenario, group in filtered_df.groupby("scenario"):
-        out_path = PROCESSED_DATA_DIR / scenario / "alerts_filtered.csv"
-        group.to_csv(out_path, index=False)
-        print(f"Saved: {out_path}")
+        # Save detector scores at the top of processed-data/
+        scores_out = PROCESSED_DATA_DIR / "detector_scores.csv"
+        scores_df.to_csv(scores_out, index=False)
+        print(f"\nSaved: {scores_out}")
 
-    # Threshold sweep example
-    print("\n--- Threshold sweep ---")
-    print(
-        f"{'Threshold':>10} {'Detectors kept':>16} {'Alerts kept':>12} {'% removed':>10}"
-    )
-    for tau in [0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]:
-        keep = scores_df[scores_df["s_det"] >= tau]
-        n_det = len(keep)
-        n_alerts = alerts_df[alerts_df["detector"].isin(keep["detector"])].shape[0]
-        pct = 100 * (1 - n_alerts / len(alerts_df))
-        print(f"{tau:>10.1f} {n_det:>16} {n_alerts:>12,} {pct:>9.1f}%")
+        # Save filtered alerts per scenario (CSV + JSON matching original alerts.json format)
+        import json as _json
+
+        for scenario, group in filtered_df.groupby("scenario"):
+            original = group.rename(columns={"timestamp": "time", "detector": "short"})[
+                ["time", "name", "ip", "host", "short", "time_label", "event_label"]
+            ].assign(time=lambda d: d["time"].astype(int))
+            out_csv = PROCESSED_DATA_DIR / scenario / "alerts_filtered.csv"
+            original.to_csv(out_csv, index=False)
+            print(f"Saved: {out_csv}")
+
+            records = original.to_dict(orient="records")
+            out_json = PROCESSED_DATA_DIR / scenario / "alerts_filtered.json"
+            with out_json.open("w", encoding="utf-8") as f:
+                _json.dump(records, f, indent=2)
+            print(f"Saved: {out_json}")
+
+        # Threshold sweep example
+        print("\n--- Threshold sweep ---")
+        print(
+            f"{'Threshold':>10} {'Detectors kept':>16} {'Alerts kept':>12} {'% removed':>10}"
+        )
+        for tau in [0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]:
+            keep = scores_df[scores_df["s_det"] >= tau]
+            n_det = len(keep)
+            n_alerts = alerts_df[alerts_df["detector"].isin(keep["detector"])].shape[0]
+            pct = 100 * (1 - n_alerts / len(alerts_df))
+            print(f"{tau:>10.1f} {n_det:>16} {n_alerts:>12,} {pct:>9.1f}%")
+
+        print(f"\nLog saved to: {log_path}")
+    finally:
+        sys.stdout = sys.__stdout__
+        _log_file.close()

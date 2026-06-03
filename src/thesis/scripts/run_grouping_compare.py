@@ -154,6 +154,7 @@ def _run_pair(
     results_dir: Path,
     grouping_cache_dir: Path | None = None,
     transactions_dir: Path | None = None,
+    alerts_json_path: Path | None = None,
 ) -> tuple[ExperimentResult, ExperimentResult, list]:
     baseline = run_baseline_experiment(
         BaselineExperimentConfig(
@@ -163,6 +164,7 @@ def _run_pair(
             grouping_cache_dir=grouping_cache_dir,
             results_dir=results_dir,
             transactions_dir=transactions_dir,
+            alerts_json_path=alerts_json_path,
         )
     )
     symbolic = run_symbolic_experiment(
@@ -175,6 +177,7 @@ def _run_pair(
             grouping_cache_dir=grouping_cache_dir,
             results_dir=results_dir,
             transactions_dir=transactions_dir,
+            alerts_json_path=alerts_json_path,
         )
     )
     txs = _load_transactions(
@@ -348,7 +351,7 @@ def _metric(result: ExperimentResult | ExperimentResult, name: str) -> float:
     return result.metrics.get(name, float("nan"))
 
 
-def plot_metrics(data: dict, out_dir: Path) -> None:
+def plot_metrics(data: dict, out_dir: Path, filtered: bool = False) -> None:
     """2×2 grid: AUC / F1 / Precision / Recall, grouped by experiment type and method."""
     metric_pairs = [
         ("auc", "AUC"),
@@ -394,6 +397,16 @@ def plot_metrics(data: dict, out_dir: Path) -> None:
         f"Detection metrics by grouping method — {data['scenario']}", fontsize=12
     )
     fig.tight_layout()
+    fig.text(
+        0.99,
+        0.01,
+        "data: filtered" if filtered else "data: raw",
+        ha="right",
+        va="bottom",
+        fontsize=7,
+        color="gray",
+        transform=fig.transFigure,
+    )
     out = out_dir / "metrics.png"
     fig.savefig(out, dpi=150)
     plt.close(fig)
@@ -416,7 +429,7 @@ def _boxplot(ax, box_data, methods, ylabel, title):
     ax.grid(axis="y", alpha=0.3)
 
 
-def plot_transactions(data: dict, out_dir: Path) -> None:
+def plot_transactions(data: dict, out_dir: Path, filtered: bool = False) -> None:
     """2×2 grid: transaction count, alerts/tx, itemset size, unique alert types."""
     methods = [m for m in _ALL_METHODS if m in data]
     fig, axes = plt.subplots(2, 2, figsize=(10, 8))
@@ -475,13 +488,23 @@ def plot_transactions(data: dict, out_dir: Path) -> None:
 
     fig.suptitle(f"Transaction structure — {data['scenario']}", fontsize=12)
     fig.tight_layout()
+    fig.text(
+        0.99,
+        0.01,
+        "data: filtered" if filtered else "data: raw",
+        ha="right",
+        va="bottom",
+        fontsize=7,
+        color="gray",
+        transform=fig.transFigure,
+    )
     out = out_dir / "transactions.png"
     fig.savefig(out, dpi=150)
     plt.close(fig)
     print(f"  Saved → {out}")
 
 
-def plot_purity(data: dict, out_dir: Path) -> None:
+def plot_purity(data: dict, out_dir: Path, filtered: bool = False) -> None:
     """Stacked horizontal bar: pure-benign / pure-attack / mixed per grouping method."""
     methods = [m for m in _ALL_METHODS if m in data]
 
@@ -529,6 +552,16 @@ def plot_purity(data: dict, out_dir: Path) -> None:
     ax.legend(loc="lower right", fontsize=8)
     ax.grid(axis="x", alpha=0.3)
     fig.tight_layout()
+    fig.text(
+        0.99,
+        0.01,
+        "data: filtered" if filtered else "data: raw",
+        ha="right",
+        va="bottom",
+        fontsize=7,
+        color="gray",
+        transform=fig.transFigure,
+    )
     out = out_dir / "purity.png"
     fig.savefig(out, dpi=150)
     plt.close(fig)
@@ -576,6 +609,11 @@ def main() -> None:
         action="store_true",
         help="Reload existing results JSON and regenerate confusion matrix and metrics plot without re-running experiments.",
     )
+    parser.add_argument(
+        "--filtered",
+        action="store_true",
+        help="Use detector-filtered alerts (alerts_filtered.json) instead of alerts.json.",
+    )
     args = parser.parse_args()
 
     scenario = args.scenario
@@ -619,9 +657,10 @@ def main() -> None:
                     "symbolic": results[method]["symbolic"],
                     "tx_stats": data[method]["tx_stats"],
                 }
-        plot_metrics(plot_data, plot_dir)
-        plot_transactions(plot_data, plot_dir)
-        plot_purity(plot_data, plot_dir)
+        filtered = data.get("filtered", False)
+        plot_metrics(plot_data, plot_dir, filtered=filtered)
+        plot_transactions(plot_data, plot_dir, filtered=filtered)
+        plot_purity(plot_data, plot_dir, filtered=filtered)
         print("Done.")
         return
 
@@ -637,8 +676,11 @@ def main() -> None:
         None,
     )
     if existing_json and not args.force and not args.force_grouping:
-        print(f"[skip] Existing results: {existing_json}. Use --force to re-run.")
-        return
+        with existing_json.open() as f:
+            _existing_data = json.load(f)
+        if _existing_data.get("filtered", False) == args.filtered:
+            print(f"[skip] Existing results: {existing_json}. Use --force to re-run.")
+            return
 
     run_ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     run_dir = EXPERIMENTS_DIR / f"grouping_compare_{run_ts}"
@@ -710,6 +752,12 @@ def _main_body(
         args.alertbert_model_id, args.alertbert_models_path
     )
 
+    alerts_json_path = (
+        _REPO / "artifacts" / "processed-data" / scenario / "alerts_filtered.json"
+        if getattr(args, "filtered", False)
+        else None
+    )
+
     print(f"\n{'='*60}")
     print(f" Grouping comparison: {scenario}")
     print(f"{'='*60}")
@@ -723,6 +771,7 @@ def _main_body(
         results_dir=scenario_dir,
         grouping_cache_dir=fw_groups_dir,
         transactions_dir=scenario_dir / "fixed_window" / "transactions",
+        alerts_json_path=alerts_json_path,
     )
     gc.collect()
 
@@ -735,6 +784,7 @@ def _main_body(
         results_dir=scenario_dir,
         grouping_cache_dir=fwh_groups_dir,
         transactions_dir=scenario_dir / "fixed_window_host" / "transactions",
+        alerts_json_path=alerts_json_path,
     )
     gc.collect()
 
@@ -747,6 +797,7 @@ def _main_body(
         results_dir=scenario_dir,
         grouping_cache_dir=td_groups_dir,
         transactions_dir=scenario_dir / "time_delta" / "transactions",
+        alerts_json_path=alerts_json_path,
     )
     gc.collect()
 
@@ -759,6 +810,7 @@ def _main_body(
         results_dir=scenario_dir,
         grouping_cache_dir=tdh_groups_dir,
         transactions_dir=scenario_dir / "time_delta_host" / "transactions",
+        alerts_json_path=alerts_json_path,
     )
 
     # Free allocations before loading torch + AlertBERT model.
@@ -773,6 +825,7 @@ def _main_body(
         results_dir=scenario_dir,
         grouping_cache_dir=alertbert_groups_dir,
         transactions_dir=scenario_dir / "alertbert" / "transactions",
+        alerts_json_path=alerts_json_path,
     )
 
     stats_fw = _compute_tx_stats(txs_fw)
@@ -786,6 +839,7 @@ def _main_body(
         "experiment": "grouping_compare",
         "scenario": scenario,
         "timestamp": timestamp,
+        "filtered": bool(alerts_json_path is not None),
         "alertbert_config": grouping_ab.alertbert.model_dump(),
         "fixed_window": {
             "grouping": {"mode": "fixed_window", "params": None},
@@ -943,9 +997,10 @@ def _main_body(
         },
     }
 
-    plot_metrics(plot_data, plots_dir)
-    plot_transactions(plot_data, plots_dir)
-    plot_purity(plot_data, plots_dir)
+    filtered = bool(alerts_json_path is not None)
+    plot_metrics(plot_data, plots_dir, filtered=filtered)
+    plot_transactions(plot_data, plots_dir, filtered=filtered)
+    plot_purity(plot_data, plots_dir, filtered=filtered)
 
     print("\nDone.")
 

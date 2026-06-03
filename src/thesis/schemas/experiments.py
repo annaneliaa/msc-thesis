@@ -30,6 +30,7 @@ class SymbolicExperimentConfig:
     grouping_cache_dir: Path | None = None
     results_dir: Path | None = None
     transactions_dir: Path | None = None
+    alerts_json_path: Path | None = None
 
 
 @dataclass
@@ -44,6 +45,7 @@ class BaselineExperimentConfig:
     grouping_cache_dir: Path | None = None
     results_dir: Path | None = None
     transactions_dir: Path | None = None
+    alerts_json_path: Path | None = None
 
 
 @dataclass

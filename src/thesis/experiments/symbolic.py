@@ -279,7 +279,7 @@ def run_symbolic_experiment(
 
     # 1. Convert alerts CSV → JSON
     print("[1/8] Converting alerts to JSON...")
-    alerts_path = _convert_alerts_to_json(config.scenario)
+    alerts_path = _convert_alerts_to_json(config.scenario, config.alerts_json_path)
 
     # 2. Tokenise + ingest into cache
     grouping_cache_dir = config.grouping_cache_dir
@@ -422,6 +422,9 @@ def run_symbolic_experiment(
                 "experiment": "symbolic",
                 "scenario": config.scenario,
                 "timestamp": timestamp,
+                "alerts_source": str(config.alerts_json_path)
+                if config.alerts_json_path
+                else "alerts.json",
                 "model_name": config.model_name,
                 "model_version": summary.model_version,
                 "schema_name": summary.schema_name,

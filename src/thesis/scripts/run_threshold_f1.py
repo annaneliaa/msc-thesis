@@ -197,6 +197,7 @@ def _plot_curves(
     curves: dict[str, pd.DataFrame],
     scenario: str,
     out_path: Path,
+    filtered: bool = False,
 ) -> None:
     fig, axes = plt.subplots(1, 3, figsize=(15, 5), sharey=False)
     fig.suptitle(f"Threshold analysis — scenario: {scenario}", fontsize=13)
@@ -246,7 +247,17 @@ def _plot_curves(
             ax.legend(fontsize=8, loc="lower left")
 
     plt.tight_layout()
-    plt.savefig(out_path, dpi=150, bbox_inches="tight")
+    fig.text(
+        0.99,
+        0.01,
+        "data: filtered" if filtered else "data: raw",
+        ha="right",
+        va="bottom",
+        fontsize=7,
+        color="gray",
+        transform=fig.transFigure,
+    )
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"Plot saved → {out_path}")
 
@@ -284,6 +295,11 @@ def main() -> None:
         "--clear-parquets",
         action="store_true",
         help="Delete cached parquets before running (forces re-encoding)",
+    )
+    parser.add_argument(
+        "--filtered",
+        action="store_true",
+        help="Use detector-filtered alerts (alerts_filtered.json) instead of alerts.json.",
     )
     args = parser.parse_args()
 
@@ -327,6 +343,12 @@ def _main_body(
                 for pq in tx_dir.glob("*.parquet"):
                     print(f"  Deleting {pq.name}")
                     pq.unlink()
+
+    alerts_json_path = (
+        _REPO / "artifacts" / "processed-data" / scenario / "alerts_filtered.json"
+        if args.filtered
+        else None
+    )
 
     grouping_fw = _fixed_grouping()
     grouping_ab = _alertbert_grouping(
@@ -382,6 +404,7 @@ def _main_body(
             scenario=scenario,
             cache_dir=cache_dir_fw,
             grouping=grouping_fw,
+            alerts_json_path=alerts_json_path,
         )
     )
     print("\n--- Extracting probabilities ---")
@@ -395,6 +418,7 @@ def _main_body(
             grouping=grouping_fw,
             filter_config=args.filter_config,
             abstraction_map_path=ABSTRACTION_MAP_PATH,
+            alerts_json_path=alerts_json_path,
         )
     )
     print("\n--- Extracting probabilities ---")
@@ -409,6 +433,7 @@ def _main_body(
             cache_dir=cache_dir_ab,
             grouping=grouping_ab,
             grouping_cache_dir=alertbert_groups_dir,
+            alerts_json_path=alerts_json_path,
         )
     )
     print("\n--- Extracting probabilities ---")
@@ -423,6 +448,7 @@ def _main_body(
             filter_config=args.filter_config,
             abstraction_map_path=ABSTRACTION_MAP_PATH,
             grouping_cache_dir=alertbert_groups_dir,
+            alerts_json_path=alerts_json_path,
         )
     )
     print("\n--- Extracting probabilities ---")
@@ -452,7 +478,7 @@ def _main_body(
     # 4. Plot
     # ------------------------------------------------------------------
     plot_path = plots_dir / f"threshold_f1_{run_ts}.png"
-    _plot_curves(curves, scenario, plot_path)
+    _plot_curves(curves, scenario, plot_path, filtered=args.filtered)
 
     # ------------------------------------------------------------------
     # 5. Summary table

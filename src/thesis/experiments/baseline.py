@@ -65,7 +65,15 @@ def _ensure_feature_manifest(scenario: str) -> None:
     print(f"  Created feature manifest at {manifest_path}")
 
 
-def _convert_alerts_to_json(scenario: str) -> Path:
+def _convert_alerts_to_json(
+    scenario: str, alerts_json_path: Path | None = None
+) -> Path:
+    if alerts_json_path is not None:
+        if not alerts_json_path.exists():
+            raise FileNotFoundError(f"Filtered alerts not found: {alerts_json_path}")
+        print(f"  [filtered] Using {alerts_json_path}")
+        return alerts_json_path
+
     input_path = _ROOT / "data" / "alerts_csv" / f"{scenario}_alerts.txt"
     output_dir = _ROOT / "artifacts" / "processed-data" / scenario
     output_path = output_dir / "alerts.json"
@@ -301,7 +309,7 @@ def run_baseline_experiment(
 
     # 1. Convert alerts CSV → JSON
     print("[1/6] Converting alerts to JSON...")
-    alerts_path = _convert_alerts_to_json(config.scenario)
+    alerts_path = _convert_alerts_to_json(config.scenario, config.alerts_json_path)
 
     # 2. Tokenise + ingest into cache
     grouping_cache_dir = config.grouping_cache_dir
@@ -396,6 +404,9 @@ def run_baseline_experiment(
                 "experiment": "baseline",
                 "scenario": config.scenario,
                 "timestamp": timestamp,
+                "alerts_source": str(config.alerts_json_path)
+                if config.alerts_json_path
+                else "alerts.json",
                 "model_name": config.model_name,
                 "model_version": summary.model_version,
                 "schema_name": summary.schema_name,

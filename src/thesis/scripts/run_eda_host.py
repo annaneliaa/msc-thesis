@@ -72,8 +72,9 @@ FIXED_WINDOW_S = 60
 # ── data loading ──────────────────────────────────────────────────────────────
 
 
-def load_scenario(scenario: str) -> pd.DataFrame:
-    path = PROCESSED_DIR / scenario / "alerts.json"
+def load_scenario(scenario: str, filtered: bool = False) -> pd.DataFrame:
+    filename = "alerts_filtered.json" if filtered else "alerts.json"
+    path = PROCESSED_DIR / scenario / filename
     if not path.exists():
         raise FileNotFoundError(path)
     with open(path) as f:
@@ -174,7 +175,9 @@ def summarise_host(host_df: pd.DataFrame, host: str, delta: float) -> dict:
 # ── plots ─────────────────────────────────────────────────────────────────────
 
 
-def plot_heatmap(df: pd.DataFrame, scenario: str, out_path: Path) -> None:
+def plot_heatmap(
+    df: pd.DataFrame, scenario: str, out_path: Path, filtered: bool = False
+) -> None:
     """Alert-type × host heatmap (count, log-scale)."""
     pivot = df.groupby(["host", "short"]).size().unstack(fill_value=0)
     # Sort hosts by total alert count descending; short codes by total descending
@@ -221,12 +224,26 @@ def plot_heatmap(df: pd.DataFrame, scenario: str, out_path: Path) -> None:
                 )
 
     plt.tight_layout()
+    fig.text(
+        0.99,
+        0.01,
+        "data: filtered" if filtered else "data: raw",
+        ha="right",
+        va="bottom",
+        fontsize=7,
+        color="gray",
+        transform=fig.transFigure,
+    )
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
 
 def plot_timeline(
-    df: pd.DataFrame, scenario: str, out_path: Path, bin_minutes: int = 5
+    df: pd.DataFrame,
+    scenario: str,
+    out_path: Path,
+    bin_minutes: int = 5,
+    filtered: bool = False,
 ) -> None:
     """Per-host alert rate over time (stacked subplots, benign vs attack)."""
     hosts = df.groupby("host").size().sort_values(ascending=False).index.tolist()
@@ -283,11 +300,23 @@ def plot_timeline(
         y=1.01,
     )
     plt.tight_layout()
+    fig.text(
+        0.99,
+        0.01,
+        "data: filtered" if filtered else "data: raw",
+        ha="right",
+        va="bottom",
+        fontsize=7,
+        color="gray",
+        transform=fig.transFigure,
+    )
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
 
-def plot_interarrival_cdf(df: pd.DataFrame, scenario: str, out_path: Path) -> None:
+def plot_interarrival_cdf(
+    df: pd.DataFrame, scenario: str, out_path: Path, filtered: bool = False
+) -> None:
     """CDF of inter-arrival times per host (log x-axis)."""
     hosts = df.groupby("host").size().sort_values(ascending=False).index.tolist()
     fig, ax = plt.subplots(figsize=(9, 5))
@@ -316,12 +345,22 @@ def plot_interarrival_cdf(df: pd.DataFrame, scenario: str, out_path: Path) -> No
     ax.legend(fontsize=8, loc="lower right")
     ax.grid(True, which="both", alpha=0.3)
     plt.tight_layout()
+    fig.text(
+        0.99,
+        0.01,
+        "data: filtered" if filtered else "data: raw",
+        ha="right",
+        va="bottom",
+        fontsize=7,
+        color="gray",
+        transform=fig.transFigure,
+    )
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
 
 def plot_burst_profile(
-    host_summaries: list[dict], scenario: str, out_path: Path
+    host_summaries: list[dict], scenario: str, out_path: Path, filtered: bool = False
 ) -> None:
     """Bar chart: max stream size and % of IATs below delta, per host."""
     hosts = [s["host"] for s in host_summaries]
@@ -358,11 +397,23 @@ def plot_burst_profile(
         ax2.text(i, v + 1.5, f"{v:.0f}%", ha="center", va="bottom", fontsize=7)
 
     plt.tight_layout()
+    fig.text(
+        0.99,
+        0.01,
+        "data: filtered" if filtered else "data: raw",
+        ha="right",
+        va="bottom",
+        fontsize=7,
+        color="gray",
+        transform=fig.transFigure,
+    )
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
 
-def plot_type_overlap(df: pd.DataFrame, scenario: str, out_path: Path) -> None:
+def plot_type_overlap(
+    df: pd.DataFrame, scenario: str, out_path: Path, filtered: bool = False
+) -> None:
     """
     Host × host Jaccard similarity of alert-type sets.
     Low Jaccard = hosts see different alert types → per-host grouping separates semantically distinct streams.
@@ -401,11 +452,23 @@ def plot_type_overlap(df: pd.DataFrame, scenario: str, out_path: Path) -> None:
                 color="white" if matrix[i, j] > 0.6 else "black",
             )
     plt.tight_layout()
+    fig.text(
+        0.99,
+        0.01,
+        "data: filtered" if filtered else "data: raw",
+        ha="right",
+        va="bottom",
+        fontsize=7,
+        color="gray",
+        transform=fig.transFigure,
+    )
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
 
-def plot_exclusive_types(df: pd.DataFrame, scenario: str, out_path: Path) -> None:
+def plot_exclusive_types(
+    df: pd.DataFrame, scenario: str, out_path: Path, filtered: bool = False
+) -> None:
     """
     Stacked bar: for each alert type, how many hosts see it?
     Types seen at exactly 1 host are 'exclusive' — grouping by host keeps them pure.
@@ -467,6 +530,16 @@ def plot_exclusive_types(df: pd.DataFrame, scenario: str, out_path: Path) -> Non
 
     fig.suptitle(f"{scenario} — Alert type host exclusivity", fontsize=11)
     plt.tight_layout()
+    fig.text(
+        0.99,
+        0.01,
+        "data: filtered" if filtered else "data: raw",
+        ha="right",
+        va="bottom",
+        fontsize=7,
+        color="gray",
+        transform=fig.transFigure,
+    )
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
@@ -568,9 +641,9 @@ def write_summary(
 # ── main ──────────────────────────────────────────────────────────────────────
 
 
-def run_scenario(scenario: str, run_dir: Path) -> None:
+def run_scenario(scenario: str, run_dir: Path, filtered: bool = False) -> None:
     print(f"\n[{scenario}] Loading alerts...")
-    df = load_scenario(scenario)
+    df = load_scenario(scenario, filtered=filtered)
     print(
         f"  {len(df):,} alerts, {df['host'].nunique()} hosts, "
         f"{df['short'].nunique()} alert types"
@@ -609,22 +682,32 @@ def run_scenario(scenario: str, run_dir: Path) -> None:
 
     # Plots
     print("  Plotting heatmap...")
-    plot_heatmap(df, scenario, out_dir / "host_alert_type_heatmap.png")
+    plot_heatmap(
+        df, scenario, out_dir / "host_alert_type_heatmap.png", filtered=filtered
+    )
 
     print("  Plotting timelines...")
-    plot_timeline(df, scenario, out_dir / "host_timeline.png")
+    plot_timeline(df, scenario, out_dir / "host_timeline.png", filtered=filtered)
 
     print("  Plotting inter-arrival CDFs...")
-    plot_interarrival_cdf(df, scenario, out_dir / "host_interarrival_cdf.png")
+    plot_interarrival_cdf(
+        df, scenario, out_dir / "host_interarrival_cdf.png", filtered=filtered
+    )
 
     print("  Plotting burst profile...")
-    plot_burst_profile(host_summaries, scenario, out_dir / "host_burst_profile.png")
+    plot_burst_profile(
+        host_summaries, scenario, out_dir / "host_burst_profile.png", filtered=filtered
+    )
 
     print("  Plotting type overlap...")
-    plot_type_overlap(df, scenario, out_dir / "host_type_overlap.png")
+    plot_type_overlap(
+        df, scenario, out_dir / "host_type_overlap.png", filtered=filtered
+    )
 
     print("  Plotting exclusivity...")
-    plot_exclusive_types(df, scenario, out_dir / "host_exclusive_types.png")
+    plot_exclusive_types(
+        df, scenario, out_dir / "host_exclusive_types.png", filtered=filtered
+    )
 
     # Text summary
     write_summary(df, host_summaries, scenario, out_dir / "summary.txt")
@@ -647,6 +730,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         dest="all_scenarios",
         action="store_true",
         help="Run for all scenarios.",
+    )
+    p.add_argument(
+        "--filtered",
+        action="store_true",
+        help="Use detector-filtered alerts (alerts_filtered.json) instead of alerts.json.",
     )
     return p.parse_args(argv)
 
@@ -671,7 +759,7 @@ def main(argv: list[str] | None = None) -> None:
     run_dir.mkdir(parents=True, exist_ok=True)
 
     for scenario in scenarios:
-        run_scenario(scenario, run_dir)
+        run_scenario(scenario, run_dir, filtered=args.filtered)
 
     print(f"\nDone. Output: {run_dir.resolve()}")
 

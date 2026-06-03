@@ -43,6 +43,7 @@ _REPO = next(p for p in _HERE.parents if (p / "pyproject.toml").exists())
 EXPERIMENTS_DIR = _REPO / "artifacts" / "experiments" / "run_eda"
 DATA_DIR = _REPO / "data" / "alerts_csv"
 TRANSACTIONS_DIR = _REPO / "artifacts" / "transactions"
+TRANSACTIONS_FILTERED_DIR = _REPO / "artifacts" / "transactions_filtered"
 
 
 def extract_short_tokens(short_value: str) -> set[str]:
@@ -214,8 +215,13 @@ def compute_uniq_signature_counts(df: pd.DataFrame, sig_col: str) -> pd.DataFram
 
 
 def run_scenario(
-    df: pd.DataFrame, scenario: str, out_path: Path, summary_path: Path
+    df: pd.DataFrame,
+    scenario: str,
+    out_path: Path,
+    summary_path: Path,
+    filtered: bool = False,
 ) -> None:
+    _is_filtered = filtered
     os.makedirs(out_path, exist_ok=True)
     os.makedirs(summary_path, exist_ok=True)
 
@@ -241,10 +247,9 @@ def run_scenario(
 
         transactions = build_labeled_window_transactions(df, window_size_s=2)
         transactions.to_csv(out_path / f"{scenario}_transactions.csv", index=False)
-        TRANSACTIONS_DIR.mkdir(parents=True, exist_ok=True)
-        transactions.to_csv(
-            TRANSACTIONS_DIR / f"{scenario}_transactions.csv", index=False
-        )
+        tx_cache_dir = TRANSACTIONS_FILTERED_DIR if _is_filtered else TRANSACTIONS_DIR
+        tx_cache_dir.mkdir(parents=True, exist_ok=True)
+        transactions.to_csv(tx_cache_dir / f"{scenario}_transactions.csv", index=False)
 
         benign_tx = transactions[transactions["tx_label"] == "benign"].copy()
         attack_tx = transactions[transactions["tx_label"] == "attack"].copy()
@@ -282,6 +287,16 @@ def run_scenario(
         plt.ylabel("Count")
         plt.yscale("log")
         plt.legend()
+        plt.gcf().text(
+            0.99,
+            0.01,
+            "data: filtered" if _is_filtered else "data: raw",
+            ha="right",
+            va="bottom",
+            fontsize=7,
+            color="gray",
+            transform=plt.gcf().transFigure,
+        )
         plt.savefig(out_path / f"{scenario}_transaction_size_distribution.png")
         plt.close()
 
@@ -342,6 +357,16 @@ def run_scenario(
         plt.xlabel("Support (benign)")
         plt.ylabel("Support (attack)")
         plt.title(f"Pair support: attack vs benign (scenario={scenario})")
+        plt.gcf().text(
+            0.99,
+            0.01,
+            "data: filtered" if _is_filtered else "data: raw",
+            ha="right",
+            va="bottom",
+            fontsize=7,
+            color="gray",
+            transform=plt.gcf().transFigure,
+        )
         plt.savefig(out_path / f"{scenario}_pair_support_scatter.png")
         plt.close()
 
@@ -380,7 +405,9 @@ def run_scenario(
     print(f"  {scenario}: done → {out_path}")
 
 
-def save_overview_table(all_df: pd.DataFrame, run_dir: Path) -> None:
+def save_overview_table(
+    all_df: pd.DataFrame, run_dir: Path, filtered: bool = False
+) -> None:
     scenarios = [s for s in SCENARIOS if s in all_df["scenario"].unique()]
 
     rows = []
@@ -453,6 +480,16 @@ def save_overview_table(all_df: pd.DataFrame, run_dir: Path) -> None:
         tbl[0, j].set_text_props(fontweight="bold")
     ax.set_title("Dataset overview — per-scenario statistics", fontsize=12, pad=12)
     plt.tight_layout()
+    fig.text(
+        0.99,
+        0.01,
+        "data: filtered" if filtered else "data: raw",
+        ha="right",
+        va="bottom",
+        fontsize=7,
+        color="gray",
+        transform=fig.transFigure,
+    )
     fig.savefig(run_dir / "overview_table.pdf", dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"  overview_table.pdf → {run_dir / 'overview_table.pdf'}")
@@ -474,6 +511,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         dest="all_scenarios",
         action="store_true",
         help="Run EDA for all scenarios.",
+    )
+    p.add_argument(
+        "--filtered",
+        action="store_true",
+        help="Use detector-filtered alerts (alerts_filtered.csv) instead of raw alerts.",
     )
     return p.parse_args(argv)
 
@@ -499,15 +541,35 @@ def main(argv: list[str] | None = None) -> None:
     summary_path = run_dir / "summary"
 
     print(f"Loading alerts for: {', '.join(scenarios)}")
-    all_df = load_alerts(str(DATA_DIR), scenarios=scenarios)
+    if args.filtered:
+        frames = []
+        for sc in scenarios:
+            path = _REPO / "artifacts" / "processed-data" / sc / "alerts_filtered.csv"
+            df = pd.read_csv(path, dtype=str)
+            df["time"] = pd.to_numeric(df["time"], errors="coerce")
+            df["timestamp"] = pd.to_datetime(df["time"], unit="s", utc=True)
+            df["scenario"] = sc
+            df["is_attack"] = (
+                df["time_label"].ne("false_positive") & df["time_label"].notna()
+            )
+            frames.append(df)
+        all_df = pd.concat(frames, ignore_index=True)
+    else:
+        all_df = load_alerts(str(DATA_DIR), scenarios=scenarios)
     print(f"  {len(all_df):,} alerts loaded.\n")
 
     for scenario in scenarios:
         scenario_df = all_df[all_df["scenario"] == scenario].copy()
-        run_scenario(scenario_df, scenario, run_dir / scenario, summary_path)
+        run_scenario(
+            scenario_df,
+            scenario,
+            run_dir / scenario,
+            summary_path,
+            filtered=args.filtered,
+        )
 
     print("\nComputing dataset overview table...")
-    save_overview_table(all_df, run_dir)
+    save_overview_table(all_df, run_dir, filtered=args.filtered)
 
     print(f"\nAll output saved to: {run_dir.resolve()}")
 

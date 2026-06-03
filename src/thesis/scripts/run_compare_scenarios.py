@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -43,11 +44,12 @@ from thesis.experiments.baseline import (
     BaselineExperimentConfig,
     run_baseline_experiment,
 )
+from thesis.visualization.eda import SCENARIOS as ALL_SCENARIOS
 from thesis.experiments.symbolic import (
     SymbolicExperimentConfig,
     run_symbolic_experiment,
 )
-from thesis.paths import ABSTRACTION_MAP_PATH
+from thesis.paths import ABSTRACTION_MAP_PATH, CACHE_DIR
 
 
 class _Tee:
@@ -102,29 +104,31 @@ def _latest_json(directory: Path, prefix: str) -> Path | None:
     return candidates[-1] if candidates else None
 
 
-def _load_compare_result(scenario: str) -> dict | None:
-    """Load the most recent compare_*.json for a scenario across all run dirs."""
+def _load_compare_result(scenario: str, filtered: bool = False) -> dict | None:
+    """Load the most recent compare_*.json for a scenario that matches the filtered setting."""
     candidates = sorted(EXPERIMENTS_DIR.glob(f"*/scenario/{scenario}/compare_*.json"))
     if not candidates:
         return None
-    path = candidates[-1]
-    with path.open() as f:
-        data = json.load(f)
-    return {
-        "scenario": scenario,
-        "baseline": {
-            **data["baseline"]["metrics"],
-            "n_features": data["baseline"]["n_features"],
-            "n_transactions": data["baseline"]["n_transactions"],
-        },
-        "symbolic": {
-            **data["symbolic"]["metrics"],
-            "n_features": data["symbolic"]["n_features"],
-            "n_transactions": data["symbolic"]["n_transactions"],
-        },
-        "filter_config": data.get("filter_config"),
-        "source": path.name,
-    }
+    for path in reversed(candidates):
+        with path.open() as f:
+            data = json.load(f)
+        if data.get("filtered", False) == filtered:
+            return {
+                "scenario": scenario,
+                "baseline": {
+                    **data["baseline"]["metrics"],
+                    "n_features": data["baseline"]["n_features"],
+                    "n_transactions": data["baseline"]["n_transactions"],
+                },
+                "symbolic": {
+                    **data["symbolic"]["metrics"],
+                    "n_features": data["symbolic"]["n_features"],
+                    "n_transactions": data["symbolic"]["n_transactions"],
+                },
+                "filter_config": data.get("filter_config"),
+                "source": path.name,
+            }
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -137,6 +141,8 @@ def _run_compare(
     filter_config: Path | None,
     run_dir: Path,
     model_name: str = "logreg",
+    alerts_json_path: Path | None = None,
+    cache_dir: Path | None = None,
 ) -> dict:
     print(f"\n{'='*60}")
     print(f" Running compare: {scenario}")
@@ -145,12 +151,16 @@ def _run_compare(
     scenario_dir = run_dir / "scenario" / scenario
     scenario_dir.mkdir(parents=True, exist_ok=True)
 
+    extra = {"cache_dir": cache_dir} if cache_dir is not None else {}
+
     print("\n--- Phase 1/2: baseline ---")
     baseline = run_baseline_experiment(
         BaselineExperimentConfig(
             scenario=scenario,
             model_name=model_name,
             results_dir=scenario_dir,
+            alerts_json_path=alerts_json_path,
+            **extra,
         )
     )
 
@@ -162,6 +172,8 @@ def _run_compare(
             abstraction_map_path=ABSTRACTION_MAP_PATH,
             model_name=model_name,
             results_dir=scenario_dir,
+            alerts_json_path=alerts_json_path,
+            **extra,
         )
     )
 
@@ -176,6 +188,7 @@ def _run_compare(
         "timestamp": timestamp,
         "model_name": model_name,
         "filter_config": str(filter_config),
+        "filtered": alerts_json_path is not None,
         "baseline": {
             "schema_name": baseline.schema_name,
             "schema_version": baseline.schema_version,
@@ -325,7 +338,9 @@ def _sort_key(df: pd.DataFrame, order: list[str]) -> pd.DataFrame:
     )
 
 
-def plot_auc_comparison(delta_df: pd.DataFrame, out_dir: Path) -> None:
+def plot_auc_comparison(
+    delta_df: pd.DataFrame, out_dir: Path, filtered: bool = False
+) -> None:
     df = _sort_key(delta_df, delta_df["scenario"].tolist())
     scenarios = df["scenario"].tolist()
     x = np.arange(len(scenarios))
@@ -352,12 +367,24 @@ def plot_auc_comparison(delta_df: pd.DataFrame, out_dir: Path) -> None:
     ax.legend()
     ax.grid(axis="y", alpha=0.3)
     fig.tight_layout()
+    fig.text(
+        0.99,
+        0.01,
+        "data: filtered" if filtered else "data: raw",
+        ha="right",
+        va="bottom",
+        fontsize=7,
+        color="gray",
+        transform=fig.transFigure,
+    )
     fig.savefig(out_dir / "compare_auc.png", dpi=150)
     plt.close(fig)
     print(f"  Saved → {out_dir / 'compare_auc.png'}")
 
 
-def plot_metrics_breakdown(delta_df: pd.DataFrame, out_dir: Path) -> None:
+def plot_metrics_breakdown(
+    delta_df: pd.DataFrame, out_dir: Path, filtered: bool = False
+) -> None:
     df = _sort_key(delta_df, delta_df["scenario"].tolist())
     scenarios = df["scenario"].tolist()
     x = np.arange(len(scenarios))
@@ -385,12 +412,24 @@ def plot_metrics_breakdown(delta_df: pd.DataFrame, out_dir: Path) -> None:
         ax.legend(fontsize=8)
         ax.grid(axis="y", alpha=0.3)
     fig.tight_layout()
+    fig.text(
+        0.99,
+        0.01,
+        "data: filtered" if filtered else "data: raw",
+        ha="right",
+        va="bottom",
+        fontsize=7,
+        color="gray",
+        transform=fig.transFigure,
+    )
     fig.savefig(out_dir / "compare_metrics.png", dpi=150)
     plt.close(fig)
     print(f"  Saved → {out_dir / 'compare_metrics.png'}")
 
 
-def plot_feature_counts(delta_df: pd.DataFrame, out_dir: Path) -> None:
+def plot_feature_counts(
+    delta_df: pd.DataFrame, out_dir: Path, filtered: bool = False
+) -> None:
     df = _sort_key(delta_df, delta_df["scenario"].tolist())
     scenarios = df["scenario"].tolist()
     x = np.arange(len(scenarios))
@@ -416,12 +455,24 @@ def plot_feature_counts(delta_df: pd.DataFrame, out_dir: Path) -> None:
     ax.legend()
     ax.grid(axis="y", alpha=0.3)
     fig.tight_layout()
+    fig.text(
+        0.99,
+        0.01,
+        "data: filtered" if filtered else "data: raw",
+        ha="right",
+        va="bottom",
+        fontsize=7,
+        color="gray",
+        transform=fig.transFigure,
+    )
     fig.savefig(out_dir / "compare_features.png", dpi=150)
     plt.close(fig)
     print(f"  Saved → {out_dir / 'compare_features.png'}")
 
 
-def plot_fp_comparison(delta_df: pd.DataFrame, out_dir: Path) -> None:
+def plot_fp_comparison(
+    delta_df: pd.DataFrame, out_dir: Path, filtered: bool = False
+) -> None:
     df = _sort_key(delta_df, delta_df["scenario"].tolist())
     scenarios = df["scenario"].tolist()
     x = np.arange(len(scenarios))
@@ -447,6 +498,16 @@ def plot_fp_comparison(delta_df: pd.DataFrame, out_dir: Path) -> None:
     ax.legend()
     ax.grid(axis="y", alpha=0.3)
     fig.tight_layout()
+    fig.text(
+        0.99,
+        0.01,
+        "data: filtered" if filtered else "data: raw",
+        ha="right",
+        va="bottom",
+        fontsize=7,
+        color="gray",
+        transform=fig.transFigure,
+    )
     fig.savefig(out_dir / "compare_fp.png", dpi=150)
     plt.close(fig)
     print(f"  Saved → {out_dir / 'compare_fp.png'}")
@@ -462,7 +523,13 @@ def main() -> None:
         description="Run baseline vs symbolic comparison for one or more scenarios."
     )
     parser.add_argument(
-        "scenarios", nargs="+", help="Scenario names (e.g. fox wheeler harrison)"
+        "scenarios", nargs="*", help="Scenario names (e.g. fox wheeler harrison)"
+    )
+    parser.add_argument(
+        "--all",
+        dest="all_scenarios",
+        action="store_true",
+        help=f"Run all scenarios: {', '.join(ALL_SCENARIOS)}",
     )
     parser.add_argument(
         "--force",
@@ -485,7 +552,17 @@ def main() -> None:
         default="logreg",
         help="Model to use: logreg, logreg_l1, random_forest, lstm (default: logreg)",
     )
+    parser.add_argument(
+        "--filtered",
+        action="store_true",
+        help="Use detector-filtered alerts (alerts_filtered.json) instead of alerts.json.",
+    )
     args = parser.parse_args()
+
+    if args.all_scenarios:
+        args.scenarios = ALL_SCENARIOS
+    elif not args.scenarios:
+        parser.error("Specify at least one scenario name or use --all.")
 
     run_ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     run_dir = EXPERIMENTS_DIR / f"compare_{run_ts}"
@@ -508,7 +585,7 @@ def _run_main(args: object, run_dir: Path) -> None:
     all_results: list[dict] = []
 
     for scenario in args.scenarios:
-        existing = _load_compare_result(scenario)
+        existing = _load_compare_result(scenario, filtered=args.filtered)
 
         if args.no_run:
             if existing is not None:
@@ -525,13 +602,26 @@ def _run_main(args: object, run_dir: Path) -> None:
             all_results.append(existing)
             continue
 
-        r = _run_compare(
-            scenario,
-            filter_config=args.filter_config,
-            run_dir=run_dir,
-            model_name=args.model_name,
+        alerts_json_path = (
+            _REPO / "artifacts" / "processed-data" / scenario / "alerts_filtered.json"
+            if args.filtered
+            else None
         )
-        all_results.append(r)
+        cache_dir = CACHE_DIR / "filtered" if args.filtered else None
+        try:
+            r = _run_compare(
+                scenario,
+                filter_config=args.filter_config,
+                run_dir=run_dir,
+                model_name=args.model_name,
+                alerts_json_path=alerts_json_path,
+                cache_dir=cache_dir,
+            )
+            all_results.append(r)
+        except Exception as exc:
+            print(f"\n[{scenario}] FAILED — skipping. Error: {exc}")
+            traceback.print_exc()
+            continue
 
     if not all_results:
         print("No results to process. Exiting.")
@@ -559,10 +649,10 @@ def _run_main(args: object, run_dir: Path) -> None:
     print("\n" + text_table)
 
     print(f"\n[plots] Saving to {out_dir}")
-    plot_auc_comparison(delta_df, out_dir)
-    plot_metrics_breakdown(delta_df, out_dir)
-    plot_feature_counts(delta_df, out_dir)
-    plot_fp_comparison(delta_df, out_dir)
+    plot_auc_comparison(delta_df, out_dir, filtered=args.filtered)
+    plot_metrics_breakdown(delta_df, out_dir, filtered=args.filtered)
+    plot_feature_counts(delta_df, out_dir, filtered=args.filtered)
+    plot_fp_comparison(delta_df, out_dir, filtered=args.filtered)
 
     print("\nDone.")
 

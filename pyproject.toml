@@ -28,7 +28,8 @@ dependencies = [
   "torch",
   "tensordict",
   "python-dotenv",
-  "accelerate>=1.1.0"
+  "accelerate>=1.1.0",
+  "shap"
 ]
 
 [project.optional-dependencies]

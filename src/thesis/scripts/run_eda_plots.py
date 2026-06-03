@@ -35,6 +35,9 @@ import argparse
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+import matplotlib.pyplot as plt
+
+import pandas as pd
 
 from thesis.visualization.eda import (
     SCENARIOS,
@@ -118,6 +121,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         metavar="K",
         help="Number of alert signatures shown in the top-names plot (default: 20).",
     )
+    p.add_argument(
+        "--filtered",
+        action="store_true",
+        help="Use detector-filtered alerts (alerts_filtered.csv) instead of raw alerts.",
+    )
     return p.parse_args(argv)
 
 
@@ -152,7 +160,21 @@ def main(argv: list[str] | None = None) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"Loading alerts for: {', '.join(scenarios)}")
-    df = load_alerts(args.data_dir, scenarios=scenarios)
+    if args.filtered:
+        frames = []
+        for sc in scenarios:
+            path = ROOT / "artifacts" / "processed-data" / sc / "alerts_filtered.csv"
+            frame = pd.read_csv(path, dtype=str)
+            frame["time"] = pd.to_numeric(frame["time"], errors="coerce")
+            frame["timestamp"] = pd.to_datetime(frame["time"], unit="s", utc=True)
+            frame["scenario"] = sc
+            frame["is_attack"] = (
+                frame["time_label"].ne("false_positive") & frame["time_label"].notna()
+            )
+            frames.append(frame)
+        df = pd.concat(frames, ignore_index=True)
+    else:
+        df = load_alerts(args.data_dir, scenarios=scenarios)
     print(f"  {len(df):,} alerts loaded.")
 
     # Resolve transactions directory: explicit arg > default location > skip
@@ -163,7 +185,11 @@ def main(argv: list[str] | None = None) -> None:
             else ROOT / args.transactions_dir
         )
     else:
-        tx_dir = ROOT / "artifacts" / "transactions"
+        tx_dir = (
+            ROOT
+            / "artifacts"
+            / ("transactions_filtered" if args.filtered else "transactions")
+        )
 
     tx_df = None
     if tx_dir.exists():
@@ -187,41 +213,43 @@ def main(argv: list[str] | None = None) -> None:
     plots = [
         (
             "alert volume (concatenated timeline)",
-            lambda: plot_alert_volume_concatenated(
-                df, bin_hours=args.bin_hours, out_path=out("volume_concatenated")
-            ),
+            "volume_concatenated",
+            lambda: plot_alert_volume_concatenated(df, bin_hours=args.bin_hours),
         ),
         (
             "alert volume (attack phase zoom)",
-            lambda: plot_attack_phase_zoom(df, out_path=out("volume_attack_zoom")),
+            "volume_attack_zoom",
+            lambda: plot_attack_phase_zoom(df),
         ),
         (
             "class balance",
-            lambda: plot_class_balance(df, out_path=out("class_balance")),
+            "class_balance",
+            lambda: plot_class_balance(df),
         ),
         (
             "attack type heatmap",
-            lambda: plot_attack_type_heatmap(df, out_path=out("attack_type_heatmap")),
+            "attack_type_heatmap",
+            lambda: plot_attack_type_heatmap(df),
         ),
         (
             "top alert names",
-            lambda: plot_top_alert_names(
-                df, top_k=args.top_k, out_path=out("top_alert_names")
-            ),
+            "top_alert_names",
+            lambda: plot_top_alert_names(df, top_k=args.top_k),
         ),
         (
             "inter-arrival time CDF",
-            lambda: plot_inter_arrival_time_cdf(df, out_path=out("inter_arrival_cdf")),
+            "inter_arrival_cdf",
+            lambda: plot_inter_arrival_time_cdf(df),
         ),
         (
             "group size distribution",
-            lambda: plot_group_size_distribution(df, out_path=out("group_size_dist")),
+            "group_size_dist",
+            lambda: plot_group_size_distribution(df),
         ),
         (
             "scenario overview table",
-            lambda: plot_scenario_overview(
-                df, tx_df=tx_df, out_path=out("scenario_overview")
-            ),
+            "scenario_overview",
+            lambda: plot_scenario_overview(df, tx_df=tx_df),
         ),
     ]
 
@@ -229,25 +257,34 @@ def main(argv: list[str] | None = None) -> None:
         plots += [
             (
                 "transaction volume (concatenated timeline)",
+                "tx_volume_concatenated",
                 lambda: plot_transaction_volume_concatenated(
-                    tx_df,
-                    bin_hours=args.bin_hours,
-                    out_path=out("tx_volume_concatenated"),
+                    tx_df, bin_hours=args.bin_hours
                 ),
             ),
             (
                 "transaction volume (attack phase zoom)",
-                lambda: plot_transaction_volume_attack_zoom(
-                    tx_df, out_path=out("tx_volume_attack_zoom")
-                ),
+                "tx_volume_attack_zoom",
+                lambda: plot_transaction_volume_attack_zoom(tx_df),
             ),
         ]
 
-    import matplotlib.pyplot as plt
+    data_label = "data: filtered" if args.filtered else "data: raw"
 
-    for label, fn in plots:
+    for label, name, fn in plots:
         print(f"  Plotting {label}...", end=" ", flush=True)
         fig, _ = fn()
+        fig.text(
+            0.99,
+            0.01,
+            data_label,
+            ha="right",
+            va="bottom",
+            fontsize=7,
+            color="gray",
+            transform=fig.transFigure,
+        )
+        fig.savefig(out(name), dpi=150, bbox_inches="tight")
         plt.close(fig)
         print("done")
 

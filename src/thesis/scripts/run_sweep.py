@@ -164,7 +164,13 @@ def _write_filter_yaml(tmp_dir: Path, params: dict[str, float]) -> Path:
 # ---------------------------------------------------------------------------
 
 
-def _run_point(scenario: str, sweep_param: str, value: float, tmp_dir: Path) -> dict:
+def _run_point(
+    scenario: str,
+    sweep_param: str,
+    value: float,
+    tmp_dir: Path,
+    alerts_json_path: Path | None = None,
+) -> dict:
     """Run one sweep point and return a flat metrics dict."""
     params = {**DEFAULTS, sweep_param: value}
 
@@ -178,6 +184,7 @@ def _run_point(scenario: str, sweep_param: str, value: float, tmp_dir: Path) -> 
             abstraction_map_path=ABSTRACTION_MAP_PATH,
             model_name="logreg_sweep",
             model_version="0.1.0",
+            alerts_json_path=alerts_json_path,
         )
         result = run_symbolic_experiment(cfg)
 
@@ -256,7 +263,12 @@ PARAM_LABELS = {
 
 
 def _plot_sweep_param(
-    df: pd.DataFrame, sweep_param: str, scenario: str, out_dir: Path, ax=None
+    df: pd.DataFrame,
+    sweep_param: str,
+    scenario: str,
+    out_dir: Path,
+    ax=None,
+    filtered: bool = False,
 ) -> None:
     sub = df[df["sweep_param"] == sweep_param].sort_values("value")
     if sub.empty:
@@ -316,6 +328,16 @@ def _plot_sweep_param(
     if standalone:
         ax1.set_title(title)
         fig.tight_layout()
+        fig.text(
+            0.99,
+            0.01,
+            "data: filtered" if filtered else "data: raw",
+            ha="right",
+            va="bottom",
+            fontsize=7,
+            color="gray",
+            transform=fig.transFigure,
+        )
         out_path = out_dir / f"{scenario}_sweep_{sweep_param}.png"
         fig.savefig(out_path, dpi=150)
         plt.close(fig)
@@ -325,13 +347,17 @@ def _plot_sweep_param(
 
 
 def plot_all_sweeps(
-    df: pd.DataFrame, scenario: str, out_dir: Path, params: list[str]
+    df: pd.DataFrame,
+    scenario: str,
+    out_dir: Path,
+    params: list[str],
+    filtered: bool = False,
 ) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # Individual plots
     for param in params:
-        _plot_sweep_param(df, param, scenario, out_dir)
+        _plot_sweep_param(df, param, scenario, out_dir, filtered=filtered)
 
     # Overview grid (2×2 or 1×N depending on how many params)
     n = len(params)
@@ -344,7 +370,9 @@ def plot_all_sweeps(
     axes_flat = axes.flatten() if n > 1 else [axes]
 
     for i, param in enumerate(params):
-        _plot_sweep_param(df, param, scenario, out_dir, ax=axes_flat[i])
+        _plot_sweep_param(
+            df, param, scenario, out_dir, ax=axes_flat[i], filtered=filtered
+        )
 
     # Hide unused axes
     for j in range(n, len(axes_flat)):
@@ -352,6 +380,16 @@ def plot_all_sweeps(
 
     fig.suptitle(f"{scenario} — hyperparameter sweep overview", fontsize=13)
     fig.tight_layout()
+    fig.text(
+        0.99,
+        0.01,
+        "data: filtered" if filtered else "data: raw",
+        ha="right",
+        va="bottom",
+        fontsize=7,
+        color="gray",
+        transform=fig.transFigure,
+    )
     out_path = out_dir / f"{scenario}_sweep_overview.png"
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
@@ -385,7 +423,17 @@ def main() -> None:
         action="store_true",
         help="Re-run even if a cached result exists for the sweep point.",
     )
+    parser.add_argument(
+        "--filtered",
+        action="store_true",
+        help="Use detector-filtered alerts (alerts_filtered.json) instead of alerts.json.",
+    )
     args = parser.parse_args()
+    args.alerts_json_path = (
+        _REPO / "artifacts" / "processed-data" / args.scenario / "alerts_filtered.json"
+        if args.filtered
+        else None
+    )
 
     run_ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     run_dir = _REPO / "artifacts" / "experiments" / "run_sweep" / f"sweep_{run_ts}"
@@ -429,7 +477,13 @@ def _sweep_body(
                     print(f"  [{param}={value:.4g}] cached — skipping.")
                     continue
                 print(f"\n  [{param}={value:.4g}] running...")
-                row = _run_point(args.scenario, param, value, tmp_dir)
+                row = _run_point(
+                    args.scenario,
+                    param,
+                    value,
+                    tmp_dir,
+                    alerts_json_path=args.alerts_json_path,
+                )
                 cached = _append_and_save(cached, row, csv_path)
                 print(
                     f"  [{param}={value:.4g}] AUC={row['auc']:.4f}  sym_features={row['n_symbolic_features']}"
@@ -443,7 +497,13 @@ def _sweep_body(
 
     params_with_data = [p for p in args.params if p in cached["sweep_param"].values]
     print(f"[plots] Generating plots for: {params_with_data}")
-    plot_all_sweeps(cached, args.scenario, plots_dir, params_with_data)
+    plot_all_sweeps(
+        cached,
+        args.scenario,
+        plots_dir,
+        params_with_data,
+        filtered=getattr(args, "filtered", False),
+    )
 
     print("\nDone.")
 

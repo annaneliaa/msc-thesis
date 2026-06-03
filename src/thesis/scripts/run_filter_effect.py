@@ -136,6 +136,7 @@ def _run_condition(
     grouping_cache_dir: Path,
     results_dir: Path,
     transactions_dir: Path,
+    alerts_json_path: Path | None = None,
 ) -> ExperimentResult:
     return run_symbolic_experiment(
         SymbolicExperimentConfig(
@@ -147,6 +148,7 @@ def _run_condition(
             grouping_cache_dir=grouping_cache_dir,
             results_dir=results_dir,
             transactions_dir=transactions_dir,
+            alerts_json_path=alerts_json_path,
         )
     )
 
@@ -377,7 +379,10 @@ def _print_type_breakdown(conditions: list[str], sym_paths: dict[str, Path]) -> 
 
 
 def _plot_funnel(
-    conditions: list[str], funnels: dict[str, dict], out_dir: Path
+    conditions: list[str],
+    funnels: dict[str, dict],
+    out_dir: Path,
+    filtered: bool = False,
 ) -> None:
     stages = [
         ("n_mined", "Mined"),
@@ -412,6 +417,16 @@ def _plot_funnel(
     ax.legend(fontsize=8)
     ax.grid(axis="y", alpha=0.3)
     fig.tight_layout()
+    fig.text(
+        0.99,
+        0.01,
+        "data: filtered" if filtered else "data: raw",
+        ha="right",
+        va="bottom",
+        fontsize=7,
+        color="gray",
+        transform=fig.transFigure,
+    )
     out = out_dir / "feature_funnel.png"
     fig.savefig(out, dpi=150)
     plt.close(fig)
@@ -423,6 +438,7 @@ def _plot_performance(
     results: dict[str, ExperimentResult],
     baseline: ExperimentResult,
     out_dir: Path,
+    filtered: bool = False,
 ) -> None:
     metrics = [
         ("auc", "AUC"),
@@ -464,6 +480,16 @@ def _plot_performance(
     ax.legend(fontsize=7, loc="upper right")
     ax.grid(axis="y", alpha=0.3)
     fig.tight_layout()
+    fig.text(
+        0.99,
+        0.01,
+        "data: filtered" if filtered else "data: raw",
+        ha="right",
+        va="bottom",
+        fontsize=7,
+        color="gray",
+        transform=fig.transFigure,
+    )
     out = out_dir / "performance.png"
     fig.savefig(out, dpi=150)
     plt.close(fig)
@@ -475,6 +501,7 @@ def _plot_fp_analysis(
     results: dict[str, ExperimentResult],
     baseline: ExperimentResult,
     out_dir: Path,
+    filtered: bool = False,
 ) -> None:
     all_labels = ["baseline"] + conditions
     fp_vals = []
@@ -525,6 +552,16 @@ def _plot_fp_analysis(
     ax2.grid(axis="y", alpha=0.3)
 
     fig.tight_layout()
+    fig.text(
+        0.99,
+        0.01,
+        "data: filtered" if filtered else "data: raw",
+        ha="right",
+        va="bottom",
+        fontsize=7,
+        color="gray",
+        transform=fig.transFigure,
+    )
     out = out_dir / "fp_analysis.png"
     fig.savefig(out, dpi=150)
     plt.close(fig)
@@ -532,7 +569,11 @@ def _plot_fp_analysis(
 
 
 def _plot_overlap_heatmap(
-    conditions: list[str], sym_paths: dict[str, Path], k: int, out_dir: Path
+    conditions: list[str],
+    sym_paths: dict[str, Path],
+    k: int,
+    out_dir: Path,
+    filtered: bool = False,
 ) -> None:
     feature_sets = {c: _top_feature_names(sym_paths[c], k) for c in conditions}
     n = len(conditions)
@@ -561,6 +602,16 @@ def _plot_overlap_heatmap(
             )
     ax.set_title(f"Top-{k} feature Jaccard overlap (nonzero coeff)")
     fig.tight_layout()
+    fig.text(
+        0.99,
+        0.01,
+        "data: filtered" if filtered else "data: raw",
+        ha="right",
+        va="bottom",
+        fontsize=7,
+        color="gray",
+        transform=fig.transFigure,
+    )
     out = out_dir / "feature_overlap.png"
     fig.savefig(out, dpi=150)
     plt.close(fig)
@@ -568,7 +619,10 @@ def _plot_overlap_heatmap(
 
 
 def _plot_type_breakdown(
-    conditions: list[str], sym_paths: dict[str, Path], out_dir: Path
+    conditions: list[str],
+    sym_paths: dict[str, Path],
+    out_dir: Path,
+    filtered: bool = False,
 ) -> None:
     all_types_set: set[str] = set()
     bds = {}
@@ -617,6 +671,16 @@ def _plot_type_breakdown(
     ax.legend(fontsize=8)
     ax.grid(axis="y", alpha=0.3)
     fig.tight_layout()
+    fig.text(
+        0.99,
+        0.01,
+        "data: filtered" if filtered else "data: raw",
+        ha="right",
+        va="bottom",
+        fontsize=7,
+        color="gray",
+        transform=fig.transFigure,
+    )
     out = out_dir / "feature_type_breakdown.png"
     fig.savefig(out, dpi=150)
     plt.close(fig)
@@ -655,6 +719,11 @@ def main() -> None:
         action="store_true",
         help="Re-run even if results already exist.",
     )
+    parser.add_argument(
+        "--filtered",
+        action="store_true",
+        help="Use detector-filtered alerts (alerts_filtered.json) instead of alerts.json.",
+    )
     args = parser.parse_args()
 
     conditions = [c.strip() for c in args.conditions.split(",")]
@@ -689,6 +758,11 @@ def _main_body(
 ) -> None:
     scenario = args.scenario
     grouping = _grouping_config(args.grouping)
+    alerts_json_path = (
+        _REPO / "artifacts" / "processed-data" / scenario / "alerts_filtered.json"
+        if args.filtered
+        else None
+    )
 
     cache_dir = CACHE_DIR / scenario
     groups_cache_dir = CACHE_DIR / "groups" / scenario / args.grouping
@@ -710,6 +784,7 @@ def _main_body(
             grouping_cache_dir=groups_cache_dir,
             results_dir=run_dir,
             transactions_dir=run_dir / "transactions",
+            alerts_json_path=alerts_json_path,
         )
     )
     gc.collect()
@@ -728,6 +803,7 @@ def _main_body(
             grouping_cache_dir=groups_cache_dir,
             results_dir=run_dir,
             transactions_dir=run_dir / "transactions",
+            alerts_json_path=alerts_json_path,
         )
         sym_results[cond] = result
         sym_paths[cond] = Path(result.results_file)
@@ -787,11 +863,17 @@ def _main_body(
 
     # Plots
     print(f"[plots] Writing to {plots_dir}")
-    _plot_funnel(conditions, funnels, plots_dir)
-    _plot_performance(conditions, sym_results, baseline, plots_dir)
-    _plot_fp_analysis(conditions, sym_results, baseline, plots_dir)
-    _plot_overlap_heatmap(conditions, sym_paths, args.top_k, plots_dir)
-    _plot_type_breakdown(conditions, sym_paths, plots_dir)
+    _plot_funnel(conditions, funnels, plots_dir, filtered=args.filtered)
+    _plot_performance(
+        conditions, sym_results, baseline, plots_dir, filtered=args.filtered
+    )
+    _plot_fp_analysis(
+        conditions, sym_results, baseline, plots_dir, filtered=args.filtered
+    )
+    _plot_overlap_heatmap(
+        conditions, sym_paths, args.top_k, plots_dir, filtered=args.filtered
+    )
+    _plot_type_breakdown(conditions, sym_paths, plots_dir, filtered=args.filtered)
 
     print(f"\nDone. Output in {run_dir}")
 

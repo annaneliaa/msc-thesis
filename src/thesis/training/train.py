@@ -65,10 +65,10 @@ def train_eval_holdout(
 
     coef_importances = {}
     if hasattr(model, "coef_"):
-        coefs = np.abs(model.coef_[0])
+        coefs_signed = model.coef_[0]  # preserve sign; negative = benign-correlated
         pairs = sorted(
-            zip(feature_names, coefs),
-            key=lambda x: x[1],
+            zip(feature_names, coefs_signed),
+            key=lambda x: abs(x[1]),
             reverse=True,
         )
         coef_importances = {
@@ -96,9 +96,43 @@ def train_eval_holdout(
     except Exception:
         pass
 
+    shap_importances = {}
+    try:
+        import shap
+
+        bg = X_train.sample(min(100, len(X_train)), random_state=42)
+        x_explain = X_test.iloc[:200] if len(X_test) > 200 else X_test
+
+        if hasattr(model, "feature_importances_"):
+            # tree models: TreeExplainer is exact and fast
+            sv = shap.TreeExplainer(model).shap_values(x_explain)
+            vals = (
+                sv[:, :, 1]
+                if isinstance(sv, np.ndarray) and sv.ndim == 3
+                else (sv[1] if isinstance(sv, list) else sv)
+            )
+        elif hasattr(model, "coef_"):
+            # linear models: LinearExplainer
+            vals = shap.LinearExplainer(model, bg).shap_values(x_explain)
+        else:
+            # fallback: PermutationExplainer via predict_proba
+            sv = shap.Explainer(model.predict_proba, bg)(x_explain)
+            vals = sv.values[:, :, 1] if sv.values.ndim == 3 else sv.values
+
+        mean_abs = np.abs(vals).mean(axis=0)
+        pairs = sorted(
+            zip(feature_names, mean_abs),
+            key=lambda x: x[1],
+            reverse=True,
+        )
+        shap_importances = {name: float(imp) for name, imp in pairs[:top_n_importances]}
+    except Exception:
+        pass
+
     importances = {
         "by_coefficient": coef_importances,
         "by_permutation": perm_importances,
+        "by_shap": shap_importances,
     }
 
     return {
