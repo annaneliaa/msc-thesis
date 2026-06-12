@@ -9,6 +9,16 @@ Usage:
     python src/thesis/scripts/run_compare_scenarios.py fox --force
     python src/thesis/scripts/run_compare_scenarios.py fox wheeler --no-run
 
+    # filtered variants — loads artifacts/processed-data/<scenario>/alerts_filtered_<METHOD>.json
+    python src/thesis/scripts/run_compare_scenarios.py --all --filtered naive50
+    python src/thesis/scripts/run_compare_scenarios.py --all --filtered type_stratified
+
+--filtered options:
+    naive50           Random 50/50 undersample of attack vs benign.
+    type_stratified   Caps each attack type at the count of the 2nd most common
+                      attack type, then keeps all benign samples.
+    (bare --filtered) Loads alerts_filtered.json (legacy detector-score filter).
+
 Output (all under artifacts/experiments/run_compare/compare_<run_ts>/):
     scenario/<scenario>/compare_<ts>.json     per-scenario result
     scenario/<scenario>/baseline_<ts>.json    baseline experiment result
@@ -94,6 +104,14 @@ sys.path.insert(0, str(_REPO / "src"))
 EXPERIMENTS_DIR = _REPO / "artifacts" / "experiments" / "run_compare"
 
 
+def _data_label(filtered_method: str | None) -> str:
+    if filtered_method is None:
+        return "data: raw"
+    return (
+        f"data: filtered ({filtered_method})" if filtered_method else "data: filtered"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Loading results
 # ---------------------------------------------------------------------------
@@ -104,15 +122,22 @@ def _latest_json(directory: Path, prefix: str) -> Path | None:
     return candidates[-1] if candidates else None
 
 
-def _load_compare_result(scenario: str, filtered: bool = False) -> dict | None:
-    """Load the most recent compare_*.json for a scenario that matches the filtered setting."""
+def _load_compare_result(
+    scenario: str, filtered_method: str | None = None
+) -> dict | None:
+    """Load the most recent compare_*.json for a scenario that matches the filtered method."""
     candidates = sorted(EXPERIMENTS_DIR.glob(f"*/scenario/{scenario}/compare_*.json"))
     if not candidates:
         return None
     for path in reversed(candidates):
         with path.open() as f:
             data = json.load(f)
-        if data.get("filtered", False) == filtered:
+        # New results store filtered_method; old results store a filtered bool.
+        if "filtered_method" in data:
+            match = data["filtered_method"] == filtered_method
+        else:
+            match = bool(data.get("filtered", False)) == (filtered_method is not None)
+        if match:
             return {
                 "scenario": scenario,
                 "baseline": {
@@ -143,6 +168,7 @@ def _run_compare(
     model_name: str = "logreg",
     alerts_json_path: Path | None = None,
     cache_dir: Path | None = None,
+    filtered_method: str | None = None,
 ) -> dict:
     print(f"\n{'='*60}")
     print(f" Running compare: {scenario}")
@@ -188,7 +214,8 @@ def _run_compare(
         "timestamp": timestamp,
         "model_name": model_name,
         "filter_config": str(filter_config),
-        "filtered": alerts_json_path is not None,
+        "filtered": filtered_method is not None,
+        "filtered_method": filtered_method,
         "baseline": {
             "schema_name": baseline.schema_name,
             "schema_version": baseline.schema_version,
@@ -339,7 +366,7 @@ def _sort_key(df: pd.DataFrame, order: list[str]) -> pd.DataFrame:
 
 
 def plot_auc_comparison(
-    delta_df: pd.DataFrame, out_dir: Path, filtered: bool = False
+    delta_df: pd.DataFrame, out_dir: Path, filtered_method: str | None = None
 ) -> None:
     df = _sort_key(delta_df, delta_df["scenario"].tolist())
     scenarios = df["scenario"].tolist()
@@ -370,7 +397,7 @@ def plot_auc_comparison(
     fig.text(
         0.99,
         0.01,
-        "data: filtered" if filtered else "data: raw",
+        _data_label(filtered_method),
         ha="right",
         va="bottom",
         fontsize=7,
@@ -383,7 +410,7 @@ def plot_auc_comparison(
 
 
 def plot_metrics_breakdown(
-    delta_df: pd.DataFrame, out_dir: Path, filtered: bool = False
+    delta_df: pd.DataFrame, out_dir: Path, filtered_method: str | None = None
 ) -> None:
     df = _sort_key(delta_df, delta_df["scenario"].tolist())
     scenarios = df["scenario"].tolist()
@@ -415,7 +442,7 @@ def plot_metrics_breakdown(
     fig.text(
         0.99,
         0.01,
-        "data: filtered" if filtered else "data: raw",
+        _data_label(filtered_method),
         ha="right",
         va="bottom",
         fontsize=7,
@@ -428,7 +455,7 @@ def plot_metrics_breakdown(
 
 
 def plot_feature_counts(
-    delta_df: pd.DataFrame, out_dir: Path, filtered: bool = False
+    delta_df: pd.DataFrame, out_dir: Path, filtered_method: str | None = None
 ) -> None:
     df = _sort_key(delta_df, delta_df["scenario"].tolist())
     scenarios = df["scenario"].tolist()
@@ -458,7 +485,7 @@ def plot_feature_counts(
     fig.text(
         0.99,
         0.01,
-        "data: filtered" if filtered else "data: raw",
+        _data_label(filtered_method),
         ha="right",
         va="bottom",
         fontsize=7,
@@ -471,7 +498,7 @@ def plot_feature_counts(
 
 
 def plot_fp_comparison(
-    delta_df: pd.DataFrame, out_dir: Path, filtered: bool = False
+    delta_df: pd.DataFrame, out_dir: Path, filtered_method: str | None = None
 ) -> None:
     df = _sort_key(delta_df, delta_df["scenario"].tolist())
     scenarios = df["scenario"].tolist()
@@ -501,7 +528,7 @@ def plot_fp_comparison(
     fig.text(
         0.99,
         0.01,
-        "data: filtered" if filtered else "data: raw",
+        _data_label(filtered_method),
         ha="right",
         va="bottom",
         fontsize=7,
@@ -554,8 +581,16 @@ def main() -> None:
     )
     parser.add_argument(
         "--filtered",
-        action="store_true",
-        help="Use detector-filtered alerts (alerts_filtered.json) instead of alerts.json.",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="METHOD",
+        help=(
+            "Load a pre-processed alert variant instead of raw alerts.json. "
+            "Pass a method name to load alerts_filtered_<METHOD>.json "
+            "(e.g. --filtered naive50, --filtered type_stratified), "
+            "or bare --filtered for alerts_filtered.json."
+        ),
     )
     args = parser.parse_args()
 
@@ -585,7 +620,7 @@ def _run_main(args: object, run_dir: Path) -> None:
     all_results: list[dict] = []
 
     for scenario in args.scenarios:
-        existing = _load_compare_result(scenario, filtered=args.filtered)
+        existing = _load_compare_result(scenario, filtered_method=args.filtered)
 
         if args.no_run:
             if existing is not None:
@@ -602,12 +637,20 @@ def _run_main(args: object, run_dir: Path) -> None:
             all_results.append(existing)
             continue
 
-        alerts_json_path = (
-            _REPO / "artifacts" / "processed-data" / scenario / "alerts_filtered.json"
-            if args.filtered
-            else None
-        )
-        cache_dir = CACHE_DIR / "filtered" if args.filtered else None
+        if args.filtered is not None:
+            suffix = f"_{args.filtered}" if args.filtered else ""
+            alerts_json_path = (
+                _REPO
+                / "artifacts"
+                / "processed-data"
+                / scenario
+                / f"alerts_filtered{suffix}.json"
+            )
+            cache_name = f"filtered_{args.filtered}" if args.filtered else "filtered"
+            cache_dir = CACHE_DIR / cache_name
+        else:
+            alerts_json_path = None
+            cache_dir = None
         try:
             r = _run_compare(
                 scenario,
@@ -616,6 +659,7 @@ def _run_main(args: object, run_dir: Path) -> None:
                 model_name=args.model_name,
                 alerts_json_path=alerts_json_path,
                 cache_dir=cache_dir,
+                filtered_method=args.filtered,
             )
             all_results.append(r)
         except Exception as exc:
@@ -649,10 +693,10 @@ def _run_main(args: object, run_dir: Path) -> None:
     print("\n" + text_table)
 
     print(f"\n[plots] Saving to {out_dir}")
-    plot_auc_comparison(delta_df, out_dir, filtered=args.filtered)
-    plot_metrics_breakdown(delta_df, out_dir, filtered=args.filtered)
-    plot_feature_counts(delta_df, out_dir, filtered=args.filtered)
-    plot_fp_comparison(delta_df, out_dir, filtered=args.filtered)
+    plot_auc_comparison(delta_df, out_dir, filtered_method=args.filtered)
+    plot_metrics_breakdown(delta_df, out_dir, filtered_method=args.filtered)
+    plot_feature_counts(delta_df, out_dir, filtered_method=args.filtered)
+    plot_fp_comparison(delta_df, out_dir, filtered_method=args.filtered)
 
     print("\nDone.")
 

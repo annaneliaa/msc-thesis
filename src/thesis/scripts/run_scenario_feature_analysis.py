@@ -403,12 +403,17 @@ def print_overlap_table(
 # ---------------------------------------------------------------------------
 
 
-def _filtered_label(filtered: bool) -> str:
-    return "data: filtered" if filtered else "data: raw"
+def _filtered_label(filtered: bool, model_name: str = "") -> str:
+    label = "data: filtered" if filtered else "data: raw"
+    return f"{label} | model: {model_name}" if model_name else label
 
 
 def plot_funnel(
-    scenarios: list[str], funnels: dict[str, dict], filtered: bool, out_dir: Path
+    scenarios: list[str],
+    funnels: dict[str, dict],
+    filtered: bool,
+    out_dir: Path,
+    model_name: str = "",
 ) -> None:
     stages = [
         ("n_mined", "Mined"),
@@ -450,7 +455,7 @@ def plot_funnel(
     fig.text(
         0.99,
         0.01,
-        _filtered_label(filtered),
+        _filtered_label(filtered, model_name),
         ha="right",
         va="bottom",
         fontsize=7,
@@ -469,6 +474,7 @@ def plot_overlap_heatmap(
     k: int,
     filtered: bool,
     out_dir: Path,
+    model_name: str = "",
 ) -> None:
     feature_sets = {s: top_feature_names(sym_data.get(s, {}), k) for s in scenarios}
     n = len(scenarios)
@@ -501,7 +507,7 @@ def plot_overlap_heatmap(
     fig.text(
         0.99,
         0.01,
-        _filtered_label(filtered),
+        _filtered_label(filtered, model_name),
         ha="right",
         va="bottom",
         fontsize=7,
@@ -515,7 +521,11 @@ def plot_overlap_heatmap(
 
 
 def plot_fp_analysis(
-    scenarios: list[str], compare: dict[str, dict], filtered: bool, out_dir: Path
+    scenarios: list[str],
+    compare: dict[str, dict],
+    filtered: bool,
+    out_dir: Path,
+    model_name: str = "",
 ) -> None:
     metrics_to_plot = [
         ("fp", "False Positives", True),
@@ -576,7 +586,7 @@ def plot_fp_analysis(
     fig.text(
         0.99,
         0.01,
-        _filtered_label(filtered),
+        _filtered_label(filtered, model_name),
         ha="right",
         va="bottom",
         fontsize=7,
@@ -590,7 +600,11 @@ def plot_fp_analysis(
 
 
 def plot_type_breakdown(
-    scenarios: list[str], sym_data: dict[str, dict], filtered: bool, out_dir: Path
+    scenarios: list[str],
+    sym_data: dict[str, dict],
+    filtered: bool,
+    out_dir: Path,
+    model_name: str = "",
 ) -> None:
     all_types_set: set[str] = set()
     breakdowns = {}
@@ -644,7 +658,7 @@ def plot_type_breakdown(
     fig.text(
         0.99,
         0.01,
-        _filtered_label(filtered),
+        _filtered_label(filtered, model_name),
         ha="right",
         va="bottom",
         fontsize=7,
@@ -663,6 +677,7 @@ def plot_coeff_vs_perm(
     k: int,
     filtered: bool,
     out_dir: Path,
+    model_name: str = "",
 ) -> None:
     coeff_sets = {
         s: top_feature_names(sym_data.get(s, {}), k, "by_coefficient")
@@ -700,7 +715,7 @@ def plot_coeff_vs_perm(
     fig.text(
         0.99,
         0.01,
-        _filtered_label(filtered),
+        _filtered_label(filtered, model_name),
         ha="right",
         va="bottom",
         fontsize=7,
@@ -719,6 +734,7 @@ def plot_signed_coefficients(
     k: int,
     filtered: bool,
     out_dir: Path,
+    model_name: str = "",
 ) -> None:
     from matplotlib.patches import Patch
 
@@ -779,14 +795,15 @@ def plot_signed_coefficients(
         bbox_to_anchor=(0.5, 0.0),
     )
     fig.suptitle(
-        f"Top-{k} features by |coefficient| per scenario — logistic regression",
+        f"Top-{k} features by |coefficient| per scenario"
+        + (f" — {model_name}" if model_name else ""),
         fontsize=11,
     )
     fig.tight_layout(rect=[0, 0.04, 1, 1])
     fig.text(
         0.99,
         0.01,
-        _filtered_label(filtered),
+        _filtered_label(filtered, model_name),
         ha="right",
         va="bottom",
         fontsize=7,
@@ -800,7 +817,11 @@ def plot_signed_coefficients(
 
 
 def plot_sign_split_breakdown(
-    scenarios: list[str], sym_data: dict[str, dict], filtered: bool, out_dir: Path
+    scenarios: list[str],
+    sym_data: dict[str, dict],
+    filtered: bool,
+    out_dir: Path,
+    model_name: str = "",
 ) -> None:
     from matplotlib.patches import Patch
 
@@ -920,7 +941,7 @@ def plot_sign_split_breakdown(
     fig.text(
         0.99,
         0.01,
-        _filtered_label(filtered),
+        _filtered_label(filtered, model_name),
         ha="right",
         va="bottom",
         fontsize=7,
@@ -1000,6 +1021,11 @@ examples:
         default=25,
         help="Number of top features for Jaccard overlap and signed-coeff plot (default: 25).",
     )
+    parser.add_argument(
+        "--replot",
+        action="store_true",
+        help="Skip analysis; only regenerate plots from the latest existing results.",
+    )
     args = parser.parse_args()
 
     if args.list_runs:
@@ -1060,6 +1086,19 @@ examples:
     sys.stdout = tee
 
     try:
+        if args.replot:
+            # Find the latest existing output directory and re-run only the plots.
+            existing = sorted(
+                p
+                for p in _ANALYSIS_BASE.iterdir()
+                if p.is_dir() and p.name.startswith("scenario_features_")
+            )
+            if not existing:
+                print(f"[error] No existing analysis runs found under {_ANALYSIS_BASE}")
+                sys.exit(1)
+            out_dir = existing[-1]
+            print(f"  [replot] Using existing output dir: {out_dir.name}")
+
         compare, sym_data = load_all(run_dir, scenarios)
 
         present = [s for s in scenarios if s in compare]
@@ -1073,25 +1112,37 @@ examples:
         # Any scenario's filtered flag (they should all agree)
         filtered = any(compare[s].get("filtered", False) for s in present)
 
+        # Extract model name from the first loaded compare JSON
+        model_name = next((compare[s].get("model_name", "") for s in present), "")
+        if model_name:
+            print(f"  Model: {model_name}")
+
         funnels = {s: feature_funnel(sym_data[s]) for s in present if s in sym_data}
 
-        print_funnel_table(present, funnels)
-        print_fp_table(present, compare, sym_data)
-        print_generalization_table(present, sym_data)
-        print_type_breakdown(present, sym_data)
-        print_overlap_table(present, sym_data, args.top_k)
+        if not args.replot:
+            print_funnel_table(present, funnels)
+            print_fp_table(present, compare, sym_data)
+            print_generalization_table(present, sym_data)
+            print_type_breakdown(present, sym_data)
+            print_overlap_table(present, sym_data, args.top_k)
 
         print(f"\n[plots] Writing to {out_dir}")
         if funnels:
-            plot_funnel(present, funnels, filtered, out_dir)
+            plot_funnel(present, funnels, filtered, out_dir, model_name)
         if len(present) > 1:
-            plot_overlap_heatmap(present, sym_data, args.top_k, filtered, out_dir)
-        plot_fp_analysis(present, compare, filtered, out_dir)
+            plot_overlap_heatmap(
+                present, sym_data, args.top_k, filtered, out_dir, model_name
+            )
+        plot_fp_analysis(present, compare, filtered, out_dir, model_name)
         if sym_data:
-            plot_type_breakdown(present, sym_data, filtered, out_dir)
-            plot_coeff_vs_perm(present, sym_data, args.top_k, filtered, out_dir)
-            plot_signed_coefficients(present, sym_data, args.top_k, filtered, out_dir)
-            plot_sign_split_breakdown(present, sym_data, filtered, out_dir)
+            plot_type_breakdown(present, sym_data, filtered, out_dir, model_name)
+            plot_coeff_vs_perm(
+                present, sym_data, args.top_k, filtered, out_dir, model_name
+            )
+            plot_signed_coefficients(
+                present, sym_data, args.top_k, filtered, out_dir, model_name
+            )
+            plot_sign_split_breakdown(present, sym_data, filtered, out_dir, model_name)
 
         print(f"\nAnalysis written to {out_dir}")
     finally:

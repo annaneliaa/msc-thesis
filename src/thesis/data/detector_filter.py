@@ -14,7 +14,7 @@ Output:
   - artifacts/processed-data/<scenario>/alerts_filtered.csv  (one file per scenario)
 
 Usage:
-  python detector_filter.py
+  python src/thesis/detector_filter.py
 """
 
 import sys
@@ -403,6 +403,76 @@ def compute_detector_scores(
 
 
 # ---------------------------------------------------------------------------
+# Threshold sweep logging
+# ---------------------------------------------------------------------------
+
+
+def _log_threshold_sweep(
+    scores_df: pd.DataFrame,
+    alerts_df: pd.DataFrame,
+    taus: list[float],
+) -> None:
+    """
+    For each threshold in taus, print:
+      - Full per-detector score table annotated with KEEP / drop status
+      - Alert impact broken down by time_label (benign vs attack phases)
+    """
+    all_detectors = scores_df.sort_values("s_det", ascending=False)
+    n_alerts_total = len(alerts_df)
+    label_totals = alerts_df["time_label"].value_counts().sort_index()
+
+    sep = "=" * 72
+
+    print("\n" + sep)
+    print("  THRESHOLD SWEEP — full per-detector scoring")
+    print(sep)
+
+    for tau in taus:
+        kept_set = set(scores_df[scores_df["s_det"] >= tau]["detector"])
+
+        print(f"\n{'─'*72}")
+        print(
+            f"  tau = {tau:.1f}   ({len(kept_set)} detectors kept / {len(all_detectors)} total)"
+        )
+        print(f"{'─'*72}")
+
+        # Per-detector table
+        print(f"  {'detector':<30} {'s_det':>6}  {'best_attack':<25} {'status':>6}")
+        print(f"  {'-'*30} {'-'*6}  {'-'*25} {'-'*6}")
+        for _, row in all_detectors.iterrows():
+            status = "KEEP" if row["detector"] in kept_set else "drop"
+            print(
+                f"  {row['detector']:<30} {row['s_det']:>6.4f}  "
+                f"{str(row['best_attack']):<25} {status:>6}"
+            )
+
+        # Overall alert counts
+        kept_alerts = alerts_df[alerts_df["detector"].isin(kept_set)]
+        n_kept = len(kept_alerts)
+        pct_removed = 100 * (1 - n_kept / n_alerts_total) if n_alerts_total > 0 else 0.0
+        print(f"\n  Alerts total : {n_alerts_total:,}")
+        print(
+            f"  Alerts kept  : {n_kept:,}  ({100 - pct_removed:.1f}% retained, {pct_removed:.1f}% removed)"
+        )
+
+        # Per time_label breakdown: how much of each label is removed
+        print(
+            f"\n  {'time_label':<20} {'total':>8} {'kept':>8} {'removed':>8} {'% removed':>10}"
+        )
+        print(f"  {'-'*20} {'-'*8} {'-'*8} {'-'*8} {'-'*10}")
+        kept_label_counts = kept_alerts["time_label"].value_counts().sort_index()
+        for label, total in label_totals.items():
+            kept = kept_label_counts.get(label, 0)
+            removed = total - kept
+            pct = 100 * removed / total if total > 0 else 0.0
+            print(
+                f"  {str(label):<20} {total:>8,} {kept:>8,} {removed:>8,} {pct:>9.1f}%"
+            )
+
+    print(f"\n{sep}")
+
+
+# ---------------------------------------------------------------------------
 # Usage
 # ---------------------------------------------------------------------------
 
@@ -470,17 +540,10 @@ if __name__ == "__main__":
                 _json.dump(records, f, indent=2)
             print(f"Saved: {out_json}")
 
-        # Threshold sweep example
-        print("\n--- Threshold sweep ---")
-        print(
-            f"{'Threshold':>10} {'Detectors kept':>16} {'Alerts kept':>12} {'% removed':>10}"
+        # Threshold sweep — full per-detector breakdown at each tau
+        _log_threshold_sweep(
+            scores_df, alerts_df, taus=[0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
         )
-        for tau in [0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]:
-            keep = scores_df[scores_df["s_det"] >= tau]
-            n_det = len(keep)
-            n_alerts = alerts_df[alerts_df["detector"].isin(keep["detector"])].shape[0]
-            pct = 100 * (1 - n_alerts / len(alerts_df))
-            print(f"{tau:>10.1f} {n_det:>16} {n_alerts:>12,} {pct:>9.1f}%")
 
         print(f"\nLog saved to: {log_path}")
     finally:

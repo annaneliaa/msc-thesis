@@ -2,18 +2,30 @@
 Exploratory Data Analysis for one or more alert scenarios.
 
 Usage:
-    # all scenarios
+    # all scenarios (raw alerts)
     python src/thesis/scripts/run_eda.py --all
 
     # one or more specific scenarios
     python src/thesis/scripts/run_eda.py fox harrison
+
+    # filtered variants — loads artifacts/processed-data/<scenario>/alerts_filtered_<METHOD>.csv
+    python src/thesis/scripts/run_eda.py --all --filtered naive50
+    python src/thesis/scripts/run_eda.py --all --filtered type_stratified
+
+--filtered options:
+    naive50           Random 50/50 undersample of attack vs benign.
+    type_stratified   Caps each attack type at the count of the 2nd most common
+                      attack type, then keeps all benign samples.
+    (bare --filtered) Loads alerts_filtered.csv (legacy detector-score filter).
 
 Output (all under artifacts/experiments/run_eda/run_<ts>/):
     <scenario>/                               -- per-scenario CSVs and plots
     summary/<scenario>_eda_summary.txt        -- per-scenario text summary
     summary/signatures/                       -- unique signature count CSVs
     overview_table.csv                        -- cross-scenario statistics table
-    overview_table.pdf                        -- same table as a figure
+    overview_table.png                        -- same table as a figure
+    label_distribution_table.csv             -- per-scenario label breakdown (count, % of data, % of attacks)
+    label_distribution_table.png             -- same table as a figure
 """
 
 from __future__ import annotations
@@ -219,9 +231,9 @@ def run_scenario(
     scenario: str,
     out_path: Path,
     summary_path: Path,
-    filtered: bool = False,
+    filtered: str | None = None,
 ) -> None:
-    _is_filtered = filtered
+    _is_filtered = filtered is not None
     os.makedirs(out_path, exist_ok=True)
     os.makedirs(summary_path, exist_ok=True)
 
@@ -290,7 +302,7 @@ def run_scenario(
         plt.gcf().text(
             0.99,
             0.01,
-            "data: filtered" if _is_filtered else "data: raw",
+            _data_label(filtered),
             ha="right",
             va="bottom",
             fontsize=7,
@@ -360,7 +372,7 @@ def run_scenario(
         plt.gcf().text(
             0.99,
             0.01,
-            "data: filtered" if _is_filtered else "data: raw",
+            _data_label(filtered),
             ha="right",
             va="bottom",
             fontsize=7,
@@ -406,7 +418,7 @@ def run_scenario(
 
 
 def save_overview_table(
-    all_df: pd.DataFrame, run_dir: Path, filtered: bool = False
+    all_df: pd.DataFrame, run_dir: Path, filtered: str | None = None
 ) -> None:
     scenarios = [s for s in SCENARIOS if s in all_df["scenario"].unique()]
 
@@ -483,16 +495,140 @@ def save_overview_table(
     fig.text(
         0.99,
         0.01,
-        "data: filtered" if filtered else "data: raw",
+        _data_label(filtered),
         ha="right",
         va="bottom",
         fontsize=7,
         color="gray",
         transform=fig.transFigure,
     )
-    fig.savefig(run_dir / "overview_table.pdf", dpi=150, bbox_inches="tight")
+    fig.savefig(run_dir / "overview_table.png", dpi=150, bbox_inches="tight")
     plt.close(fig)
-    print(f"  overview_table.pdf → {run_dir / 'overview_table.pdf'}")
+    print(f"  overview_table.png → {run_dir / 'overview_table.png'}")
+
+
+def _data_label(filtered: str | None) -> str:
+    if filtered is None:
+        return "data: raw"
+    return f"data: filtered ({filtered})" if filtered else "data: filtered"
+
+
+def save_label_distribution_table(
+    all_df: pd.DataFrame, run_dir: Path, filtered: str | None = None
+) -> None:
+    """
+    Plot a table showing per-scenario breakdown of each time_label:
+    count, % of total data, and % of attacks (attack rows only).
+    """
+    scenarios = [s for s in SCENARIOS if s in all_df["scenario"].unique()]
+
+    col_labels = ["Scenario", "Label", "Count", "% of data", "% of attacks"]
+    cell_text = []
+    cell_colors = []
+    sc_bg = ["#EEF3FF", "#FFF8EE"]
+
+    csv_rows = []
+
+    for i, sc in enumerate(scenarios):
+        sc_df = all_df[all_df["scenario"] == sc]
+        n_total = len(sc_df)
+        label_counts = sc_df["time_label"].value_counts()
+        n_attacks = int(label_counts[label_counts.index != "false_positive"].sum())
+        fp_count = int(label_counts.get("false_positive", 0))
+
+        attack_labels = [
+            (lbl, int(cnt))
+            for lbl, cnt in label_counts.items()
+            if lbl != "false_positive"
+        ]
+
+        bg = sc_bg[i % 2]
+        first = True
+        for lbl, cnt in attack_labels:
+            cell_text.append(
+                [
+                    sc if first else "",
+                    lbl,
+                    f"{cnt:,}",
+                    f"{100 * cnt / n_total:.1f}%",
+                    f"{100 * cnt / n_attacks:.1f}%" if n_attacks > 0 else "—",
+                ]
+            )
+            cell_colors.append([bg] * 5)
+            csv_rows.append(
+                {
+                    "scenario": sc,
+                    "label": lbl,
+                    "count": cnt,
+                    "pct_of_data": round(100 * cnt / n_total, 3),
+                    "pct_of_attacks": round(100 * cnt / n_attacks, 3)
+                    if n_attacks
+                    else None,
+                }
+            )
+            first = False
+
+        cell_text.append(
+            [
+                sc if first else "",
+                "false_positive",
+                f"{fp_count:,}",
+                f"{100 * fp_count / n_total:.1f}%",
+                "—",
+            ]
+        )
+        cell_colors.append([bg] * 5)
+        csv_rows.append(
+            {
+                "scenario": sc,
+                "label": "false_positive",
+                "count": fp_count,
+                "pct_of_data": round(100 * fp_count / n_total, 3),
+                "pct_of_attacks": None,
+            }
+        )
+
+    pd.DataFrame(csv_rows).to_csv(run_dir / "label_distribution_table.csv", index=False)
+    print(
+        f"  label_distribution_table.csv → {run_dir / 'label_distribution_table.csv'}"
+    )
+
+    n_rows = len(cell_text)
+    fig_height = max(5, 0.35 * (n_rows + 2))
+    fig, ax = plt.subplots(figsize=(11, fig_height))
+    ax.axis("off")
+
+    tbl = ax.table(
+        cellText=cell_text,
+        colLabels=col_labels,
+        cellColours=cell_colors,
+        loc="center",
+        cellLoc="center",
+    )
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(9)
+    tbl.scale(1.0, 1.4)
+
+    for j in range(len(col_labels)):
+        tbl[0, j].set_facecolor("#2D2D2D")
+        tbl[0, j].set_text_props(fontweight="bold", color="white")
+
+    ax.set_title("Alert label distribution per scenario", fontsize=12, pad=10)
+    plt.tight_layout()
+    fig.text(
+        0.99,
+        0.01,
+        _data_label(filtered),
+        ha="right",
+        va="bottom",
+        fontsize=7,
+        color="gray",
+        transform=fig.transFigure,
+    )
+    out = run_dir / "label_distribution_table.png"
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  label_distribution_table.png → {out}")
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -514,8 +650,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument(
         "--filtered",
-        action="store_true",
-        help="Use detector-filtered alerts (alerts_filtered.csv) instead of raw alerts.",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="METHOD",
+        help=(
+            "Load a pre-processed variant instead of raw alerts. "
+            "Pass a method name to load alerts_filtered_<METHOD>.csv "
+            "(e.g. --filtered naive50), or bare --filtered for alerts_filtered.csv."
+        ),
     )
     return p.parse_args(argv)
 
@@ -540,11 +683,18 @@ def main(argv: list[str] | None = None) -> None:
     run_dir = EXPERIMENTS_DIR / f"run_{run_ts}"
     summary_path = run_dir / "summary"
 
+    filtered_method = (
+        args.filtered
+    )  # None = raw, "" = alerts_filtered.csv, "naive50" = alerts_filtered_naive50.csv
+    suffix = f"_{filtered_method}" if filtered_method else ""
+    filtered_filename = f"alerts_filtered{suffix}.csv"
+
     print(f"Loading alerts for: {', '.join(scenarios)}")
-    if args.filtered:
+    if filtered_method is not None:
+        print(f"  Source: artifacts/processed-data/<scenario>/{filtered_filename}")
         frames = []
         for sc in scenarios:
-            path = _REPO / "artifacts" / "processed-data" / sc / "alerts_filtered.csv"
+            path = _REPO / "artifacts" / "processed-data" / sc / filtered_filename
             df = pd.read_csv(path, dtype=str)
             df["time"] = pd.to_numeric(df["time"], errors="coerce")
             df["timestamp"] = pd.to_datetime(df["time"], unit="s", utc=True)
@@ -565,11 +715,14 @@ def main(argv: list[str] | None = None) -> None:
             scenario,
             run_dir / scenario,
             summary_path,
-            filtered=args.filtered,
+            filtered=filtered_method,
         )
 
     print("\nComputing dataset overview table...")
-    save_overview_table(all_df, run_dir, filtered=args.filtered)
+    save_overview_table(all_df, run_dir, filtered=filtered_method)
+
+    print("\nComputing label distribution table...")
+    save_label_distribution_table(all_df, run_dir, filtered=filtered_method)
 
     print(f"\nAll output saved to: {run_dir.resolve()}")
 

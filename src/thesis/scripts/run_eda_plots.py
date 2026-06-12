@@ -7,7 +7,7 @@ transaction data (produced by run_eda.py) to add transaction volume plots and
 extend the scenario overview table with per-transaction statistics.
 
 Usage:
-    # all scenarios (alert plots only)
+    # all scenarios (alert plots only, raw data)
     python src/thesis/scripts/run_eda_plots.py --all
 
     # with transaction volume plots (run run_eda.py first)
@@ -16,17 +16,27 @@ Usage:
     # one or more specific scenarios
     python src/thesis/scripts/run_eda_plots.py fox harrison
 
+    # filtered variants — loads artifacts/processed-data/<scenario>/alerts_filtered_<METHOD>.csv
+    python src/thesis/scripts/run_eda_plots.py --all --filtered naive50
+    python src/thesis/scripts/run_eda_plots.py --all --filtered type_stratified
+
+--filtered options:
+    naive50           Random 50/50 undersample of attack vs benign.
+    type_stratified   Caps each attack type at the count of the 2nd most common
+                      attack type, then keeps all benign samples.
+    (bare --filtered) Loads alerts_filtered.csv (legacy detector-score filter).
+
 Output (all saved to <out-dir>/):
-    volume_concatenated.pdf       -- alert volume over concatenated timelines
-    volume_attack_zoom.pdf        -- alert volume zoomed into each attack phase
-    class_balance.pdf             -- benign/attack counts + percentages per scenario
-    attack_type_heatmap.pdf       -- attack type × scenario count heatmap
-    top_alert_names.pdf           -- top-20 most frequent IDS signatures
-    inter_arrival_cdf.pdf         -- inter-arrival time CDF per scenario
-    group_size_dist.pdf           -- alert group size distribution (2s window)
-    scenario_overview.pdf         -- per-scenario summary table (+ tx stats if available)
-    tx_volume_concatenated.pdf    -- transaction volume over concatenated timelines [optional]
-    tx_volume_attack_zoom.pdf     -- transaction volume zoomed into attack phases  [optional]
+    volume_concatenated.png       -- alert volume over concatenated timelines
+    volume_attack_zoom.png        -- alert volume zoomed into each attack phase
+    class_balance.png             -- benign/attack counts + percentages per scenario
+    attack_type_heatmap.png       -- attack type × scenario count heatmap
+    top_alert_names.png           -- top-20 most frequent IDS signatures
+    inter_arrival_cdf.png         -- inter-arrival time CDF per scenario
+    group_size_dist.png           -- alert group size distribution (2s window)
+    scenario_overview.png         -- per-scenario summary table (+ tx stats if available)
+    tx_volume_concatenated.png    -- transaction volume over concatenated timelines [optional]
+    tx_volume_attack_zoom.png     -- transaction volume zoomed into attack phases  [optional]
 """
 
 from __future__ import annotations
@@ -110,9 +120,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument(
         "--fmt",
-        default="pdf",
+        default="png",
         choices=["pdf", "png", "svg"],
-        help="Output file format (default: pdf).",
+        help="Output file format (default: png).",
     )
     p.add_argument(
         "--top-k",
@@ -123,8 +133,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument(
         "--filtered",
-        action="store_true",
-        help="Use detector-filtered alerts (alerts_filtered.csv) instead of raw alerts.",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="METHOD",
+        help=(
+            "Load a pre-processed variant instead of raw alerts. "
+            "Pass a method name to load alerts_filtered_<METHOD>.csv "
+            "(e.g. --filtered naive50), or bare --filtered for alerts_filtered.csv."
+        ),
     )
     return p.parse_args(argv)
 
@@ -159,11 +176,18 @@ def main(argv: list[str] | None = None) -> None:
         )
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    filtered_method = (
+        args.filtered
+    )  # None = raw, "" = alerts_filtered.csv, "naive50" = alerts_filtered_naive50.csv
+    suffix = f"_{filtered_method}" if filtered_method else ""
+    filtered_filename = f"alerts_filtered{suffix}.csv"
+
     print(f"Loading alerts for: {', '.join(scenarios)}")
-    if args.filtered:
+    if filtered_method is not None:
+        print(f"  Source: artifacts/processed-data/<scenario>/{filtered_filename}")
         frames = []
         for sc in scenarios:
-            path = ROOT / "artifacts" / "processed-data" / sc / "alerts_filtered.csv"
+            path = ROOT / "artifacts" / "processed-data" / sc / filtered_filename
             frame = pd.read_csv(path, dtype=str)
             frame["time"] = pd.to_numeric(frame["time"], errors="coerce")
             frame["timestamp"] = pd.to_datetime(frame["time"], unit="s", utc=True)
@@ -188,7 +212,11 @@ def main(argv: list[str] | None = None) -> None:
         tx_dir = (
             ROOT
             / "artifacts"
-            / ("transactions_filtered" if args.filtered else "transactions")
+            / (
+                "transactions_filtered"
+                if filtered_method is not None
+                else "transactions"
+            )
         )
 
     tx_df = None
@@ -269,7 +297,12 @@ def main(argv: list[str] | None = None) -> None:
             ),
         ]
 
-    data_label = "data: filtered" if args.filtered else "data: raw"
+    if filtered_method is None:
+        data_label = "data: raw"
+    elif filtered_method:
+        data_label = f"data: filtered ({filtered_method})"
+    else:
+        data_label = "data: filtered"
 
     for label, name, fn in plots:
         print(f"  Plotting {label}...", end=" ", flush=True)
