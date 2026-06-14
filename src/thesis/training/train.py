@@ -119,10 +119,10 @@ def train_eval_holdout(
             sv = shap.Explainer(model.predict_proba, bg)(x_explain)
             vals = sv.values[:, :, 1] if sv.values.ndim == 3 else sv.values
 
-        mean_abs = np.abs(vals).mean(axis=0)
+        mean_signed = vals.mean(axis=0)
         pairs = sorted(
-            zip(feature_names, mean_abs),
-            key=lambda x: x[1],
+            zip(feature_names, mean_signed),
+            key=lambda x: abs(x[1]),
             reverse=True,
         )
         shap_importances = {name: float(imp) for name, imp in pairs[:top_n_importances]}

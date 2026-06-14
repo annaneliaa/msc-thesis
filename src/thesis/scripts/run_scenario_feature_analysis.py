@@ -1,41 +1,37 @@
 """
-Per-scenario feature analysis for run_compare experiments.
+Per-scenario feature analysis — primarily used as a module by run_model_comparison.py.
 
-Loads baseline-vs-symbolic compare results (fixed-window grouping) for one or
-more scenarios from a run_compare run and produces:
+All analysis and plotting functions in this file are imported and called by
+run_model_comparison.py for its Phase 3 (per-model feature analysis).  The
+CLI entry point below is kept for manual inspection of a standalone run_compare
+result, but the script's primary role is as a utility module.
 
-  - Feature pipeline funnel: n_mined → n_after_filter → n_final → n_nonzero_coeff
-  - Top-K feature Jaccard overlap heatmap across scenarios
-  - FP analysis: baseline vs symbolic FP / precision / recall / F1 per scenario
-  - Mining type composition of learned features (itemset / sequence / OR)
-  - Source label breakdown (attack-mined vs benign-mined survivors)
-  - Generalization gap (train AUC vs test AUC)
-  - Coefficient vs permutation importance agreement
-  - Signed coefficients diverging bar (top-k by |coeff|, coloured by sign)
-  - Sign-split breakdown (mining type & source label split by coeff sign)
+Key public API used by run_model_comparison.py:
+    best_importance_key(sym)         → selects coeff / SHAP / perm automatically
+    feature_funnel(sym)              → pipeline stage counts from a symbolic result dict
+    top_feature_names(sym, k)        → top-k feature names by best importance key
+    print_funnel_table(...)          → console table of pipeline funnel
+    print_fp_table(...)              → console table of FP / precision / recall
+    print_overlap_table(...)         → console table of Jaccard overlap
+    plot_funnel(...)                 → feature_funnel.png
+    plot_overlap_heatmap(...)        → feature_overlap.png
+    plot_fp_analysis(...)            → fp_analysis.png
+    plot_type_breakdown(...)         → feature_type_breakdown.png
+    plot_coeff_vs_perm(...)          → coeff_vs_perm_agreement.png
+    plot_signed_coefficients(...)    → signed_coefficients.png  [logreg only]
+    plot_sign_split_breakdown(...)   → sign_split_breakdown.png [logreg only]
 
-Output (under artifacts/experiments/run_scenario_features/scenario_features_<ts>/):
-    analysis_<ts>.txt
-    feature_funnel.png
-    feature_overlap.png
-    fp_analysis.png
-    feature_type_breakdown.png
-    coeff_vs_perm_agreement.png
-    signed_coefficients.png
-    sign_split_breakdown.png
-
-Usage:
-    # all scenarios from the latest run
+Standalone CLI (for manual inspection of a run_compare run):
     python src/thesis/scripts/run_scenario_feature_analysis.py --all
-
-    # all scenarios from a specific run (name or prefix)
     python src/thesis/scripts/run_scenario_feature_analysis.py --all --run compare_20260603_185353
-
-    # specific scenarios
     python src/thesis/scripts/run_scenario_feature_analysis.py fox harrison
-
-    # list available runs
     python src/thesis/scripts/run_scenario_feature_analysis.py --list-runs
+
+Output (standalone only, under artifacts/experiments/run_scenario_features/scenario_features_<ts>/):
+    analysis_<ts>.txt
+    feature_funnel.png    feature_overlap.png    fp_analysis.png
+    feature_type_breakdown.png    coeff_vs_perm_agreement.png
+    signed_coefficients.png    sign_split_breakdown.png
 """
 
 from __future__ import annotations
@@ -51,6 +47,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.patches import Patch
+
 
 _HERE = Path(__file__).resolve()
 _REPO = next(p for p in _HERE.parents if (p / "pyproject.toml").exists())
@@ -139,6 +137,26 @@ def _i(v: Any) -> int:
     return int(v) if v is not None else 0
 
 
+def best_importance_key(sym: dict) -> str:
+    """Return the most informative importance key for this model result.
+
+    Prefers by_coefficient (logreg) → by_shap → by_permutation.
+    """
+    imp = sym.get("metrics", {}).get("top_feature_importances", {})
+
+    def _has_nonzero(key: str) -> bool:
+        d = imp.get(key, {})
+        return any(
+            (v["importance"] if isinstance(v, dict) else v) != 0 for v in d.values()
+        )
+
+    if _has_nonzero("by_coefficient"):
+        return "by_coefficient"
+    if _has_nonzero("by_shap"):
+        return "by_shap"
+    return "by_permutation"
+
+
 def feature_funnel(sym: dict) -> dict:
     m = sym.get("mining", {})
     met = sym.get("metrics", {})
@@ -147,6 +165,10 @@ def feature_funnel(sym: dict) -> dict:
 
     n_nonzero_coeff = sum(1 for v in top_coeff.values() if v["importance"] != 0)
     n_nonzero_perm = sum(1 for v in top_perm.values() if v["importance"] > 0)
+
+    learned_key = best_importance_key(sym)
+    top_learned = met.get("top_feature_importances", {}).get(learned_key, {})
+    n_learned = sum(1 for v in top_learned.values() if v["importance"] != 0)
 
     n_mined = (
         _i(m.get("n_itemsets_mined"))
@@ -168,12 +190,16 @@ def feature_funnel(sym: dict) -> dict:
         "n_final": _i(m.get("n_features_final")),
         "n_nonzero_coeff": n_nonzero_coeff,
         "n_nonzero_perm": n_nonzero_perm,
+        "n_learned": n_learned,
+        "learned_key": learned_key,
         "n_symbolic_used": _i(met.get("n_symbolic_features_used")),
         "filter_config": m.get("filter_config"),
     }
 
 
-def top_feature_names(sym: dict, k: int, by: str = "by_coefficient") -> set[str]:
+def top_feature_names(sym: dict, k: int, by: str = "auto") -> set[str]:
+    if by == "auto":
+        by = best_importance_key(sym)
     top = sym.get("metrics", {}).get("top_feature_importances", {}).get(by, {})
     ranked = sorted(top.items(), key=lambda kv: abs(kv[1]["importance"]), reverse=True)
     nonzero = [(name, info) for name, info in ranked if info["importance"] != 0]
@@ -182,14 +208,16 @@ def top_feature_names(sym: dict, k: int, by: str = "by_coefficient") -> set[str]
 
 def jaccard(a: set, b: set) -> float:
     if not a and not b:
-        return 1.0
+        return float("nan")
     u = a | b
     return len(a & b) / len(u) if u else 0.0
 
 
 def mining_type_breakdown(
-    sym: dict, by: str = "by_coefficient", sign: str = "positive"
+    sym: dict, by: str = "auto", sign: str = "positive"
 ) -> dict[str, int]:
+    if by == "auto":
+        by = best_importance_key(sym)
     top = sym.get("metrics", {}).get("top_feature_importances", {}).get(by, {})
     counts: dict[str, int] = {}
     for info_dict in top.values():
@@ -206,8 +234,10 @@ def mining_type_breakdown(
 
 
 def source_label_breakdown(
-    sym: dict, by: str = "by_coefficient", sign: str = "positive"
+    sym: dict, by: str = "auto", sign: str = "positive"
 ) -> dict[str, int]:
+    if by == "auto":
+        by = best_importance_key(sym)
     top = sym.get("metrics", {}).get("top_feature_importances", {}).get(by, {})
     counts: dict[str, int] = {}
     for info_dict in top.values():
@@ -234,7 +264,7 @@ def print_funnel_table(scenarios: list[str], funnels: dict[str, dict]) -> None:
         ("n_after_abstraction", "After abstraction"),
         ("n_after_filter", "After filter (+OR)"),
         ("n_final", "Final (dedup)"),
-        ("n_nonzero_coeff", "Nonzero coeff"),
+        ("n_learned", "Learned"),
         ("n_nonzero_perm", "Nonzero perm"),
     ]
     col_w = 16
@@ -345,7 +375,7 @@ def print_type_breakdown(scenarios: list[str], sym_data: dict[str, dict]) -> Non
 
     col_w = 10
     print("═" * (26 + col_w * len(scenarios)))
-    print("  NONZERO-COEFF FEATURE TYPE BREAKDOWN")
+    print("  LEARNED FEATURE TYPE BREAKDOWN (auto: coeff → SHAP → perm)")
     print("─" * (26 + col_w * len(scenarios)))
     header = f"  {'Type':<24}" + "".join(f"{s:>{col_w}}" for s in scenarios)
     print(header)
@@ -378,7 +408,9 @@ def print_overlap_table(
 ) -> None:
     feature_sets = {s: top_feature_names(sym_data.get(s, {}), k) for s in scenarios}
     short = [s[:6] for s in scenarios]
-    print(f"  TOP-{k} FEATURE JACCARD OVERLAP (by_coefficient, nonzero only)")
+    print(
+        f"  TOP-{k} FEATURE JACCARD OVERLAP (auto: coeff → SHAP → perm, nonzero only)"
+    )
     print("─" * (10 + 9 * len(scenarios)))
     header = f"  {'':8}" + "".join(f"{lbl:>9}" for lbl in short)
     print(header)
@@ -386,15 +418,18 @@ def print_overlap_table(
         row = f"  {short[i]:<8}"
         for sb in scenarios:
             j = jaccard(feature_sets[sa], feature_sets[sb])
-            row += f"{j:>9.3f}"
+            row += f"{'—':>9}" if j != j else f"{j:>9.3f}"
         print(row)
     print()
 
-    if len(scenarios) > 1:
-        shared = set.intersection(*feature_sets.values())
+    nonempty = [fs for fs in feature_sets.values() if fs]
+    if len(scenarios) > 1 and nonempty:
+        shared = set.intersection(*nonempty)
         print(f"  Shared by ALL scenarios ({len(shared)} features):")
         for f in sorted(shared):
             print(f"    {f}")
+    elif len(scenarios) > 1:
+        print("  Shared by ALL scenarios (0 features): no learned features found")
     print()
 
 
@@ -420,7 +455,7 @@ def plot_funnel(
         ("n_after_abstraction", "After\nabstraction"),
         ("n_after_filter", "After filter\n(+OR pass-through)"),
         ("n_final", "Final\n(dedup)"),
-        ("n_nonzero_coeff", "Learned\n(nonzero coeff)"),
+        ("n_learned", "Learned"),
     ]
     n_stages = len(stages)
     n_sc = len(scenarios)
@@ -485,7 +520,8 @@ def plot_overlap_heatmap(
 
     short = [s[:8] for s in scenarios]
     fig, ax = plt.subplots(figsize=(max(6, n), max(5, n - 1)))
-    im = ax.imshow(matrix, vmin=0, vmax=1, cmap="YlOrRd")
+    matrix_vis = np.where(np.isnan(matrix), 0.0, matrix)
+    im = ax.imshow(matrix_vis, vmin=0, vmax=1, cmap="YlOrRd")
     plt.colorbar(im, ax=ax, label="Jaccard similarity")
     ax.set_xticks(range(n))
     ax.set_yticks(range(n))
@@ -493,16 +529,18 @@ def plot_overlap_heatmap(
     ax.set_yticklabels(short)
     for i in range(n):
         for j in range(n):
+            val = matrix[i, j]
+            txt = "—" if np.isnan(val) else f"{val:.2f}"
             ax.text(
                 j,
                 i,
-                f"{matrix[i, j]:.2f}",
+                txt,
                 ha="center",
                 va="center",
                 fontsize=9,
-                color="black" if matrix[i, j] < 0.7 else "white",
+                color="black" if np.isnan(val) or val < 0.7 else "white",
             )
-    ax.set_title(f"Top-{k} feature Jaccard overlap across scenarios (nonzero coeff)")
+    ax.set_title(f"Top-{k} feature Jaccard overlap across scenarios (auto importance)")
     fig.tight_layout()
     fig.text(
         0.99,
@@ -679,35 +717,47 @@ def plot_coeff_vs_perm(
     out_dir: Path,
     model_name: str = "",
 ) -> None:
-    coeff_sets = {
-        s: top_feature_names(sym_data.get(s, {}), k, "by_coefficient")
+    primary_sets = {
+        s: top_feature_names(sym_data.get(s, {}), k)  # auto: coeff → shap → perm
         for s in scenarios
     }
     perm_sets = {
         s: top_feature_names(sym_data.get(s, {}), k, "by_permutation")
         for s in scenarios
     }
-    agreement = [jaccard(coeff_sets[s], perm_sets[s]) for s in scenarios]
+    agreement = [jaccard(primary_sets[s], perm_sets[s]) for s in scenarios]
+
+    primary_key = (
+        best_importance_key(next(iter(sym_data.values()))) if sym_data else "auto"
+    )
+    primary_label = {
+        "by_coefficient": "coeff",
+        "by_shap": "SHAP",
+        "by_permutation": "perm",
+    }.get(primary_key, primary_key)
 
     fig, ax = plt.subplots(figsize=(max(6, len(scenarios)), 3))
     bars = ax.bar(
         [s[:8] for s in scenarios],
-        agreement,
+        [v if not np.isnan(v) else 0 for v in agreement],
         color=[_color(s) for s in scenarios],
         alpha=0.85,
     )
     for bar, val in zip(bars, agreement):
+        txt = f"{val:.3f}" if not np.isnan(val) else "—"
         ax.text(
             bar.get_x() + bar.get_width() / 2,
             bar.get_height() + 0.01,
-            f"{val:.3f}",
+            txt,
             ha="center",
             va="bottom",
             fontsize=9,
         )
     ax.set_ylim(0, 1.15)
     ax.set_ylabel("Jaccard similarity")
-    ax.set_title(f"Coeff vs permutation importance agreement (top-{k}) per scenario")
+    ax.set_title(
+        f"{primary_label} vs permutation importance agreement (top-{k}) per scenario"
+    )
     ax.axhline(0.5, color="gray", linestyle="--", linewidth=0.8, alpha=0.6)
     ax.grid(axis="y", alpha=0.3)
     plt.xticks(rotation=20, ha="right")
@@ -736,8 +786,6 @@ def plot_signed_coefficients(
     out_dir: Path,
     model_name: str = "",
 ) -> None:
-    from matplotlib.patches import Patch
-
     present = [s for s in scenarios if s in sym_data]
     if not present:
         return

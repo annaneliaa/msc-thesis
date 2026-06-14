@@ -74,6 +74,13 @@ _LABELS = {
     "time_delta_host": "Time-delta (host)",
     "alertbert": "AlertBERT",
 }
+_SHORT_LABELS = {
+    "fixed_window": "FW",
+    "fixed_window_host": "FWH",
+    "time_delta": "TD",
+    "time_delta_host": "TDH",
+    "alertbert": "AB",
+}
 _COLORS = {
     "fixed_window": "#4C72B0",
     "fixed_window_host": "#9EC8E8",
@@ -569,6 +576,825 @@ def plot_purity(data: dict, out_dir: Path, filtered: bool = False) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Phase 4: Feature overlap analysis (absorbed from run_feature_overlap_analysis.py)
+# ---------------------------------------------------------------------------
+
+
+def _fa_i(v: Any) -> int:
+    return int(v) if v is not None else 0
+
+
+def _fa_feature_funnel(sym: dict) -> dict:
+    """Extract mining pipeline stage counts from a full symbolic result dict."""
+    m = sym.get("mining", {})
+    met = sym.get("metrics", {})
+    top_coeff = met.get("top_feature_importances", {}).get("by_coefficient", {})
+    top_perm = met.get("top_feature_importances", {}).get("by_permutation", {})
+    n_mined = (
+        _fa_i(m.get("n_itemsets_mined"))
+        + _fa_i(m.get("n_sequences_mined"))
+        + _fa_i(m.get("n_or_mined"))
+    )
+    n_abs_parts = (
+        _fa_i(m.get("n_itemsets_after_abstraction"))
+        + _fa_i(m.get("n_sequences_after_abstraction"))
+        + _fa_i(m.get("n_or_after_abstraction"))
+    )
+    n_after_abstraction = n_abs_parts if n_abs_parts > 0 else n_mined
+    return {
+        "n_mined": n_mined,
+        "n_after_abstraction": n_after_abstraction,
+        "n_after_filter": _fa_i(m.get("n_candidate_features")),
+        "n_final": _fa_i(m.get("n_features_final")),
+        "n_nonzero_coeff": sum(1 for v in top_coeff.values() if v["importance"] != 0),
+        "n_nonzero_perm": sum(1 for v in top_perm.values() if v["importance"] > 0),
+        "n_symbolic_used": _fa_i(met.get("n_symbolic_features_used")),
+    }
+
+
+def _fa_top_feature_names(sym: dict, k: int, by: str = "by_coefficient") -> set[str]:
+    top = sym.get("metrics", {}).get("top_feature_importances", {}).get(by, {})
+    ranked = sorted(top.items(), key=lambda kv: abs(kv[1]["importance"]), reverse=True)
+    return {name for name, info in ranked[:k] if info["importance"] != 0}
+
+
+def _fa_jaccard(a: set, b: set) -> float:
+    if not a and not b:
+        return float("nan")
+    u = a | b
+    return len(a & b) / len(u) if u else 0.0
+
+
+def _fa_mining_type_breakdown(
+    sym: dict, by: str = "by_coefficient", sign: str = "positive"
+) -> dict[str, int]:
+    top = sym.get("metrics", {}).get("top_feature_importances", {}).get(by, {})
+    counts: dict[str, int] = {}
+    for info_dict in top.values():
+        imp = info_dict["importance"]
+        if imp == 0:
+            continue
+        if sign == "positive" and imp < 0:
+            continue
+        if sign == "negative" and imp > 0:
+            continue
+        mtype = info_dict.get("feature_info", {}).get("mining_type", "base")
+        counts[mtype] = counts.get(mtype, 0) + 1
+    return counts
+
+
+def _fa_source_label_breakdown(
+    sym: dict, by: str = "by_coefficient", sign: str = "positive"
+) -> dict[str, int]:
+    top = sym.get("metrics", {}).get("top_feature_importances", {}).get(by, {})
+    counts: dict[str, int] = {}
+    for info_dict in top.values():
+        imp = info_dict["importance"]
+        if imp == 0:
+            continue
+        if sign == "positive" and imp < 0:
+            continue
+        if sign == "negative" and imp > 0:
+            continue
+        src = info_dict.get("feature_info", {}).get("source_label", "base")
+        counts[src] = counts.get(src, 0) + 1
+    return counts
+
+
+def _fa_print_funnel_table(methods: list[str], funnels: dict[str, dict]) -> None:
+    stages = [
+        ("n_mined", "Mined total"),
+        ("n_after_abstraction", "After abstraction"),
+        ("n_after_filter", "After filter (+OR)"),
+        ("n_final", "Final (dedup)"),
+        ("n_nonzero_coeff", "Nonzero coeff"),
+        ("n_nonzero_perm", "Nonzero perm"),
+    ]
+    col_w = 14
+    w = 26 + col_w * len(methods)
+    print("\n" + "═" * w)
+    print("  FEATURE PIPELINE FUNNEL")
+    print("─" * w)
+    print(f"  {'Stage':<24}" + "".join(f"{_SHORT_LABELS[m]:>{col_w}}" for m in methods))
+    print("─" * w)
+    for key, label in stages:
+        print(
+            f"  {label:<24}"
+            + "".join(f"{funnels[m].get(key, 0):>{col_w},}" for m in methods)
+        )
+    print("═" * w)
+    print(f"  Keys: {', '.join(f'{_SHORT_LABELS[m]}={m}' for m in methods)}\n")
+
+
+def _fa_print_fp_table(
+    methods: list[str], compare: dict, sym_data: dict[str, dict]
+) -> None:
+    col_w = 13
+    w = 26 + col_w * len(methods)
+    print("═" * w)
+    print("  FALSE POSITIVE ANALYSIS")
+    print("─" * w)
+    print(
+        f"  {'Metric':<24}" + "".join(f"{_SHORT_LABELS[m]:>{col_w}}" for m in methods)
+    )
+    print("─" * w)
+    for label, source, key in [
+        ("Baseline FP", "baseline", "fp"),
+        ("Symbolic FP", "symbolic", "fp"),
+        ("Baseline precision", "baseline", "precision"),
+        ("Symbolic precision", "symbolic", "precision"),
+        ("Baseline recall", "baseline", "recall"),
+        ("Symbolic recall", "symbolic", "recall"),
+        ("Baseline F1", "baseline", "f1"),
+        ("Symbolic F1", "symbolic", "f1"),
+    ]:
+        vals = []
+        for m in methods:
+            met = compare.get(m, {}).get(source, {}).get("metrics", {})
+            v = met.get(key, float("nan"))
+            if key in ("fp", "tp", "tn", "fn"):
+                vals.append(f"{int(v):>{col_w},}" if v == v else f"{'?':>{col_w}}")
+            else:
+                vals.append(f"{v:>{col_w}.3f}" if v == v else f"{'?':>{col_w}}")
+        print(f"  {label:<24}" + "".join(vals))
+    print("─" * w)
+    row_delta = f"  {'FP delta (sym-base)':<24}"
+    row_pct = f"  {'FP reduction %':<24}"
+    for m in methods:
+        base_fp = (
+            compare.get(m, {})
+            .get("baseline", {})
+            .get("metrics", {})
+            .get("fp", float("nan"))
+        )
+        sym_fp = (
+            compare.get(m, {})
+            .get("symbolic", {})
+            .get("metrics", {})
+            .get("fp", float("nan"))
+        )
+        if base_fp == base_fp and sym_fp == sym_fp:
+            delta = int(sym_fp) - int(base_fp)
+            pct = (base_fp - sym_fp) / base_fp * 100 if base_fp > 0 else 0.0
+            row_delta += f"{delta:>+{col_w},}"
+            row_pct += f"{pct:>{col_w}.1f}%"
+        else:
+            row_delta += f"{'?':>{col_w}}"
+            row_pct += f"{'?':>{col_w}}"
+    print(row_delta)
+    print(row_pct)
+    print("═" * w + "\n")
+
+
+def _fa_print_generalization_table(
+    methods: list[str], sym_data: dict[str, dict]
+) -> None:
+    col_w = 13
+    w = 26 + col_w * len(methods)
+    print("═" * w)
+    print("  GENERALIZATION GAP (train AUC - test AUC)")
+    print("─" * w)
+    print(
+        f"  {'Metric':<24}" + "".join(f"{_SHORT_LABELS[m]:>{col_w}}" for m in methods)
+    )
+    print("─" * w)
+    for label, key in [
+        ("Test AUC", "auc"),
+        ("Train AUC", "train_auc"),
+        ("Gap (train-test)", "performance_gap_train_vs_test"),
+    ]:
+        row = f"  {label:<24}"
+        for m in methods:
+            v = sym_data.get(m, {}).get("metrics", {}).get(key, float("nan"))
+            row += f"{v:>{col_w}.4f}" if v == v else f"{'?':>{col_w}}"
+        print(row)
+    print("─" * w)
+    row = f"  {'Feature sparsity':<24}"
+    for m in methods:
+        v = sym_data.get(m, {}).get("metrics", {}).get("feature_sparsity", float("nan"))
+        row += f"{v:>{col_w}.4f}" if v == v else f"{'?':>{col_w}}"
+    print(row)
+    print("═" * w + "\n")
+
+
+def _fa_print_type_breakdown(methods: list[str], sym_data: dict[str, dict]) -> None:
+    col_w = 10
+    w = 26 + col_w * len(methods)
+    all_types: set[str] = set()
+    breakdowns: dict[str, dict] = {}
+    for m in methods:
+        bd = _fa_mining_type_breakdown(sym_data.get(m, {}))
+        breakdowns[m] = bd
+        all_types |= set(bd.keys())
+    print("═" * w)
+    print("  NONZERO-COEFF FEATURE TYPE BREAKDOWN")
+    print("─" * w)
+    print(f"  {'Type':<24}" + "".join(f"{_SHORT_LABELS[m]:>{col_w}}" for m in methods))
+    print("─" * w)
+    for mtype in sorted(all_types):
+        print(
+            f"  {mtype:<24}"
+            + "".join(f"{breakdowns[m].get(mtype, 0):>{col_w},}" for m in methods)
+        )
+    all_src: set[str] = set()
+    src_breakdowns: dict[str, dict] = {}
+    for m in methods:
+        bd = _fa_source_label_breakdown(sym_data.get(m, {}))
+        src_breakdowns[m] = bd
+        all_src |= set(bd.keys())
+    print("─" * w)
+    print("  SOURCE LABEL BREAKDOWN")
+    print("─" * w)
+    for src in sorted(all_src):
+        print(
+            f"  {src:<24}"
+            + "".join(f"{src_breakdowns[m].get(src, 0):>{col_w},}" for m in methods)
+        )
+    print("═" * w + "\n")
+
+
+def _fa_print_overlap_table(
+    methods: list[str], sym_data: dict[str, dict], k: int
+) -> None:
+    feature_sets = {m: _fa_top_feature_names(sym_data.get(m, {}), k) for m in methods}
+    print(f"  TOP-{k} FEATURE JACCARD OVERLAP (by_coefficient, nonzero only)")
+    print("─" * (10 + 9 * len(methods)))
+    print(f"  {'':6}" + "".join(f"{_SHORT_LABELS[m]:>9}" for m in methods))
+    for ma in methods:
+        row = f"  {_SHORT_LABELS[ma]:<6}"
+        for mb in methods:
+            j = _fa_jaccard(feature_sets[ma], feature_sets[mb])
+            row += f"{j:>9.3f}" if not (j != j) else f"{'—':>9}"
+        print(row)
+    print()
+    nonempty = [s for s in feature_sets.values() if s]
+    if len(methods) > 1 and nonempty:
+        shared = set.intersection(*nonempty)
+        print(f"  Shared by ALL methods ({len(shared)} features):")
+        for f in sorted(shared):
+            print(f"    {f}")
+    print()
+
+
+def _fa_plot_funnel(
+    methods: list[str], funnels: dict[str, dict], out_dir: Path, filtered: bool = False
+) -> None:
+    stages = [
+        ("n_mined", "Mined"),
+        ("n_after_abstraction", "After\nabstraction"),
+        ("n_after_filter", "After filter\n(+OR pass-through)"),
+        ("n_final", "Final\n(dedup)"),
+        ("n_nonzero_coeff", "Learned\n(nonzero coeff)"),
+    ]
+    x = np.arange(len(stages))
+    w = 0.15
+    offsets = [w * (i - (len(methods) - 1) / 2) for i in range(len(methods))]
+    fig, ax = plt.subplots(figsize=(10, 5))
+    for i, method in enumerate(methods):
+        vals = [funnels[method].get(key, 0) for key, _ in stages]
+        bars = ax.bar(
+            x + offsets[i], vals, w, label=_LABELS[method], color=_COLORS[method]
+        )
+        for bar, val in zip(bars, vals):
+            if val > 0:
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2,
+                    bar.get_height() * 1.02,
+                    f"{val:,}",
+                    ha="center",
+                    va="bottom",
+                    fontsize=6,
+                    rotation=45,
+                )
+    ax.set_yscale("log")
+    ax.set_xticks(x)
+    ax.set_xticklabels([label for _, label in stages])
+    ax.set_ylabel("Feature count (log scale)")
+    ax.set_title("Feature pipeline funnel by grouping method")
+    ax.legend(fontsize=8, loc="upper right")
+    ax.grid(axis="y", alpha=0.3)
+    fig.tight_layout()
+    fig.text(
+        0.99,
+        0.01,
+        "data: filtered" if filtered else "data: raw",
+        ha="right",
+        va="bottom",
+        fontsize=7,
+        color="gray",
+        transform=fig.transFigure,
+    )
+    out = out_dir / "feature_funnel.png"
+    fig.savefig(out, dpi=150)
+    plt.close(fig)
+    print(f"  Saved → {out}")
+
+
+def _fa_plot_overlap_heatmap(
+    methods: list[str],
+    sym_data: dict[str, dict],
+    k: int,
+    out_dir: Path,
+    filtered: bool = False,
+) -> None:
+    feature_sets = {m: _fa_top_feature_names(sym_data.get(m, {}), k) for m in methods}
+    n = len(methods)
+    matrix = np.zeros((n, n))
+    matrix_vis = np.zeros((n, n))
+    for i, ma in enumerate(methods):
+        for j, mb in enumerate(methods):
+            v = _fa_jaccard(feature_sets[ma], feature_sets[mb])
+            matrix[i, j] = v
+            matrix_vis[i, j] = 0.0 if (v != v) else v
+
+    fig, ax = plt.subplots(figsize=(6, 5))
+    im = ax.imshow(matrix_vis, vmin=0, vmax=1, cmap="YlOrRd")
+    plt.colorbar(im, ax=ax, label="Jaccard similarity")
+    labels = [_SHORT_LABELS[m] for m in methods]
+    ax.set_xticks(range(n))
+    ax.set_yticks(range(n))
+    ax.set_xticklabels(labels)
+    ax.set_yticklabels(labels)
+    for i in range(n):
+        for j in range(n):
+            v = matrix[i, j]
+            txt = "—" if (v != v) else f"{v:.2f}"
+            ax.text(
+                j,
+                i,
+                txt,
+                ha="center",
+                va="center",
+                fontsize=10,
+                color="black" if matrix_vis[i, j] < 0.7 else "white",
+            )
+    ax.set_title(f"Top-{k} feature Jaccard overlap (nonzero coeff)")
+    fig.tight_layout()
+    fig.text(
+        0.99,
+        0.01,
+        "data: filtered" if filtered else "data: raw",
+        ha="right",
+        va="bottom",
+        fontsize=7,
+        color="gray",
+        transform=fig.transFigure,
+    )
+    out = out_dir / "feature_overlap.png"
+    fig.savefig(out, dpi=150)
+    plt.close(fig)
+    print(f"  Saved → {out}")
+
+
+def _fa_plot_fp_analysis(
+    methods: list[str], compare: dict, out_dir: Path, filtered: bool = False
+) -> None:
+    metrics_to_plot = [
+        ("fp", "False Positives", True),
+        ("precision", "Precision", False),
+        ("recall", "Recall", False),
+        ("f1", "F1", False),
+    ]
+    fig, axes = plt.subplots(2, 2, figsize=(11, 7))
+    axes = axes.flatten()
+    x = np.arange(len(methods))
+    w = 0.35
+    for ax, (key, title, is_count) in zip(axes, metrics_to_plot):
+        base_vals = [
+            compare.get(m, {})
+            .get("baseline", {})
+            .get("metrics", {})
+            .get(key, float("nan"))
+            for m in methods
+        ]
+        sym_vals = [
+            compare.get(m, {})
+            .get("symbolic", {})
+            .get("metrics", {})
+            .get(key, float("nan"))
+            for m in methods
+        ]
+        b1 = ax.bar(
+            x - w / 2, base_vals, w, label="Baseline", color="#5B9BD5", alpha=0.85
+        )
+        b2 = ax.bar(
+            x + w / 2, sym_vals, w, label="Symbolic", color="#ED7D31", alpha=0.85
+        )
+        for bar, val in zip(list(b1) + list(b2), base_vals + sym_vals):
+            if val == val and val > 0:
+                fmt = f"{int(val)}" if is_count else f"{val:.3f}"
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2,
+                    bar.get_height() * 1.02,
+                    fmt,
+                    ha="center",
+                    va="bottom",
+                    fontsize=7,
+                )
+        ax.set_title(title)
+        ax.set_xticks(x)
+        ax.set_xticklabels([_SHORT_LABELS[m] for m in methods])
+        if not is_count:
+            ax.set_ylim(0, 1.15)
+        ax.set_ylabel(title)
+        ax.legend(fontsize=8)
+        ax.grid(axis="y", alpha=0.3)
+    fig.suptitle(
+        f"Baseline vs Symbolic detection metrics — {compare.get('scenario', '')}"
+    )
+    fig.tight_layout()
+    fig.text(
+        0.99,
+        0.01,
+        "data: filtered" if filtered else "data: raw",
+        ha="right",
+        va="bottom",
+        fontsize=7,
+        color="gray",
+        transform=fig.transFigure,
+    )
+    out = out_dir / "fp_analysis.png"
+    fig.savefig(out, dpi=150)
+    plt.close(fig)
+    print(f"  Saved → {out}")
+
+
+def _fa_plot_type_breakdown(
+    methods: list[str], sym_data: dict[str, dict], out_dir: Path, filtered: bool = False
+) -> None:
+    all_types_set: set[str] = set()
+    breakdowns: dict[str, dict] = {}
+    for m in methods:
+        bd = _fa_mining_type_breakdown(sym_data.get(m, {}))
+        breakdowns[m] = bd
+        all_types_set |= set(bd.keys())
+    type_colors = {
+        "itemset": "#4C72B0",
+        "item_sequence": "#55A868",
+        "or_itemset": "#DD8452",
+        "base": "#8C8C8C",
+    }
+    fig, ax = plt.subplots(figsize=(8, 4))
+    x = np.arange(len(methods))
+    bottoms = np.zeros(len(methods))
+    for mtype in sorted(all_types_set):
+        vals = np.array([breakdowns[m].get(mtype, 0) for m in methods], dtype=float)
+        bars = ax.bar(
+            x,
+            vals,
+            bottom=bottoms,
+            label=mtype,
+            color=type_colors.get(mtype, "#BBBBBB"),
+            alpha=0.85,
+        )
+        for bar, val in zip(bars, vals):
+            if val > 0:
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2,
+                    bar.get_y() + bar.get_height() / 2,
+                    str(int(val)),
+                    ha="center",
+                    va="center",
+                    fontsize=8,
+                    color="white",
+                    fontweight="bold",
+                )
+        bottoms += vals
+    ax.set_xticks(x)
+    ax.set_xticklabels([_SHORT_LABELS[m] for m in methods])
+    ax.set_ylabel("Count of nonzero-coeff features")
+    ax.set_title("Feature type breakdown (nonzero model coefficients)")
+    ax.legend(fontsize=8)
+    ax.grid(axis="y", alpha=0.3)
+    fig.tight_layout()
+    fig.text(
+        0.99,
+        0.01,
+        "data: filtered" if filtered else "data: raw",
+        ha="right",
+        va="bottom",
+        fontsize=7,
+        color="gray",
+        transform=fig.transFigure,
+    )
+    out = out_dir / "feature_type_breakdown.png"
+    fig.savefig(out, dpi=150)
+    plt.close(fig)
+    print(f"  Saved → {out}")
+
+
+def _fa_plot_coeff_vs_perm(
+    methods: list[str],
+    sym_data: dict[str, dict],
+    k: int,
+    out_dir: Path,
+    filtered: bool = False,
+) -> None:
+    if len(methods) < 2:
+        return
+    coeff_sets = {
+        m: _fa_top_feature_names(sym_data.get(m, {}), k, "by_coefficient")
+        for m in methods
+    }
+    perm_sets = {
+        m: _fa_top_feature_names(sym_data.get(m, {}), k, "by_permutation")
+        for m in methods
+    }
+    agreement = [_fa_jaccard(coeff_sets[m], perm_sets[m]) for m in methods]
+    agreement_vis = [0.0 if (v != v) else v for v in agreement]
+
+    fig, ax = plt.subplots(figsize=(6, 3))
+    bars = ax.bar(
+        [_SHORT_LABELS[m] for m in methods],
+        agreement_vis,
+        color=[_COLORS[m] for m in methods],
+        alpha=0.85,
+    )
+    for bar, val in zip(bars, agreement):
+        txt = "—" if (val != val) else f"{val:.3f}"
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.01,
+            txt,
+            ha="center",
+            va="bottom",
+            fontsize=9,
+        )
+    ax.set_ylim(0, 1.15)
+    ax.set_ylabel("Jaccard similarity")
+    ax.set_title(f"Coeff vs permutation importance agreement (top-{k})")
+    ax.axhline(0.5, color="gray", linestyle="--", linewidth=0.8, alpha=0.6)
+    ax.grid(axis="y", alpha=0.3)
+    fig.tight_layout()
+    fig.text(
+        0.99,
+        0.01,
+        "data: filtered" if filtered else "data: raw",
+        ha="right",
+        va="bottom",
+        fontsize=7,
+        color="gray",
+        transform=fig.transFigure,
+    )
+    out = out_dir / "coeff_vs_perm_agreement.png"
+    fig.savefig(out, dpi=150)
+    plt.close(fig)
+    print(f"  Saved → {out}")
+
+
+def _fa_plot_signed_coefficients(
+    methods: list[str],
+    sym_data: dict[str, dict],
+    k: int,
+    out_dir: Path,
+    filtered: bool = False,
+) -> None:
+    from matplotlib.patches import Patch
+
+    present = [m for m in methods if m in sym_data]
+    if not present:
+        return
+    n = len(present)
+    n_cols = min(n, 3)
+    n_rows = (n + n_cols - 1) // n_cols
+    fig_h = max(k * 0.28 + 1.5, 4)
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, fig_h * n_rows))
+    axes_flat: list = np.array(axes).flatten().tolist() if n > 1 else [axes]
+
+    for ax_idx, method in enumerate(present):
+        ax = axes_flat[ax_idx]
+        top = (
+            sym_data[method]
+            .get("metrics", {})
+            .get("top_feature_importances", {})
+            .get("by_coefficient", {})
+        )
+        ranked = sorted(
+            top.items(), key=lambda kv: abs(kv[1]["importance"]), reverse=True
+        )
+        ranked = [
+            (name, info["importance"])
+            for name, info in ranked
+            if info["importance"] != 0
+        ][:k]
+        ranked = ranked[::-1]
+        names = [r[0][:50] for r in ranked]
+        values = [r[1] for r in ranked]
+        colors = ["#4C72B0" if v > 0 else "#C94040" for v in values]
+        y = np.arange(len(names))
+        ax.barh(y, values, color=colors, alpha=0.85, height=0.7)
+        ax.set_yticks(y)
+        ax.set_yticklabels(names, fontsize=6)
+        ax.axvline(0, color="black", linewidth=0.8)
+        ax.set_title(_LABELS[method], fontsize=9)
+        ax.set_xlabel("Coefficient value", fontsize=8)
+        ax.grid(axis="x", alpha=0.3)
+
+    for ax in axes_flat[len(present) :]:
+        ax.set_visible(False)
+
+    legend_elements = [
+        Patch(facecolor="#4C72B0", alpha=0.85, label="Positive → attack"),
+        Patch(facecolor="#C94040", alpha=0.85, label="Negative → benign"),
+    ]
+    fig.legend(
+        handles=legend_elements,
+        loc="lower center",
+        ncol=2,
+        fontsize=8,
+        bbox_to_anchor=(0.5, 0.0),
+    )
+    fig.suptitle(
+        f"Top-{k} features by |coefficient| — logistic regression", fontsize=11
+    )
+    fig.tight_layout(rect=[0, 0.04, 1, 1])
+    fig.text(
+        0.99,
+        0.01,
+        "data: filtered" if filtered else "data: raw",
+        ha="right",
+        va="bottom",
+        fontsize=7,
+        color="gray",
+        transform=fig.transFigure,
+    )
+    out = out_dir / "signed_coefficients.png"
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved → {out}")
+
+
+def _fa_plot_sign_split_breakdown(
+    methods: list[str], sym_data: dict[str, dict], out_dir: Path, filtered: bool = False
+) -> None:
+    from matplotlib.patches import Patch
+
+    type_colors = {
+        "itemset": "#4C72B0",
+        "item_sequence": "#55A868",
+        "or_itemset": "#DD8452",
+        "base": "#8C8C8C",
+    }
+    src_colors = {"attack": "#C94040", "benign": "#4C72B0", "unknown": "#AAAAAA"}
+
+    fig, (ax_type, ax_src) = plt.subplots(1, 2, figsize=(12, 4))
+    x = np.arange(len(methods))
+
+    for ax, breakdown_fn, colors, title in [
+        (
+            ax_type,
+            _fa_mining_type_breakdown,
+            type_colors,
+            "Mining type by coefficient sign",
+        ),
+        (
+            ax_src,
+            _fa_source_label_breakdown,
+            src_colors,
+            "Source label by coefficient sign",
+        ),
+    ]:
+        all_cats: set[str] = set()
+        pos_bds: dict[str, dict] = {}
+        neg_bds: dict[str, dict] = {}
+        for m in methods:
+            sym = sym_data.get(m, {})
+            pos_bds[m] = breakdown_fn(sym, sign="positive")
+            neg_bds[m] = breakdown_fn(sym, sign="negative")
+            all_cats |= set(pos_bds[m]) | set(neg_bds[m])
+
+        pos_bottoms = np.zeros(len(methods))
+        neg_bottoms = np.zeros(len(methods))
+        legend_handles: list = []
+
+        for cat in sorted(all_cats):
+            color = colors.get(cat, "#BBBBBB")
+            pos_vals = np.array([pos_bds[m].get(cat, 0) for m in methods], dtype=float)
+            neg_vals = np.array([-neg_bds[m].get(cat, 0) for m in methods], dtype=float)
+
+            bars_pos = ax.bar(x, pos_vals, bottom=pos_bottoms, color=color, alpha=0.85)
+            bars_neg = ax.bar(
+                x, neg_vals, bottom=neg_bottoms, color=color, alpha=0.45, hatch="//"
+            )
+
+            for bar, val in zip(bars_pos, pos_vals):
+                if val > 0:
+                    ax.text(
+                        bar.get_x() + bar.get_width() / 2,
+                        bar.get_y() + bar.get_height() / 2,
+                        str(int(val)),
+                        ha="center",
+                        va="center",
+                        fontsize=7,
+                        color="white",
+                        fontweight="bold",
+                    )
+            for bar, val in zip(bars_neg, neg_vals):
+                if val < 0:
+                    ax.text(
+                        bar.get_x() + bar.get_width() / 2,
+                        bar.get_y() + bar.get_height() / 2,
+                        str(int(-val)),
+                        ha="center",
+                        va="center",
+                        fontsize=7,
+                        color="black",
+                        fontweight="bold",
+                    )
+
+            pos_bottoms += pos_vals
+            neg_bottoms += neg_vals
+            legend_handles.append(Patch(facecolor=color, alpha=0.85, label=cat))
+
+        ax.axhline(0, color="black", linewidth=1.0)
+        ax.set_xticks(x)
+        ax.set_xticklabels([_SHORT_LABELS[m] for m in methods])
+        ax.set_ylabel("Feature count")
+        ax.set_title(title)
+        ax.legend(handles=legend_handles, fontsize=7)
+        ax.grid(axis="y", alpha=0.3)
+        ax.text(
+            0.02,
+            0.98,
+            "↑ positive coeff (attack)",
+            transform=ax.transAxes,
+            fontsize=7,
+            va="top",
+            color="#333333",
+        )
+        ax.text(
+            0.02,
+            0.02,
+            "↓ negative coeff (benign)",
+            transform=ax.transAxes,
+            fontsize=7,
+            va="bottom",
+            color="#333333",
+        )
+
+    fig.suptitle("Feature breakdown by coefficient sign", fontsize=11)
+    fig.tight_layout()
+    fig.text(
+        0.99,
+        0.01,
+        "data: filtered" if filtered else "data: raw",
+        ha="right",
+        va="bottom",
+        fontsize=7,
+        color="gray",
+        transform=fig.transFigure,
+    )
+    out = out_dir / "sign_split_breakdown.png"
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved → {out}")
+
+
+def _run_feature_analysis(
+    methods: list[str],
+    sym_paths: dict[str, Path],
+    compare: dict,
+    top_k: int,
+    out_dir: Path,
+    filtered: bool,
+) -> None:
+    """Phase 4: load symbolic JSONs and run feature overlap analysis."""
+    sym_data: dict[str, dict] = {}
+    for m in methods:
+        p = sym_paths.get(m)
+        if p and p.exists():
+            with p.open() as f:
+                sym_data[m] = json.load(f)
+        else:
+            print(f"  [warn] No symbolic JSON for {m}, skipping in feature analysis.")
+
+    if not sym_data:
+        print("  [skip] No symbolic data available for feature analysis.")
+        return
+
+    present = [m for m in methods if m in sym_data]
+    funnels = {m: _fa_feature_funnel(sym_data[m]) for m in present}
+
+    _fa_print_funnel_table(present, funnels)
+    _fa_print_fp_table(present, compare, sym_data)
+    _fa_print_generalization_table(present, sym_data)
+    _fa_print_type_breakdown(present, sym_data)
+    _fa_print_overlap_table(present, sym_data, top_k)
+
+    fa_dir = out_dir / "feature_analysis"
+    fa_dir.mkdir(exist_ok=True)
+    print(f"\n[Phase 4 plots] Saving to {fa_dir}")
+
+    _fa_plot_funnel(present, funnels, fa_dir, filtered=filtered)
+    _fa_plot_overlap_heatmap(present, sym_data, top_k, fa_dir, filtered=filtered)
+    _fa_plot_fp_analysis(present, compare, fa_dir, filtered=filtered)
+    _fa_plot_type_breakdown(present, sym_data, fa_dir, filtered=filtered)
+    _fa_plot_coeff_vs_perm(present, sym_data, top_k, fa_dir, filtered=filtered)
+    _fa_plot_signed_coefficients(present, sym_data, top_k, fa_dir, filtered=filtered)
+    _fa_plot_sign_split_breakdown(present, sym_data, fa_dir, filtered=filtered)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -613,6 +1439,17 @@ def main() -> None:
         "--filtered",
         action="store_true",
         help="Use detector-filtered alerts (alerts_filtered.json) instead of alerts.json.",
+    )
+    parser.add_argument(
+        "--no-feature-analysis",
+        action="store_true",
+        help="Skip Phase 4 (feature overlap analysis plots). Useful for quick metric-only runs.",
+    )
+    parser.add_argument(
+        "--top-k",
+        type=int,
+        default=25,
+        help="Top-K features for overlap/Jaccard analysis in Phase 4 (default: 25).",
     )
     args = parser.parse_args()
 
@@ -1001,6 +1838,36 @@ def _main_body(
     plot_metrics(plot_data, plots_dir, filtered=filtered)
     plot_transactions(plot_data, plots_dir, filtered=filtered)
     plot_purity(plot_data, plots_dir, filtered=filtered)
+
+    # Phase 4: feature overlap analysis
+    if not getattr(args, "no_feature_analysis", False):
+        print("\n[Phase 4] Feature overlap analysis...")
+        methods = [m for m in _ALL_METHODS if m in combined]
+        sym_paths = {
+            "fixed_window": Path(symbolic_fw.results_file),
+            "fixed_window_host": Path(symbolic_fwh.results_file),
+            "time_delta": Path(symbolic_td.results_file),
+            "time_delta_host": Path(symbolic_tdh.results_file),
+            "alertbert": Path(symbolic_ab.results_file),
+        }
+        compare_dict = {
+            "scenario": scenario,
+            **{
+                m: {
+                    "baseline": {"metrics": combined[m]["baseline"]["metrics"]},
+                    "symbolic": {"metrics": combined[m]["symbolic"]["metrics"]},
+                }
+                for m in methods
+            },
+        }
+        _run_feature_analysis(
+            methods=methods,
+            sym_paths={m: sym_paths[m] for m in methods},
+            compare=compare_dict,
+            top_k=getattr(args, "top_k", 25),
+            out_dir=plots_dir,
+            filtered=filtered,
+        )
 
     print("\nDone.")
 

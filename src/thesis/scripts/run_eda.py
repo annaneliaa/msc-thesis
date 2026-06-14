@@ -1,12 +1,24 @@
 """
 Exploratory Data Analysis for one or more alert scenarios.
 
+Combines two phases in one script:
+  Phase 1 (analysis): per-scenario transaction stats, pair frequencies, CSVs,
+                      plus cross-scenario overview and label-distribution tables.
+  Phase 2 (plots):    overview plots — volume timeline, class balance, attack-type
+                      heatmap, top signatures, inter-arrival CDF, group sizes, etc.
+
 Usage:
-    # all scenarios (raw alerts)
+    # full run (analysis + plots)
     python src/thesis/scripts/run_eda.py --all
 
-    # one or more specific scenarios
+    # specific scenarios
     python src/thesis/scripts/run_eda.py fox harrison
+
+    # only regenerate plots from existing alert data (skip analysis)
+    python src/thesis/scripts/run_eda.py --all --plots-only
+
+    # analysis only, skip plot generation
+    python src/thesis/scripts/run_eda.py --all --no-plots
 
     # filtered variants — loads artifacts/processed-data/<scenario>/alerts_filtered_<METHOD>.csv
     python src/thesis/scripts/run_eda.py --all --filtered naive50
@@ -19,13 +31,21 @@ Usage:
     (bare --filtered) Loads alerts_filtered.csv (legacy detector-score filter).
 
 Output (all under artifacts/experiments/run_eda/run_<ts>/):
-    <scenario>/                               -- per-scenario CSVs and plots
+    <scenario>/                               -- per-scenario CSVs and plots (Phase 1)
     summary/<scenario>_eda_summary.txt        -- per-scenario text summary
     summary/signatures/                       -- unique signature count CSVs
-    overview_table.csv                        -- cross-scenario statistics table
-    overview_table.png                        -- same table as a figure
-    label_distribution_table.csv             -- per-scenario label breakdown (count, % of data, % of attacks)
-    label_distribution_table.png             -- same table as a figure
+    overview_table.csv / .png                 -- cross-scenario statistics table
+    label_distribution_table.csv / .png       -- per-scenario label breakdown
+    plots/                                    -- overview figures (Phase 2)
+        volume_concatenated.png
+        volume_attack_zoom.png
+        class_balance.png
+        attack_type_heatmap.png
+        top_alert_names.png
+        inter_arrival_cdf.png
+        group_size_dist.png
+        scenario_overview.png
+        tx_volume_*.png                       -- only when transactions are available
 """
 
 from __future__ import annotations
@@ -40,7 +60,21 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from thesis.visualization.eda import SCENARIOS, load_alerts
+from thesis.visualization.eda import (
+    SCENARIOS,
+    load_alerts,
+    load_transactions,
+    plot_alert_volume_concatenated,
+    plot_attack_phase_zoom,
+    plot_attack_type_heatmap,
+    plot_class_balance,
+    plot_group_size_distribution,
+    plot_inter_arrival_time_cdf,
+    plot_scenario_overview,
+    plot_top_alert_names,
+    plot_transaction_volume_attack_zoom,
+    plot_transaction_volume_concatenated,
+)
 from thesis.preprocessing.tokenization import (
     extract_signature_tokens,
 )
@@ -631,6 +665,111 @@ def save_label_distribution_table(
     print(f"  label_distribution_table.png → {out}")
 
 
+def _run_plots_phase(
+    scenarios: list[str],
+    all_df: pd.DataFrame,
+    run_dir: Path,
+    filtered: str | None,
+    bin_hours: float = 1.0,
+    fmt: str = "png",
+    top_k: int = 20,
+) -> None:
+    plots_dir = run_dir / "plots"
+    plots_dir.mkdir(parents=True, exist_ok=True)
+
+    tx_dir = TRANSACTIONS_FILTERED_DIR if filtered is not None else TRANSACTIONS_DIR
+    tx_df = None
+    if tx_dir.exists():
+        try:
+            tx_df = load_transactions(str(tx_dir), scenarios=scenarios)
+            print(f"  {len(tx_df):,} transactions loaded from {tx_dir}.")
+        except FileNotFoundError as e:
+            print(f"  Warning: {e}. Transaction plots will be skipped.")
+    else:
+        print(
+            f"  No transactions found at {tx_dir}. "
+            "Run without --plots-only first to generate them."
+        )
+
+    data_label = _data_label(filtered)
+
+    def _out(name: str) -> str:
+        return str(plots_dir / f"{name}.{fmt}")
+
+    plots = [
+        (
+            "alert volume (concatenated timeline)",
+            "volume_concatenated",
+            lambda: plot_alert_volume_concatenated(all_df, bin_hours=bin_hours),
+        ),
+        (
+            "alert volume (attack phase zoom)",
+            "volume_attack_zoom",
+            lambda: plot_attack_phase_zoom(all_df),
+        ),
+        ("class balance", "class_balance", lambda: plot_class_balance(all_df)),
+        (
+            "attack type heatmap",
+            "attack_type_heatmap",
+            lambda: plot_attack_type_heatmap(all_df),
+        ),
+        (
+            "top alert names",
+            "top_alert_names",
+            lambda: plot_top_alert_names(all_df, top_k=top_k),
+        ),
+        (
+            "inter-arrival time CDF",
+            "inter_arrival_cdf",
+            lambda: plot_inter_arrival_time_cdf(all_df),
+        ),
+        (
+            "group size distribution",
+            "group_size_dist",
+            lambda: plot_group_size_distribution(all_df),
+        ),
+        (
+            "scenario overview table",
+            "scenario_overview",
+            lambda: plot_scenario_overview(all_df, tx_df=tx_df),
+        ),
+    ]
+
+    if tx_df is not None:
+        plots += [
+            (
+                "transaction volume (concatenated timeline)",
+                "tx_volume_concatenated",
+                lambda: plot_transaction_volume_concatenated(
+                    tx_df, bin_hours=bin_hours
+                ),
+            ),
+            (
+                "transaction volume (attack phase zoom)",
+                "tx_volume_attack_zoom",
+                lambda: plot_transaction_volume_attack_zoom(tx_df),
+            ),
+        ]
+
+    print(f"\n[plots] Saving to {plots_dir}")
+    for label, name, fn in plots:
+        print(f"  Plotting {label}...", end=" ", flush=True)
+        fig, _ = fn()
+        fig.text(
+            0.99,
+            0.01,
+            data_label,
+            ha="right",
+            va="bottom",
+            fontsize=7,
+            color="gray",
+            transform=fig.transFigure,
+        )
+        fig.savefig(_out(name), dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        print("done")
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Exploratory Data Analysis for alert scenarios.",
@@ -659,6 +798,36 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "Pass a method name to load alerts_filtered_<METHOD>.csv "
             "(e.g. --filtered naive50), or bare --filtered for alerts_filtered.csv."
         ),
+    )
+    p.add_argument(
+        "--plots-only",
+        action="store_true",
+        help="Skip Phase 1 (analysis); only generate overview plots (Phase 2).",
+    )
+    p.add_argument(
+        "--no-plots",
+        action="store_true",
+        help="Skip Phase 2 (overview plots); run analysis only.",
+    )
+    p.add_argument(
+        "--bin-hours",
+        type=float,
+        default=1.0,
+        metavar="H",
+        help="Bin width in hours for the volume-over-time plot (default: 1.0).",
+    )
+    p.add_argument(
+        "--fmt",
+        default="png",
+        choices=["pdf", "png", "svg"],
+        help="Output file format for plots (default: png).",
+    )
+    p.add_argument(
+        "--top-k",
+        type=int,
+        default=20,
+        metavar="K",
+        help="Number of alert signatures in the top-names plot (default: 20).",
     )
     return p.parse_args(argv)
 
@@ -708,21 +877,35 @@ def main(argv: list[str] | None = None) -> None:
         all_df = load_alerts(str(DATA_DIR), scenarios=scenarios)
     print(f"  {len(all_df):,} alerts loaded.\n")
 
-    for scenario in scenarios:
-        scenario_df = all_df[all_df["scenario"] == scenario].copy()
-        run_scenario(
-            scenario_df,
-            scenario,
-            run_dir / scenario,
-            summary_path,
-            filtered=filtered_method,
+    # Phase 1: per-scenario analysis
+    if not args.plots_only:
+        for scenario in scenarios:
+            scenario_df = all_df[all_df["scenario"] == scenario].copy()
+            run_scenario(
+                scenario_df,
+                scenario,
+                run_dir / scenario,
+                summary_path,
+                filtered=filtered_method,
+            )
+
+        print("\nComputing dataset overview table...")
+        save_overview_table(all_df, run_dir, filtered=filtered_method)
+
+        print("\nComputing label distribution table...")
+        save_label_distribution_table(all_df, run_dir, filtered=filtered_method)
+
+    # Phase 2: overview plots
+    if not args.no_plots:
+        _run_plots_phase(
+            scenarios,
+            all_df,
+            run_dir,
+            filtered_method,
+            bin_hours=args.bin_hours,
+            fmt=args.fmt,
+            top_k=args.top_k,
         )
-
-    print("\nComputing dataset overview table...")
-    save_overview_table(all_df, run_dir, filtered=filtered_method)
-
-    print("\nComputing label distribution table...")
-    save_label_distribution_table(all_df, run_dir, filtered=filtered_method)
 
     print(f"\nAll output saved to: {run_dir.resolve()}")
 
