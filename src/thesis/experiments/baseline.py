@@ -118,7 +118,7 @@ def _process_alert_batch(
     grouping_mode: str = FIXED_WINDOW_METHOD,
     grouping: GroupingConfig | None = None,
 ) -> None:
-    alert_store_dir = cache_dir / scenario / "alerts"
+    alert_store_dir = cache_dir / "alerts"
     if alert_store_dir.exists() and any(alert_store_dir.glob("*.json")):
         print(f"  [skip] Alert cache already populated at {alert_store_dir}")
         return
@@ -127,7 +127,7 @@ def _process_alert_batch(
         payload = json.load(f)
 
     grouper = build_grouper(grouping) if grouping is not None else None
-    cache = TokenCache(cache_dir=cache_dir, scenario=scenario)
+    cache = TokenCache(cache_dir=cache_dir)
     ingestor = CacheIngestor(cache=cache)
     count = process_alert_batch(
         rows=payload,
@@ -135,6 +135,7 @@ def _process_alert_batch(
         ingestor=ingestor,
         grouping_mode=grouping_mode,
         grouper=grouper,
+        window_size=grouping.window_size if grouping is not None else 2,
     )
     print(f"  Processed {count} alerts into cache.")
 
@@ -142,14 +143,8 @@ def _process_alert_batch(
 def _load_transactions(
     scenario: str,
     cache_dir: Path,
-    groups_cache_dir: Path | None = None,
-    transactions_dir: Path | None = None,
 ) -> list:
-    out_dir = (
-        transactions_dir
-        if transactions_dir is not None
-        else cache_dir / scenario / "transactions"
-    )
+    out_dir = cache_dir / "transactions"
     out_path = out_dir / "transactions_raw.json"
 
     if out_path.exists():
@@ -184,10 +179,7 @@ def _load_transactions(
             return transactions
         print(f"  [warn] {out_path} is empty, rebuilding transactions...")
 
-    effective_groups_dir = (
-        groups_cache_dir if groups_cache_dir is not None else cache_dir
-    )
-    cache = TokenCache(cache_dir=effective_groups_dir, scenario=scenario)
+    cache = TokenCache(cache_dir=cache_dir)
     snapshots = select_groups_from_cache(
         cache=cache,
         allowed_methods=None,
@@ -233,14 +225,9 @@ def _encode_transactions(
     schema_name: str,
     cache_dir: Path,
     feature_selection: FeatureSelectionConfig | None = None,
-    transactions_dir: Path | None = None,
 ) -> tuple[pd.DataFrame, object]:
     safe_name = schema_name.replace("+", "_").replace("/", "_")
-    _tx_dir = (
-        transactions_dir
-        if transactions_dir is not None
-        else cache_dir / scenario / "transactions"
-    )
+    _tx_dir = cache_dir / "transactions"
     out_path = _tx_dir / f"transactions_{safe_name}.parquet"
 
     registry = FeatureSchemaRegistry(root_dir=_ROOT / "artifacts" / "features")
@@ -312,12 +299,11 @@ def run_baseline_experiment(
     alerts_path = _convert_alerts_to_json(config.scenario, config.alerts_json_path)
 
     # 2. Tokenise + ingest into cache
-    grouping_cache_dir = config.grouping_cache_dir
     print("[2/7] Processing alert batch...")
     _process_alert_batch(
         config.scenario,
         alerts_path,
-        grouping_cache_dir if grouping_cache_dir is not None else config.cache_dir,
+        config.cache_dir,
         grouping_mode=config.grouping.mode,
         grouping=config.grouping,
     )
@@ -328,13 +314,7 @@ def run_baseline_experiment(
 
     # 4. Build transactions from closed groups
     print("[4/7] Building transactions from cache...")
-    tx_dir = config.transactions_dir
-    transactions = _load_transactions(
-        config.scenario,
-        config.cache_dir,
-        groups_cache_dir=grouping_cache_dir,
-        transactions_dir=tx_dir,
-    )
+    transactions = _load_transactions(config.scenario, config.cache_dir)
 
     # 5. Encode under baseline schema
     print(f"[5/7] Encoding transactions (schema='{config.schema_name}')...")
@@ -343,7 +323,6 @@ def run_baseline_experiment(
         transactions,
         config.schema_name,
         config.cache_dir,
-        transactions_dir=tx_dir,
     )
 
     # 6. Train model

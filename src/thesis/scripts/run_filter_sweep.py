@@ -951,10 +951,8 @@ def _presets_body(args: argparse.Namespace) -> None:
             if args.filtered
             else None
         )
-        cache_dir = CACHE_DIR / scenario
-        groups_cache_dir = CACHE_DIR / "groups" / scenario / args.grouping
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        groups_cache_dir.mkdir(parents=True, exist_ok=True)
+        method_cache_dir = CACHE_DIR / scenario / "groups" / args.grouping
+        method_cache_dir.mkdir(parents=True, exist_ok=True)
 
         print(
             f"\n{'='*60}\n Filter preset experiment: {scenario}  grouping={args.grouping}"
@@ -965,11 +963,9 @@ def _presets_body(args: argparse.Namespace) -> None:
         baseline = run_baseline_experiment(
             BaselineExperimentConfig(
                 scenario=scenario,
-                cache_dir=cache_dir,
+                cache_dir=method_cache_dir,
                 grouping=grouping,
-                grouping_cache_dir=groups_cache_dir,
                 results_dir=run_dir,
-                transactions_dir=run_dir / "transactions",
                 alerts_json_path=alerts_json_path,
             )
         )
@@ -983,13 +979,11 @@ def _presets_body(args: argparse.Namespace) -> None:
             result = run_symbolic_experiment(
                 SymbolicExperimentConfig(
                     scenario=scenario,
-                    cache_dir=cache_dir,
+                    cache_dir=method_cache_dir,
                     grouping=grouping,
                     filter_config=_FILTER_CONFIG_FILES[cond],
                     abstraction_map_path=ABSTRACTION_MAP_PATH,
-                    grouping_cache_dir=groups_cache_dir,
                     results_dir=run_dir,
-                    transactions_dir=run_dir / "transactions",
                     alerts_json_path=alerts_json_path,
                 )
             )

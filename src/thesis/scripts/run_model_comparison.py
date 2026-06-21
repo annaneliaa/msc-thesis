@@ -15,20 +15,24 @@ Usage:
   python src/thesis/scripts/run_model_comparison.py --all --filtered naive50
   python src/thesis/scripts/run_model_comparison.py --all --no-run --filtered
 
+
 Output (under artifacts/experiments/run_model_comparison/comparison_<ts>/):
   logreg/scenario/<scenario>/       logreg compare, baseline, symbolic JSONs
   mlp/scenario/<scenario>/          mlp compare, baseline, symbolic JSONs
   plots/
     comparison_table.txt / .csv
-    perf_auc.png              AUC: logreg vs mlp, baseline + symbolic
-    perf_metrics.png          F1/precision/recall/ba for baseline
     logreg/                   per-model feature analysis plots
     mlp/
+    logreg/
+      shap_bars_logreg.png    signed SHAP importance across scenarios (symbolic experiment)
+    mlp/
+      shap_bars_mlp.png
     cross_model/
+      perf_auc.png              AUC: logreg vs mlp, baseline + symbolic
+      perf_metrics.png          F1/precision/recall/ba for baseline
       jaccard_spearman.png    per-scenario Jaccard + Spearman rank (logreg vs mlp)
-      shap_bars_<model>.png     signed SHAP importance across scenarios per model
-      feature_heatmap_logreg.png  which features appear across scenarios
-      feature_heatmap_mlp.png
+      common_features_logreg.png  signed SHAP per scenario for features shared across scenarios
+      common_features_mlp.png
 """
 
 from __future__ import annotations
@@ -47,6 +51,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from thesis.config import GroupingConfig
 from thesis.experiments.baseline import (
     BaselineExperimentConfig,
     run_baseline_experiment,
@@ -116,14 +121,17 @@ def _run_for_model(
     model_dir: Path,
     filter_config: Path | None,
     alerts_json_path: Path | None,
-    cache_dir: Path | None,
+    cache_dir: Path,
+    grouping: GroupingConfig | None = None,
 ) -> dict:
     """Run baseline + symbolic for one scenario/model, write compare JSON."""
     print(f"\n{'='*60}\n  {model_name.upper()} — {scenario}\n{'='*60}")
 
     scenario_dir = model_dir / "scenario" / scenario
     scenario_dir.mkdir(parents=True, exist_ok=True)
-    extra = {"cache_dir": cache_dir} if cache_dir is not None else {}
+    extra: dict = {"cache_dir": cache_dir}
+    if grouping is not None:
+        extra["grouping"] = grouping
 
     print("\n--- baseline ---")
     baseline = run_baseline_experiment(
@@ -233,14 +241,19 @@ def _load_importance(
 
 
 def _collect_importances(
-    run_dir: Path, scenarios: list[str], experiment: str = "baseline"
+    run_dir: Path,
+    scenarios: list[str],
+    experiment: str = "baseline",
+    models: list[str] | None = None,
 ) -> dict[str, dict[str, dict[str, float]]]:
     """
     Returns {model: {scenario: {feature: importance}}}.
     Prefers by_shap; falls back to by_permutation if empty.
     """
+    if models is None:
+        models = list(MODELS)
     result: dict[str, dict[str, dict[str, float]]] = {}
-    for model in MODELS:
+    for model in models:
         result[model] = {}
         model_dir = run_dir / model
         for scenario in scenarios:
@@ -261,9 +274,13 @@ def _collect_importances(
     return result
 
 
-def _load_all_results(run_dir: Path, scenarios: list[str]) -> dict[str, list[dict]]:
-    all_results: dict[str, list[dict]] = {m: [] for m in MODELS}
-    for model in MODELS:
+def _load_all_results(
+    run_dir: Path, scenarios: list[str], models: list[str] | None = None
+) -> dict[str, list[dict]]:
+    if models is None:
+        models = list(MODELS)
+    all_results: dict[str, list[dict]] = {m: [] for m in models}
+    for model in models:
         model_dir = run_dir / model
         for scenario in scenarios:
             cmp = _load_compare_json(model_dir, scenario)
@@ -326,17 +343,19 @@ def _build_comparison_df(all_results: dict[str, list[dict]]) -> pd.DataFrame:
     return df
 
 
-def _format_text_table(df: pd.DataFrame) -> str:
+def _format_text_table(df: pd.DataFrame, models: list[str] | None = None) -> str:
+    if models is None:
+        models = list(MODELS)
     base = df[df["experiment"] == "baseline"]
     sym = df[df["experiment"] == "symbolic"]
     scenarios = sorted(df["scenario"].unique())
 
     w = 9
-    sep = "─" * (16 + (w * 3 + 4) * len(MODELS) * 2)
+    sep = "─" * (16 + (w * 3 + 4) * len(models) * 2)
     parts = [sep]
     header = f"  {'scenario':<14}"
     for exp_label, src in [("base", base), ("sym", sym)]:
-        for m in MODELS:
+        for m in models:
             header += (
                 f"  {('[' + _MODEL_LABELS[m] + '|' + exp_label + ']'):<{w * 3 + 2}}"
             )
@@ -344,7 +363,7 @@ def _format_text_table(df: pd.DataFrame) -> str:
 
     subheader = f"  {'':14}"
     for _ in range(2):
-        for _ in MODELS:
+        for _ in models:
             subheader += f"  {'AUC':>{w}}{'F1':>{w}}{'FP':>{w}}"
     parts.append(subheader)
     parts.append(sep)
@@ -352,7 +371,7 @@ def _format_text_table(df: pd.DataFrame) -> str:
     for scenario in scenarios:
         row = f"  {scenario:<14}"
         for src in (base, sym):
-            for m in MODELS:
+            for m in models:
                 r = src[(src["scenario"] == scenario) & (src["model"] == m)]
                 if r.empty:
                     row += f"  {'?':>{w}}{'?':>{w}}{'?':>{w}}"
@@ -367,18 +386,24 @@ def _format_text_table(df: pd.DataFrame) -> str:
 
 
 def plot_perf_auc(
-    df: pd.DataFrame, out_dir: Path, filtered: bool, method: str | None = None
+    df: pd.DataFrame,
+    out_dir: Path,
+    filtered: bool,
+    method: str | None = None,
+    models: list[str] | None = None,
 ) -> None:
+    if models is None:
+        models = list(MODELS)
     scenarios = sorted(df["scenario"].unique())
     n_sc = len(scenarios)
-    n_bars = len(MODELS) * 2
+    n_bars = len(models) * 2
     x = np.arange(n_sc)
     w = 0.18
     offsets = [w * (i - (n_bars - 1) / 2) for i in range(n_bars)]
 
     fig, ax = plt.subplots(figsize=(max(8, n_sc * 2.2), 5))
     bar_idx = 0
-    for model in MODELS:
+    for model in models:
         for exp, suffix, alpha, hatch in [
             ("baseline", "base", 0.55, "//"),
             ("symbolic", "sym", 0.85, ""),
@@ -435,9 +460,15 @@ def plot_perf_auc(
 
 
 def plot_perf_metrics(
-    df: pd.DataFrame, out_dir: Path, filtered: bool, method: str | None = None
+    df: pd.DataFrame,
+    out_dir: Path,
+    filtered: bool,
+    method: str | None = None,
+    models: list[str] | None = None,
 ) -> None:
     """Precision / recall / F1 / balanced_accuracy for baseline, models side by side."""
+    if models is None:
+        models = list(MODELS)
     base = df[df["experiment"] == "baseline"]
     scenarios = sorted(df["scenario"].unique())
     n_sc = len(scenarios)
@@ -452,7 +483,7 @@ def plot_perf_metrics(
     ]
     fig, axes = plt.subplots(2, 2, figsize=(max(10, n_sc * 2.2), 8))
     for ax, (key, title) in zip(axes.flatten(), metrics):
-        for i, model in enumerate(MODELS):
+        for i, model in enumerate(models):
             offset = w * (i - 0.5)
             vals = []
             for s in scenarios:
@@ -558,7 +589,7 @@ def _print_overlap_table(
     scenarios: list[str],
     top_k: int,
 ) -> None:
-    pairs = list(itertools.combinations(MODELS, 2))
+    pairs = list(itertools.combinations(all_imps.keys(), 2))
     if not pairs:
         return
     cw = 12
@@ -584,7 +615,7 @@ def _print_overlap_table(
             print(f"  {s:<24}{jac_s}{n_sh:>{cw}}{sp_s:>{cw}}")
         print("─" * (26 + cw * 3))
 
-    for model in MODELS:
+    for model in all_imps:
         tops = [
             top_k_names(all_imps[model].get(s, {}), top_k)
             for s in scenarios
@@ -708,7 +739,7 @@ def plot_shap_importance_bars(
     """Per model: one figure with all scenarios as subplots, showing signed mean SHAP."""
     from matplotlib.patches import Patch
 
-    for model in MODELS:
+    for model in all_imps:
         present = [s for s in scenarios if all_imps.get(model, {}).get(s)]
         if not present:
             continue
@@ -726,15 +757,33 @@ def plot_shap_importance_bars(
             ranked = sorted(imp.items(), key=lambda kv: abs(kv[1]), reverse=True)
             top = [(name, val) for name, val in ranked if val != 0][:top_k][::-1]
             names = [r[0][:50] for r in top]
-            values = [r[1] for r in top]
-            colors = ["#4C72B0" if v > 0 else "#C94040" for v in values]
+            raw_values = [r[1] for r in top]
+            max_abs = max(abs(v) for v in raw_values) if raw_values else 1.0
+            norm_values = [v / max_abs for v in raw_values]
+            colors = ["#4C72B0" if v > 0 else "#C94040" for v in raw_values]
             y = np.arange(len(names))
-            ax.barh(y, values, color=colors, alpha=0.85, height=0.7)
+            ax.barh(y, norm_values, color=colors, alpha=0.85, height=0.7)
+            for yi, (norm, raw) in enumerate(zip(norm_values, raw_values)):
+                if abs(norm) < 0.01:
+                    continue
+                x_tip = norm + (0.04 if norm >= 0 else -0.04)
+                ha = "left" if norm >= 0 else "right"
+                ax.text(
+                    x_tip,
+                    yi,
+                    f"{raw:.3f}",
+                    ha=ha,
+                    va="center",
+                    fontsize=7,
+                    color="black",
+                    clip_on=False,
+                )
             ax.set_yticks(y)
             ax.set_yticklabels(names, fontsize=6)
             ax.axvline(0, color="black", linewidth=0.8)
+            ax.set_xlim(-1.3, 1.3)
             ax.set_title(sc, fontsize=9)
-            ax.set_xlabel("Mean SHAP value", fontsize=8)
+            ax.set_xlabel("Normalised SHAP (labels = raw value)", fontsize=7)
             ax.grid(axis="x", alpha=0.3)
 
         for ax in axes_flat[len(present) :]:
@@ -752,8 +801,9 @@ def plot_shap_importance_bars(
             bbox_to_anchor=(0.5, 0.0),
         )
         fig.suptitle(
-            f"Top-{top_k} features by |SHAP| per scenario — {_MODEL_LABELS[model]}",
-            fontsize=11,
+            f"Top-{top_k} features by |SHAP| per scenario — {_MODEL_LABELS[model]}\n"
+            f"Bars normalised per scenario; annotated with raw SHAP value",
+            fontsize=10,
         )
         fig.tight_layout(rect=[0, 0.04, 1, 1])
         fig.text(
@@ -772,58 +822,122 @@ def plot_shap_importance_bars(
         print(f"  Saved → {out}")
 
 
-def plot_cross_scenario_heatmap(
+def plot_common_feature_importance(
     imps_by_scenario: dict[str, dict[str, float]],
     model_name: str,
     top_k: int,
     filtered: bool,
     out_dir: Path,
     method: str | None = None,
+    min_freq: int = 2,
 ) -> None:
-    """Presence/absence heatmap: which features are in top-K across scenarios."""
+    """
+    Grouped bar chart for features shared across scenarios.
+
+    Bars are normalised per scenario (each bar = SHAP / max |SHAP| for that
+    scenario) so that scenarios with very different scales are visually comparable.
+    The raw SHAP value is annotated on every bar whose normalised height exceeds 5%
+    of the scenario maximum.
+
+    Only features in the top-K of at least `min_freq` scenarios are shown.
+    Mined (symbolic) features are marked with '*' in their label.
+    """
     scenarios = [s for s, imp in imps_by_scenario.items() if imp]
     if not scenarios:
         return
 
     top_per_sc = {s: top_k_names(imps_by_scenario[s], top_k) for s in scenarios}
+
+    # Keep only features that appear in at least min_freq scenarios' top-K
     all_features = set().union(*top_per_sc.values())
-    if not all_features:
+    common = [
+        f
+        for f in all_features
+        if sum(1 for tops in top_per_sc.values() if f in tops) >= min_freq
+    ]
+    if not common:
+        print(
+            f"  [warn] {model_name}: no features appear in ≥{min_freq} scenarios' top-{top_k}; skipping common-feature plot"
+        )
         return
 
-    features = sorted(
-        all_features,
-        key=lambda f: sum(1 for tops in top_per_sc.values() if f in tops),
+    # Sort by mean |SHAP| across scenarios, descending
+    common.sort(
+        key=lambda f: sum(abs(imps_by_scenario[s].get(f, 0.0)) for s in scenarios),
         reverse=True,
     )
 
-    matrix = np.array(
-        [[1.0 if f in top_per_sc[s] else 0.0 for s in scenarios] for f in features]
-    )
+    # Per-scenario normalisation denominator: max |SHAP| across all features in that scenario
+    max_abs = {
+        sc: max((abs(v) for v in imps_by_scenario[sc].values()), default=1.0) or 1.0
+        for sc in scenarios
+    }
 
-    fig_h = max(len(features) * 0.24 + 2, 5)
-    fig, ax = plt.subplots(figsize=(max(6, len(scenarios) * 1.3), fig_h))
-    ax.imshow(matrix, cmap="Blues", aspect="auto", vmin=0, vmax=1)
-    ax.set_xticks(range(len(scenarios)))
-    ax.set_xticklabels(scenarios, rotation=30, ha="right", fontsize=9)
-    ax.set_yticks(range(len(features)))
-    ax.set_yticklabels([f[:60] for f in features], fontsize=7)
-    ax.set_title(
-        f"Feature consistency across scenarios — {_MODEL_LABELS[model_name]}\n(top-{top_k} SHAP/permutation)"
-    )
-    ax.set_xlabel("Scenario")
-    ax.set_ylabel("Feature (sorted by frequency)")
+    sc_colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+    n_sc = len(scenarios)
+    n_feat = len(common)
+    bar_width = 0.8 / n_sc
+    x = np.arange(n_feat)
 
-    freqs = [sum(1 for tops in top_per_sc.values() if f in tops) for f in features]
-    for i, freq in enumerate(freqs):
-        ax.text(
-            len(scenarios) - 0.4,
-            i,
-            f"{freq}/{len(scenarios)}",
-            ha="left",
-            va="center",
-            fontsize=7,
-            color="#555555",
+    fig_w = max(8, n_feat * (0.5 + 0.15 * n_sc))
+    fig, ax = plt.subplots(figsize=(fig_w, 6))
+
+    for i, sc in enumerate(scenarios):
+        offsets = x + (i - n_sc / 2 + 0.5) * bar_width
+        raw_vals = [imps_by_scenario[sc].get(f, 0.0) for f in common]
+        norm_vals = [v / max_abs[sc] for v in raw_vals]
+        bars = ax.bar(
+            offsets,
+            norm_vals,
+            width=bar_width * 0.9,
+            label=sc,
+            color=sc_colors[i % len(sc_colors)],
+            alpha=0.85,
         )
+
+        for rect, raw, norm in zip(bars, raw_vals, norm_vals):
+            if abs(norm) < 0.05:
+                continue
+            x_center = rect.get_x() + rect.get_width() / 2
+            y_tip = norm + (0.02 if norm >= 0 else -0.02)
+            va = "bottom" if norm >= 0 else "top"
+            ax.text(
+                x_center,
+                y_tip,
+                f"{raw:.3f}",
+                ha="center",
+                va=va,
+                fontsize=5,
+                rotation=90,
+                color="black",
+            )
+
+    ax.axhline(0, color="black", linewidth=0.8)
+    ax.set_xticks(x)
+    display_names = [
+        ("* " + f[5:][:40] if f.startswith("sym__") else f[:40]) for f in common
+    ]
+    ax.set_xticklabels(display_names, rotation=35, ha="right", fontsize=8)
+    ax.set_ylabel(
+        "Normalised SHAP value (per-scenario, relative to scenario max |SHAP|)\n"
+        "positive → predicts attack, negative → predicts benign; labels = raw SHAP",
+        fontsize=8,
+    )
+    ax.set_xlabel(
+        f"Feature (top-{top_k} in ≥{min_freq}/{len(scenarios)} scenarios, sorted by mean |SHAP|)",
+        fontsize=8,
+    )
+    ax.set_ylim(-1.25, 1.25)
+
+    n_sym = sum(1 for f in common if f.startswith("sym__"))
+    sym_note = f" — {n_sym} mined feature(s) marked *" if n_sym else ""
+    ax.set_title(
+        f"Shared feature importance across scenarios — {_MODEL_LABELS[model_name]}{sym_note}\n"
+        f"Bars normalised per scenario so scale differences don't hide pattern; annotated with raw SHAP.",
+        fontsize=10,
+    )
+    ax.legend(title="Scenario", fontsize=8, title_fontsize=8, loc="best")
+    ax.grid(axis="y", alpha=0.3)
 
     fig.tight_layout()
     fig.text(
@@ -836,7 +950,180 @@ def plot_cross_scenario_heatmap(
         color="gray",
         transform=fig.transFigure,
     )
-    out = out_dir / f"feature_heatmap_{model_name}.png"
+    out = out_dir / f"common_features_{model_name}.png"
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved → {out}")
+
+
+def plot_distinctive_feature_importance(
+    imps_by_scenario: dict[str, dict[str, float]],
+    model_name: str,
+    top_k: int,
+    filtered: bool,
+    out_dir: Path,
+    method: str | None = None,
+    max_freq: int = 1,
+    top_n_per_scenario: int = 5,
+) -> None:
+    """
+    Horizontal grouped bar chart for features that are distinctive to specific scenarios.
+
+    Shows features in the top-K of at most `max_freq` scenarios, grouped by their
+    primary scenario (where they rank highest). Within each group features are sorted
+    by |SHAP| in their primary scenario. Bars for other scenarios are shown for
+    contrast — they will be near-zero for truly distinctive features.
+
+    This is the complement of plot_common_feature_importance.
+    Mined (symbolic) features are marked with '*' in their label.
+    """
+    scenarios = [s for s, imp in imps_by_scenario.items() if imp]
+    if not scenarios:
+        return
+
+    top_per_sc = {s: top_k_names(imps_by_scenario[s], top_k) for s in scenarios}
+
+    all_features = set().union(*top_per_sc.values())
+    distinctive = {
+        f
+        for f in all_features
+        if sum(1 for tops in top_per_sc.values() if f in tops) <= max_freq
+    }
+    if not distinctive:
+        print(
+            f"  [warn] {model_name}: no features appear in ≤{max_freq} scenarios' "
+            f"top-{top_k}; skipping distinctive-feature plot"
+        )
+        return
+
+    # Group each feature under the scenario where it has highest |SHAP|
+    sc_groups: dict[str, list[tuple[str, float]]] = {s: [] for s in scenarios}
+    for f in distinctive:
+        primary = max(scenarios, key=lambda s: abs(imps_by_scenario[s].get(f, 0.0)))
+        sc_groups[primary].append((f, imps_by_scenario[primary].get(f, 0.0)))
+
+    # Per scenario: keep top N by |SHAP|, sort ascending so most important is at top
+    ordered_features: list[tuple[str, str]] = []  # (feature_name, primary_scenario)
+    for s in scenarios:
+        top_feats = sorted(sc_groups[s], key=lambda x: abs(x[1]), reverse=True)[
+            :top_n_per_scenario
+        ]
+        for f, _ in reversed(
+            top_feats
+        ):  # reversed → most important at top in horizontal bar
+            ordered_features.append((f, s))
+
+    if not ordered_features:
+        return
+
+    max_abs = {
+        sc: max((abs(v) for v in imps_by_scenario[sc].values()), default=1.0) or 1.0
+        for sc in scenarios
+    }
+
+    sc_colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+    sc_color_map = {s: sc_colors[i % len(sc_colors)] for i, s in enumerate(scenarios)}
+
+    n_feat = len(ordered_features)
+    n_sc = len(scenarios)
+    bar_h = 0.8 / n_sc
+    y = np.arange(n_feat)
+
+    fig_h = max(6, n_feat * (0.3 + 0.08 * n_sc))
+    fig, ax = plt.subplots(figsize=(9, fig_h))
+
+    for i, sc in enumerate(scenarios):
+        offsets = y + (i - n_sc / 2 + 0.5) * bar_h
+        raw_vals = [imps_by_scenario[sc].get(f, 0.0) for f, _ in ordered_features]
+        norm_vals = [v / max_abs[sc] for v in raw_vals]
+        bars = ax.barh(
+            offsets,
+            norm_vals,
+            height=bar_h * 0.9,
+            label=sc,
+            color=sc_color_map[sc],
+            alpha=0.85,
+        )
+
+        for rect, raw, norm in zip(bars, raw_vals, norm_vals):
+            if abs(norm) < 0.05:
+                continue
+            x_tip = norm + (0.03 if norm >= 0 else -0.03)
+            ha = "left" if norm >= 0 else "right"
+            ax.text(
+                x_tip,
+                rect.get_y() + rect.get_height() / 2,
+                f"{raw:.3f}",
+                ha=ha,
+                va="center",
+                fontsize=5,
+                color="black",
+            )
+
+    # Dashed separators between scenario groups
+    group_sizes = [sum(1 for _, ps in ordered_features if ps == s) for s in scenarios]
+    boundary = 0
+    for size in group_sizes[:-1]:
+        boundary += size
+        ax.axhline(
+            boundary - 0.5, color="gray", linewidth=0.8, linestyle="--", alpha=0.5
+        )
+
+    # Scenario labels on the right margin
+    boundary = 0
+    for s, size in zip(scenarios, group_sizes):
+        if size:
+            mid = boundary + size / 2 - 0.5
+            ax.text(
+                1.32,
+                mid,
+                s,
+                va="center",
+                ha="left",
+                fontsize=7,
+                color=sc_color_map[s],
+                fontweight="bold",
+                transform=ax.get_yaxis_transform(),
+            )
+        boundary += size
+
+    ax.set_yticks(y)
+    display_names = [
+        ("* " + f[5:][:50] if f.startswith("sym__") else f[:50])
+        for f, _ in ordered_features
+    ]
+    ax.set_yticklabels(display_names, fontsize=7)
+    ax.axvline(0, color="black", linewidth=0.8)
+    ax.set_xlim(-1.3, 1.3)
+    ax.set_xlabel(
+        "Normalised SHAP value (per-scenario, relative to scenario max |SHAP|)\n"
+        "positive → predicts attack, negative → predicts benign; labels = raw SHAP",
+        fontsize=8,
+    )
+
+    n_sym = sum(1 for f, _ in ordered_features if f.startswith("sym__"))
+    sym_note = f" — {n_sym} mined feature(s) marked *" if n_sym else ""
+    ax.set_title(
+        f"Scenario-distinctive features — {_MODEL_LABELS[model_name]}{sym_note}\n"
+        f"Top-{top_n_per_scenario} features in top-{top_k} of ≤{max_freq} scenario(s), "
+        f"grouped and labelled by primary scenario",
+        fontsize=10,
+    )
+    ax.legend(title="Scenario", fontsize=8, title_fontsize=8, loc="lower right")
+    ax.grid(axis="x", alpha=0.3)
+
+    fig.tight_layout()
+    fig.text(
+        0.99,
+        0.01,
+        _data_label(filtered, method),
+        ha="right",
+        va="bottom",
+        fontsize=7,
+        color="gray",
+        transform=fig.transFigure,
+    )
+    out = out_dir / f"distinctive_features_{model_name}.png"
     fig.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"  Saved → {out}")
@@ -868,7 +1155,9 @@ examples:
         help=f"Run all scenarios: {', '.join(ALL_SCENARIOS)}.",
     )
     parser.add_argument(
-        "--force", action="store_true", help="Re-run even if results exist."
+        "--force",
+        action="store_true",
+        help="Start a new run directory and re-run everything, ignoring any existing results.",
     )
     parser.add_argument(
         "--no-run",
@@ -897,7 +1186,25 @@ examples:
         default=25,
         help="Top-K features for overlap/heatmap plots (default: 25).",
     )
+    parser.add_argument(
+        "--models",
+        nargs="+",
+        choices=MODELS,
+        default=None,
+        metavar="MODEL",
+        help=f"Models to run (default: all). Choices: {', '.join(MODELS)}.",
+    )
+    parser.add_argument(
+        "--window-size",
+        type=int,
+        default=2,
+        metavar="W",
+        help="Fixed-window size in seconds for alert grouping (default: 2).",
+    )
     args = parser.parse_args()
+
+    if args.models is None:
+        args.models = list(MODELS)
 
     if args.all_scenarios:
         args.scenarios = list(ALL_SCENARIOS)
@@ -907,19 +1214,39 @@ examples:
     run_ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     COMPARISON_BASE.mkdir(parents=True, exist_ok=True)
 
-    if args.no_run or args.resume:
-        candidates = sorted(
-            p
-            for p in COMPARISON_BASE.iterdir()
-            if p.is_dir() and p.name.startswith("comparison_")
-        )
-        if not candidates:
-            print("[error] No existing comparison runs found under", COMPARISON_BASE)
-            sys.exit(1)
-        run_dir = candidates[-1]
-        print(f"  Using existing run: {run_dir.name}")
+    # Encode filter config in the directory name so filtered/unfiltered runs never share a dir
+    _filter = args.filtered
+    if _filter is None:
+        filter_tag = "raw"
+    elif _filter:
+        filter_tag = f"filtered_{_filter}"
     else:
-        run_dir = COMPARISON_BASE / f"comparison_{run_ts}"
+        filter_tag = "filtered"
+
+    window_tag = f"_w{args.window_size}" if args.window_size != 2 else ""
+    dir_prefix = f"comparison_{filter_tag}{window_tag}_"
+    existing_runs = sorted(
+        p
+        for p in COMPARISON_BASE.iterdir()
+        if p.is_dir() and p.name.startswith(dir_prefix)
+    )
+
+    if args.no_run or args.resume:
+        if not existing_runs:
+            print(
+                f"[error] No existing '{filter_tag}' comparison runs found under",
+                COMPARISON_BASE,
+            )
+            sys.exit(1)
+        run_dir = existing_runs[-1]
+        print(f"  Using existing run: {run_dir.name}")
+    elif existing_runs and not args.force:
+        run_dir = existing_runs[-1]
+        print(
+            f"  Resuming latest run: {run_dir.name}  (use --force to start a new run)"
+        )
+    else:
+        run_dir = COMPARISON_BASE / f"{dir_prefix}{run_ts}"
 
     plots_dir = run_dir / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
@@ -939,18 +1266,30 @@ examples:
 
 def _run_main(args, run_dir: Path, plots_dir: Path) -> None:
     scenarios = args.scenarios
+    models: list[str] = args.models
     filtered = args.filtered is not None
     method: str | None = args.filtered if args.filtered else None
+    window_size: int = args.window_size
 
     alerts_filename = (
         f"alerts_filtered_{method}.json" if method else "alerts_filtered.json"
     )
-    cache_subdir = f"filtered_{method}" if method else "filtered"
+
+    grouping = GroupingConfig(window_size=window_size)
+    window_tag = f"_w{window_size}" if window_size != 2 else ""
+
+    if filtered:
+        method_tag = (
+            f"filtered_{method}{window_tag}" if method else f"filtered{window_tag}"
+        )
+    elif window_tag:
+        method_tag = f"w{window_size}"
+    else:
+        method_tag = "fixed_window"
 
     # ── Phase 1: Run ──────────────────────────────────────────────────────────
     if not args.no_run:
-        cache_dir = CACHE_DIR / cache_subdir if filtered else None
-        for model in MODELS:
+        for model in models:
             model_dir = run_dir / model
             for scenario in scenarios:
                 existing = _load_compare_json(model_dir, scenario)
@@ -962,6 +1301,8 @@ def _run_main(args, run_dir: Path, plots_dir: Path) -> None:
                     if filtered
                     else None
                 )
+                scenario_cache_dir = CACHE_DIR / scenario / "groups" / method_tag
+                scenario_cache_dir.mkdir(parents=True, exist_ok=True)
                 try:
                     _run_for_model(
                         scenario=scenario,
@@ -969,7 +1310,8 @@ def _run_main(args, run_dir: Path, plots_dir: Path) -> None:
                         model_dir=model_dir,
                         filter_config=args.filter_config,
                         alerts_json_path=alerts_path,
-                        cache_dir=cache_dir,
+                        cache_dir=scenario_cache_dir,
+                        grouping=grouping,
                     )
                 except Exception as exc:
                     print(f"\n[{model}/{scenario}] FAILED: {exc}")
@@ -977,27 +1319,30 @@ def _run_main(args, run_dir: Path, plots_dir: Path) -> None:
 
     # ── Phase 2: Performance comparison ───────────────────────────────────────
     print(f"\n{'='*60}\n  PHASE 2: PERFORMANCE COMPARISON\n{'='*60}")
-    all_results = _load_all_results(run_dir, scenarios)
+    all_results = _load_all_results(run_dir, scenarios, models=models)
     df = _build_comparison_df(all_results)
 
     if df.empty:
         print("[error] No results loaded. Nothing to plot.")
         return
 
-    text_table = _format_text_table(df)
+    text_table = _format_text_table(df, models=models)
     print("\n" + text_table)
     (plots_dir / "comparison_table.txt").write_text(text_table, encoding="utf-8")
     df.to_csv(plots_dir / "comparison_table.csv", index=False)
     print(f"\n  Saved → {plots_dir / 'comparison_table.txt'}")
     print(f"  Saved → {plots_dir / 'comparison_table.csv'}")
 
+    cross_dir = plots_dir / "cross_model"
+    cross_dir.mkdir(parents=True, exist_ok=True)
+
     print("\n[plots]")
-    plot_perf_auc(df, plots_dir, filtered, method)
-    plot_perf_metrics(df, plots_dir, filtered, method)
+    plot_perf_auc(df, cross_dir, filtered, method, models=models)
+    plot_perf_metrics(df, cross_dir, filtered, method, models=models)
 
     # ── Phase 3: Per-model feature analysis ───────────────────────────────────
     print(f"\n{'='*60}\n  PHASE 3: PER-MODEL FEATURE ANALYSIS\n{'='*60}")
-    for model in MODELS:
+    for model in models:
         print(f"\n  [{model}]")
         try:
             run_per_model_feature_analysis(
@@ -1013,23 +1358,63 @@ def _run_main(args, run_dir: Path, plots_dir: Path) -> None:
 
     # ── Phase 4: Cross-model feature analysis ─────────────────────────────────
     print(f"\n{'='*60}\n  PHASE 4: CROSS-MODEL FEATURE ANALYSIS\n{'='*60}")
-    all_imps = _collect_importances(run_dir, scenarios, experiment="baseline")
-
-    _print_overlap_table(all_imps, scenarios, args.top_k)
-
-    cross_dir = plots_dir / "cross_model"
-    cross_dir.mkdir(parents=True, exist_ok=True)
-
-    for ma, mb in itertools.combinations(MODELS, 2):
-        plot_cross_model_overlap(
-            all_imps, scenarios, args.top_k, filtered, cross_dir, method, ma, mb
-        )
-    plot_shap_importance_bars(
-        all_imps, scenarios, args.top_k, filtered, cross_dir, method
+    all_imps = _collect_importances(
+        run_dir, scenarios, experiment="baseline", models=models
     )
-    for model in MODELS:
-        plot_cross_scenario_heatmap(
-            all_imps.get(model, {}), model, args.top_k, filtered, cross_dir, method
+    all_imps_sym = _collect_importances(
+        run_dir, scenarios, experiment="symbolic", models=models
+    )
+
+    # Prefer symbolic importances (base + mined features) for all cross-model analysis; fall back to baseline
+    all_imps_combined: dict[str, dict[str, dict[str, float]]] = {}
+    for model in models:
+        all_imps_combined[model] = {}
+        for sc in scenarios:
+            sym = all_imps_sym.get(model, {}).get(sc, {})
+            all_imps_combined[model][sc] = (
+                sym if sym else all_imps.get(model, {}).get(sc, {})
+            )
+
+    _print_overlap_table(all_imps_combined, scenarios, args.top_k)
+
+    for ma, mb in itertools.combinations(models, 2):
+        plot_cross_model_overlap(
+            all_imps_combined,
+            scenarios,
+            args.top_k,
+            filtered,
+            cross_dir,
+            method,
+            ma,
+            mb,
+        )
+    for model in models:
+        model_plot_dir = plots_dir / model
+        model_plot_dir.mkdir(parents=True, exist_ok=True)
+        plot_shap_importance_bars(
+            {model: all_imps_combined.get(model, {})},
+            scenarios,
+            args.top_k,
+            filtered,
+            model_plot_dir,
+            method,
+        )
+        plot_common_feature_importance(
+            all_imps_combined.get(model, {}),
+            model,
+            args.top_k,
+            filtered,
+            cross_dir,
+            method,
+        )
+        plot_distinctive_feature_importance(
+            all_imps_combined.get(model, {}),
+            model,
+            args.top_k,
+            filtered,
+            cross_dir,
+            method,
+            max_freq=1,
         )
 
     print(f"\nAll output written to {run_dir}")

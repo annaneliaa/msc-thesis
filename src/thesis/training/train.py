@@ -84,8 +84,13 @@ def train_eval_holdout(
 
     perm_importances = {}
     try:
+        if getattr(model, "_skip_permutation", False):
+            raise RuntimeError(
+                "Permutation importance skipped: model flagged as too expensive"
+            )
+        _n_jobs = 1 if getattr(model, "_skip_shap", False) else -1
         perm_result = permutation_importance(
-            model, X_test, y_test, n_repeats=10, random_state=42, n_jobs=-1
+            model, X_test, y_test, n_repeats=10, random_state=42, n_jobs=_n_jobs
         )
         pairs = sorted(
             zip(feature_names, perm_result.importances_mean),
@@ -103,7 +108,18 @@ def train_eval_holdout(
         bg = X_train.sample(min(100, len(X_train)), random_state=42)
         x_explain = X_test.iloc[:200] if len(X_test) > 200 else X_test
 
-        if hasattr(model, "feature_importances_"):
+        if hasattr(model, "get_shap_values"):
+            # model provides its own fast SHAP path (e.g. GradientExplainer for LSTM)
+            bg_arr = bg.values if hasattr(bg, "values") else np.asarray(bg)
+            x_arr = (
+                x_explain.values
+                if hasattr(x_explain, "values")
+                else np.asarray(x_explain)
+            )
+            vals = model.get_shap_values(bg_arr, x_arr)
+        elif getattr(model, "_skip_shap", False):
+            raise RuntimeError("SHAP skipped: model flagged as too expensive")
+        elif hasattr(model, "feature_importances_"):
             # tree models: TreeExplainer is exact and fast
             sv = shap.TreeExplainer(model).shap_values(x_explain)
             vals = (

@@ -127,9 +127,7 @@ def _extract_probas(
     natural (parquet) order and split at int((1 - test_frac) * n).
     """
     safe_name = schema_name.replace("+", "_").replace("/", "_")
-    parquet_path = (
-        cache_dir / scenario / "transactions" / f"transactions_{safe_name}.parquet"
-    )
+    parquet_path = cache_dir / "transactions" / f"transactions_{safe_name}.parquet"
     grouping_tag = grouping_mode.replace("-", "_")
     model_version = f"0.1.0_{safe_name}_{grouping_tag}"
     model_path, metadata_path, _ = resolve_model_paths(
@@ -327,18 +325,16 @@ def main() -> None:
 def _main_body(
     args, scenario: str, scenario_dir: Path, plots_dir: Path, run_ts: str
 ) -> None:
-    cache_dir_fw = CACHE_DIR / "grouping_compare" / scenario / "fixed_window"
-    cache_dir_ab = CACHE_DIR / "grouping_compare" / scenario / "alertbert"
-    alertbert_groups_dir = (
-        CACHE_DIR / "alertbert_groups" / scenario / args.alertbert_model_id
-    )
-    for d in [cache_dir_fw, cache_dir_ab, alertbert_groups_dir]:
+    groups_base = CACHE_DIR / scenario / "groups"
+    cache_dir_fw = groups_base / "fixed_window"
+    cache_dir_ab = groups_base / "alertbert" / args.alertbert_model_id
+    for d in [cache_dir_fw, cache_dir_ab]:
         d.mkdir(parents=True, exist_ok=True)
 
     if args.clear_parquets:
         print("--- Clearing cached parquets ---")
         for cache_dir in [cache_dir_fw, cache_dir_ab]:
-            tx_dir = cache_dir / scenario / "transactions"
+            tx_dir = cache_dir / "transactions"
             if tx_dir.exists():
                 for pq in tx_dir.glob("*.parquet"):
                     print(f"  Deleting {pq.name}")
@@ -432,7 +428,6 @@ def _main_body(
             scenario=scenario,
             cache_dir=cache_dir_ab,
             grouping=grouping_ab,
-            grouping_cache_dir=alertbert_groups_dir,
             alerts_json_path=alerts_json_path,
         )
     )
@@ -447,7 +442,6 @@ def _main_body(
             grouping=grouping_ab,
             filter_config=args.filter_config,
             abstraction_map_path=ABSTRACTION_MAP_PATH,
-            grouping_cache_dir=alertbert_groups_dir,
             alerts_json_path=alerts_json_path,
         )
     )

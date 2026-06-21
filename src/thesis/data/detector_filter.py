@@ -23,6 +23,7 @@ import numpy as np
 from pathlib import Path
 
 from thesis.paths import ROOT
+from thesis.preprocessing.transactions import build_labeled_window_transactions
 
 
 class _Tee:
@@ -480,6 +481,7 @@ if __name__ == "__main__":
     ALERTS_DIR = ROOT / "data" / "alerts_csv"
     LABELS_PATH = ROOT / "data" / "ait_ads" / "labels.csv"
     PROCESSED_DATA_DIR = ROOT / "artifacts" / "processed-data"
+    TRANSACTIONS_DIR = ROOT / "artifacts" / "transactions" / "detector_filtered"
     THRESHOLD = 0.7
 
     log_path = PROCESSED_DATA_DIR / "detector_filter.log"
@@ -539,6 +541,19 @@ if __name__ == "__main__":
             with out_json.open("w", encoding="utf-8") as f:
                 _json.dump(records, f, indent=2)
             print(f"Saved: {out_json}")
+
+        # Build and save window transactions per scenario
+        TRANSACTIONS_DIR.mkdir(parents=True, exist_ok=True)
+        for scenario, group in filtered_df.groupby("scenario"):
+            tx_alerts = group.rename(
+                columns={"timestamp": "time", "detector": "short"}
+            )[
+                ["time", "name", "ip", "host", "short", "time_label", "event_label"]
+            ].assign(time=lambda d: d["time"].astype(int))
+            transactions = build_labeled_window_transactions(tx_alerts)
+            out_tx = TRANSACTIONS_DIR / f"{scenario}_transactions.csv"
+            transactions.to_csv(out_tx, index=False)
+            print(f"Saved: {out_tx}")
 
         # Threshold sweep — full per-detector breakdown at each tau
         _log_threshold_sweep(

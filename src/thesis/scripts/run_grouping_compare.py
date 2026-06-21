@@ -159,8 +159,6 @@ def _run_pair(
     cache_dir: Path,
     filter_config: Path | None,
     results_dir: Path,
-    grouping_cache_dir: Path | None = None,
-    transactions_dir: Path | None = None,
     alerts_json_path: Path | None = None,
 ) -> tuple[ExperimentResult, ExperimentResult, list]:
     baseline = run_baseline_experiment(
@@ -168,9 +166,7 @@ def _run_pair(
             scenario=scenario,
             cache_dir=cache_dir,
             grouping=grouping,
-            grouping_cache_dir=grouping_cache_dir,
             results_dir=results_dir,
-            transactions_dir=transactions_dir,
             alerts_json_path=alerts_json_path,
         )
     )
@@ -181,18 +177,11 @@ def _run_pair(
             grouping=grouping,
             filter_config=filter_config,
             abstraction_map_path=ABSTRACTION_MAP_PATH,
-            grouping_cache_dir=grouping_cache_dir,
             results_dir=results_dir,
-            transactions_dir=transactions_dir,
             alerts_json_path=alerts_json_path,
         )
     )
-    txs = _load_transactions(
-        scenario,
-        cache_dir,
-        groups_cache_dir=grouping_cache_dir,
-        transactions_dir=transactions_dir,
-    )
+    txs = _load_transactions(scenario, cache_dir)
     return baseline, symbolic, txs
 
 
@@ -1546,38 +1535,32 @@ def _main_body(
     plots_dir: Path,
     run_ts: str,
 ) -> None:
-    # Each method gets its own groups cache dir so the alert-cache skip in
-    # _process_alert_batch doesn't cause one method's groups to be reused by the
-    # next method (which produced identical scores between methods in earlier runs).
-    cache_dir = CACHE_DIR / scenario
-    groups_base = CACHE_DIR / "groups" / scenario
-    fw_groups_dir = groups_base / "fixed_window"
-    fwh_groups_dir = groups_base / "fixed_window_host"
-    td_groups_dir = groups_base / "time_delta"
-    tdh_groups_dir = groups_base / "time_delta_host"
-    alertbert_groups_dir = (
-        CACHE_DIR / "alertbert_groups" / scenario / args.alertbert_model_id
-    )
+    groups_base = CACHE_DIR / scenario / "groups"
+    fw_cache_dir = groups_base / "fixed_window"
+    fwh_cache_dir = groups_base / "fixed_window_host"
+    td_cache_dir = groups_base / "time_delta"
+    tdh_cache_dir = groups_base / "time_delta_host"
+    alertbert_cache_dir = groups_base / "alertbert" / args.alertbert_model_id
 
     if args.force_grouping:
         for d in [
-            fw_groups_dir,
-            fwh_groups_dir,
-            td_groups_dir,
-            tdh_groups_dir,
-            alertbert_groups_dir,
+            fw_cache_dir,
+            fwh_cache_dir,
+            td_cache_dir,
+            tdh_cache_dir,
+            alertbert_cache_dir,
         ]:
-            if d.exists():
-                shutil.rmtree(d)
-                print(f"  [force-grouping] Cleared {d}")
+            groups_subdir = d / "groups"
+            if groups_subdir.exists():
+                shutil.rmtree(groups_subdir)
+                print(f"  [force-grouping] Cleared {groups_subdir}")
 
-    cache_dir.mkdir(parents=True, exist_ok=True)
     for d in [
-        fw_groups_dir,
-        fwh_groups_dir,
-        td_groups_dir,
-        tdh_groups_dir,
-        alertbert_groups_dir,
+        fw_cache_dir,
+        fwh_cache_dir,
+        td_cache_dir,
+        tdh_cache_dir,
+        alertbert_cache_dir,
     ]:
         d.mkdir(parents=True, exist_ok=True)
 
@@ -1603,11 +1586,9 @@ def _main_body(
     baseline_fw, symbolic_fw, txs_fw = _run_pair(
         scenario,
         grouping_fw,
-        cache_dir,
+        fw_cache_dir,
         args.filter_config,
         results_dir=scenario_dir,
-        grouping_cache_dir=fw_groups_dir,
-        transactions_dir=scenario_dir / "fixed_window" / "transactions",
         alerts_json_path=alerts_json_path,
     )
     gc.collect()
@@ -1616,11 +1597,9 @@ def _main_body(
     baseline_fwh, symbolic_fwh, txs_fwh = _run_pair(
         scenario,
         grouping_fwh,
-        cache_dir,
+        fwh_cache_dir,
         args.filter_config,
         results_dir=scenario_dir,
-        grouping_cache_dir=fwh_groups_dir,
-        transactions_dir=scenario_dir / "fixed_window_host" / "transactions",
         alerts_json_path=alerts_json_path,
     )
     gc.collect()
@@ -1629,11 +1608,9 @@ def _main_body(
     baseline_td, symbolic_td, txs_td = _run_pair(
         scenario,
         grouping_td,
-        cache_dir,
+        td_cache_dir,
         args.filter_config,
         results_dir=scenario_dir,
-        grouping_cache_dir=td_groups_dir,
-        transactions_dir=scenario_dir / "time_delta" / "transactions",
         alerts_json_path=alerts_json_path,
     )
     gc.collect()
@@ -1642,26 +1619,21 @@ def _main_body(
     baseline_tdh, symbolic_tdh, txs_tdh = _run_pair(
         scenario,
         grouping_tdh,
-        cache_dir,
+        tdh_cache_dir,
         args.filter_config,
         results_dir=scenario_dir,
-        grouping_cache_dir=tdh_groups_dir,
-        transactions_dir=scenario_dir / "time_delta_host" / "transactions",
         alerts_json_path=alerts_json_path,
     )
 
-    # Free allocations before loading torch + AlertBERT model.
     gc.collect()
 
     print("\n--- [5/5] alertbert ---")
     baseline_ab, symbolic_ab, txs_ab = _run_pair(
         scenario,
         grouping_ab,
-        cache_dir,
+        alertbert_cache_dir,
         args.filter_config,
         results_dir=scenario_dir,
-        grouping_cache_dir=alertbert_groups_dir,
-        transactions_dir=scenario_dir / "alertbert" / "transactions",
         alerts_json_path=alerts_json_path,
     )
 

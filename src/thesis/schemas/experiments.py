@@ -27,9 +27,7 @@ class SymbolicExperimentConfig:
     test_frac: float = 0.3
     cache_dir: Path = field(default_factory=lambda: CACHE_DIR)
     grouping: GroupingConfig = field(default_factory=GroupingConfig)
-    grouping_cache_dir: Path | None = None
     results_dir: Path | None = None
-    transactions_dir: Path | None = None
     alerts_json_path: Path | None = None
 
 
@@ -42,9 +40,7 @@ class BaselineExperimentConfig:
     test_frac: float = 0.3
     cache_dir: Path = field(default_factory=lambda: CACHE_DIR)
     grouping: GroupingConfig = field(default_factory=GroupingConfig)
-    grouping_cache_dir: Path | None = None
     results_dir: Path | None = None
-    transactions_dir: Path | None = None
     alerts_json_path: Path | None = None
 
 

@@ -163,12 +163,15 @@ def feature_funnel(sym: dict) -> dict:
     top_coeff = met.get("top_feature_importances", {}).get("by_coefficient", {})
     top_perm = met.get("top_feature_importances", {}).get("by_permutation", {})
 
-    n_nonzero_coeff = sum(1 for v in top_coeff.values() if v["importance"] != 0)
-    n_nonzero_perm = sum(1 for v in top_perm.values() if v["importance"] > 0)
+    def _imp(v) -> float:
+        return v["importance"] if isinstance(v, dict) else float(v)
+
+    n_nonzero_coeff = sum(1 for v in top_coeff.values() if _imp(v) != 0)
+    n_nonzero_perm = sum(1 for v in top_perm.values() if _imp(v) > 0)
 
     learned_key = best_importance_key(sym)
     top_learned = met.get("top_feature_importances", {}).get(learned_key, {})
-    n_learned = sum(1 for v in top_learned.values() if v["importance"] != 0)
+    n_learned = sum(1 for v in top_learned.values() if _imp(v) != 0)
 
     n_mined = (
         _i(m.get("n_itemsets_mined"))

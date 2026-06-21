@@ -650,12 +650,12 @@ def plot_group_size_distribution(
 
 
 def load_transactions(
-    transactions_dir: str, scenarios: list[str] | None = None
+    transactions_dir: str, scenarios: list[str] | None = None, suffix: str = ""
 ) -> pd.DataFrame:
     """
     Load pre-computed transaction CSVs produced by run_eda.py.
 
-    Expects one file per scenario: <transactions_dir>/<scenario>_transactions.csv
+    Expects one file per scenario: <transactions_dir>/<scenario>_transactions<suffix>.csv
     with at least columns: window_start, window_end, n_alerts, tx_label.
 
     Returns a combined DataFrame with an added 'scenario' column.
@@ -665,7 +665,7 @@ def load_transactions(
 
     frames = []
     for sc in scenarios:
-        path = os.path.join(transactions_dir, f"{sc}_transactions.csv")
+        path = os.path.join(transactions_dir, f"{sc}_transactions{suffix}.csv")
         if not os.path.exists(path):
             raise FileNotFoundError(f"Transactions CSV not found: {path}")
         df = pd.read_csv(

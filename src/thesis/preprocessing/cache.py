@@ -12,10 +12,10 @@ from thesis.schemas.cache import (
 
 
 class TokenCache:
-    def __init__(self, cache_dir: Path, scenario: str) -> None:
+    def __init__(self, cache_dir: Path) -> None:
         self.cache_dir = cache_dir
-        self.alert_store_dir = cache_dir / scenario / "alerts"
-        self.group_store_dir = cache_dir / scenario / "groups"
+        self.alert_store_dir = cache_dir / "alerts"
+        self.group_store_dir = cache_dir / "groups"
 
         self.alert_store_dir.mkdir(parents=True, exist_ok=True)
         self.group_store_dir.mkdir(parents=True, exist_ok=True)

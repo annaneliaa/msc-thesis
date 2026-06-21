@@ -25,6 +25,11 @@ class _LSTMNet(nn.Module):
 class LSTMClassifier(BaseEstimator, ClassifierMixin):
     """Sklearn-compatible LSTM classifier for tabular binary classification."""
 
+    _skip_shap = True  # fallback PermutationExplainer with O(1000s) features causes OOM; use get_shap_values instead
+    _skip_permutation = (
+        True  # 1494 features × 10 repeats × predict_proba is prohibitively slow on CPU
+    )
+
     def __init__(
         self,
         hidden_size: int = 64,
@@ -77,9 +82,27 @@ class LSTMClassifier(BaseEstimator, ClassifierMixin):
         if isinstance(X, pd.DataFrame):
             X = X.values
         X_t = torch.tensor(X, dtype=torch.float32)
+        chunks = []
         with torch.no_grad():
-            proba = torch.sigmoid(self.net_(X_t)).numpy()
+            for i in range(0, len(X_t), self.batch_size):
+                chunks.append(
+                    torch.sigmoid(self.net_(X_t[i : i + self.batch_size])).numpy()
+                )
+        proba = np.concatenate(chunks)
         return np.column_stack([1 - proba, proba])
 
     def predict(self, X):
         return (self.predict_proba(X)[:, 1] >= 0.5).astype(int)
+
+    def get_shap_values(self, X_bg: np.ndarray, X_explain: np.ndarray) -> np.ndarray:
+        """Gradient-based SHAP values via GradientExplainer. Returns (n_samples, n_features)."""
+        import shap
+
+        bg_t = torch.tensor(X_bg, dtype=torch.float32).unsqueeze(-1)
+        x_t = torch.tensor(X_explain, dtype=torch.float32).unsqueeze(-1)
+        explainer = shap.GradientExplainer(self.net_, bg_t)
+        sv = explainer.shap_values(
+            x_t
+        )  # list of one array or ndarray: (n_samples, n_features, 1)
+        arr = sv[0] if isinstance(sv, list) else sv
+        return arr[:, :, 0]  # drop trivial input_size dim → (n_samples, n_features)

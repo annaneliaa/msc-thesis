@@ -233,7 +233,7 @@ def preprocess_alert_batch(
         )
         grouper = build_grouper(grouping)
 
-        cache = TokenCache(cache_dir=cache_path, scenario=scenario)
+        cache = TokenCache(cache_dir=cache_path / scenario)
         cache_ingestor = CacheIngestor(cache=cache)
 
         processed_count = process_alert_batch(
@@ -272,7 +272,7 @@ def select_groups(
     Query cache and build group snapshots ready to pass to mining preparation layer.
     """
     try:
-        cache = TokenCache(cache_dir=Path(cache_dir), scenario=scenario)
+        cache = TokenCache(cache_dir=Path(cache_dir) / scenario)
 
         snapshots = select_groups_from_cache(
             cache=cache,
@@ -340,7 +340,7 @@ def load_transactions(
     Load group snapshots from cache, convert to transactions and save back to cache.
     """
     try:
-        cache = TokenCache(cache_dir=Path(cache_dir), scenario=scenario)
+        cache = TokenCache(cache_dir=Path(cache_dir) / scenario)
 
         snapshots = select_groups_from_cache(
             cache=cache,
@@ -404,7 +404,7 @@ def encode_transactions(
     load a FeatureSchema, encode transactions, and save row-based features.
     """
     try:
-        cache = TokenCache(cache_dir=Path(cache_dir), scenario=scenario_name)
+        cache = TokenCache(cache_dir=Path(cache_dir) / scenario_name)
 
         snapshots = select_groups_from_cache(
             cache=cache,

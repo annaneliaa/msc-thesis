@@ -54,6 +54,7 @@ class GroupingConfig(BaseModel):
     """Selects the alert-grouping strategy for preprocessing."""
 
     mode: str = "fixed_window"  # "fixed_window" | "alertbert"
+    window_size: int = 2  # seconds; only used by fixed_window modes
     alertbert: AlertBERTConfig = AlertBERTConfig()
 
 

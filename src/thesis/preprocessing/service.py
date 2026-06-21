@@ -16,6 +16,7 @@ from thesis.preprocessing.group_selector import (
 from thesis.preprocessing.group_alerts import (
     ALERTBERT_METHOD,
     FIXED_WINDOW_METHOD,
+    FIXED_WINDOW_HOST_METHOD,
     group_alerts,
 )
 
@@ -53,6 +54,7 @@ def process_alert_batch(
     ingestor: CacheIngestor,
     grouping_mode: str = FIXED_WINDOW_METHOD,
     grouper: AlertBERTGrouper | None = None,
+    window_size: int = 2,
 ) -> int:
     tokenized_alerts: list[TokenizedAlert] = []
     for row in rows:
@@ -65,7 +67,12 @@ def process_alert_batch(
             print(f"Skipping row due to parsing/tokenization error: {e}")
             continue
 
-    alert_groups = group_alerts(tokenized_alerts, method=grouping_mode, grouper=grouper)
+    grouping_kwargs: dict = {}
+    if grouping_mode in (FIXED_WINDOW_METHOD, FIXED_WINDOW_HOST_METHOD):
+        grouping_kwargs["window_size"] = window_size
+    alert_groups = group_alerts(
+        tokenized_alerts, method=grouping_mode, grouper=grouper, **grouping_kwargs
+    )
 
     if tokenized_alerts:
         ingestor.ingest_alert_batch(tokenized_alerts, batch_name=scenario)

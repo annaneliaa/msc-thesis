@@ -282,12 +282,11 @@ def run_symbolic_experiment(
     alerts_path = _convert_alerts_to_json(config.scenario, config.alerts_json_path)
 
     # 2. Tokenise + ingest into cache
-    grouping_cache_dir = config.grouping_cache_dir
     print("[2/8] Processing alert batch...")
     _process_alert_batch(
         config.scenario,
         alerts_path,
-        grouping_cache_dir if grouping_cache_dir is not None else config.cache_dir,
+        config.cache_dir,
         grouping_mode=config.grouping.mode,
         grouping=config.grouping,
     )
@@ -298,20 +297,8 @@ def run_symbolic_experiment(
 
     # 4. Build transactions from closed groups
     print("[4/8] Building transactions from cache...")
-    tx_dir = config.transactions_dir
-    transactions = _load_transactions(
-        config.scenario,
-        config.cache_dir,
-        groups_cache_dir=grouping_cache_dir,
-        transactions_dir=tx_dir,
-    )
-
-    _resolved_tx_dir = (
-        tx_dir
-        if tx_dir is not None
-        else config.cache_dir / config.scenario / "transactions"
-    )
-    transactions_path = _resolved_tx_dir / "transactions_raw.json"
+    transactions = _load_transactions(config.scenario, config.cache_dir)
+    transactions_path = config.cache_dir / "transactions" / "transactions_raw.json"
 
     # 5. Mine and register symbolic schema
     print("[5/8] Mining transactions...")
@@ -338,7 +325,6 @@ def run_symbolic_experiment(
         config.schema_name,
         config.cache_dir,
         feature_selection=feature_selection,
-        transactions_dir=tx_dir,
     )
 
     # 7. Train model
