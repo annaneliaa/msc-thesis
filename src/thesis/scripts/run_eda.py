@@ -20,15 +20,12 @@ Usage:
     # analysis only, skip plot generation
     python src/thesis/scripts/run_eda.py --all --no-plots
 
-    # filtered variants — loads artifacts/processed-data/<scenario>/alerts_filtered_<METHOD>.csv
-    python src/thesis/scripts/run_eda.py --all --filtered naive50
-    python src/thesis/scripts/run_eda.py --all --filtered type_stratified
+    # balanced alert variants — loads artifacts/alerts/balanced/<METHOD>/<scenario>_alerts.csv
+    python src/thesis/scripts/run_eda.py --all --balanced naive50
+    python src/thesis/scripts/run_eda.py --all --balanced type_stratified
 
---filtered options:
-    naive50           Random 50/50 undersample of attack vs benign.
-    type_stratified   Caps each attack type at the count of the 2nd most common
-                      attack type, then keeps all benign samples.
-    (bare --filtered) Loads alerts_filtered.csv (legacy detector-score filter).
+    # balanced transaction variants — loads artifacts/transactions/balanced/<METHOD>/ (plots only)
+    python src/thesis/scripts/run_eda.py --all --balanced naive50 --plots-only
 
 Output (all under artifacts/experiments/run_eda/run_<ts>/):
     <scenario>/                               -- per-scenario CSVs and plots (Phase 1)
@@ -166,7 +163,7 @@ def run_scenario(
     scenario: str,
     out_path: Path,
     summary_path: Path,
-    filtered: str | None = None,
+    balanced: str | None = None,
 ) -> None:
     os.makedirs(out_path, exist_ok=True)
     os.makedirs(summary_path, exist_ok=True)
@@ -192,21 +189,15 @@ def run_scenario(
             f.write(f"Max timestamp: {df['time'].max()}\n\n")
 
         transactions = build_labeled_window_transactions(df, window_size_s=2)
-        transactions.to_csv(out_path / f"{scenario}_transactions.csv", index=False)
-        tx_cache_dir = TRANSACTIONS_BASE_DIR / _tx_version(filtered)
+        tx_cache_dir = _tx_dir(balanced)
         tx_cache_dir.mkdir(parents=True, exist_ok=True)
         transactions.to_csv(tx_cache_dir / f"{scenario}_transactions.csv", index=False)
 
         benign_tx = transactions[transactions["tx_label"] == "benign"].copy()
         attack_tx = transactions[transactions["tx_label"] == "attack"].copy()
-        mixed_tx = transactions[transactions["tx_label"] == "mixed"].copy()
 
         f.write("Transaction label distribution:\n")
         f.write(transactions["tx_label"].value_counts().to_string() + "\n\n")
-
-        benign_tx.to_csv(out_path / f"{scenario}_benign_transactions.csv", index=False)
-        attack_tx.to_csv(out_path / f"{scenario}_attack_transactions.csv", index=False)
-        mixed_tx.to_csv(out_path / f"{scenario}_mixed_transactions.csv", index=False)
 
         tx = transactions.copy()
         tx["tx_size"] = tx["items"].apply(len)
@@ -236,7 +227,7 @@ def run_scenario(
         plt.gcf().text(
             0.99,
             0.01,
-            _data_label(filtered),
+            _data_label(balanced),
             ha="right",
             va="bottom",
             fontsize=7,
@@ -247,21 +238,14 @@ def run_scenario(
         plt.close()
 
         pair_freq_all = count_pair_frequency(tx)
-        pair_freq_all.to_csv(out_path / f"{scenario}_pair_frequencies.csv", index=False)
         f.write("Top 20 most common item pairs across all transactions:\n")
         f.write(pair_freq_all.head(20).to_string(index=False) + "\n\n")
 
         pair_freq_benign = count_pair_frequency(benign_tx)
-        pair_freq_benign.to_csv(
-            out_path / f"{scenario}_benign_pair_frequencies.csv", index=False
-        )
         f.write("Top 20 most common item pairs in BENIGN transactions:\n")
         f.write(pair_freq_benign.head(20).to_string(index=False) + "\n\n")
 
         pair_freq_attack = count_pair_frequency(attack_tx)
-        pair_freq_attack.to_csv(
-            out_path / f"{scenario}_attack_pair_frequencies.csv", index=False
-        )
         f.write("Top 20 most common item pairs in ATTACK transactions:\n")
         f.write(pair_freq_attack.head(20).to_string(index=False) + "\n\n")
 
@@ -271,9 +255,6 @@ def run_scenario(
             on="pair",
             how="inner",
         ).fillna(0)
-        intersection.to_csv(
-            out_path / f"{scenario}_pair_frequency_intersection.csv", index=False
-        )
 
         total_pairs = len(pair_freq_all)
         intersection_pairs = len(intersection)
@@ -288,7 +269,6 @@ def run_scenario(
         f.write(intersection.head(20).to_string(index=False) + "\n\n")
 
         pair_metrics_df = all_pair_metrics(tx)
-        pair_metrics_df.to_csv(out_path / f"{scenario}_pair_metrics.csv", index=False)
         f.write("Top 20 item pairs by attack count + attack support:\n")
         f.write(pair_metrics_df.head(20).to_string(index=False) + "\n\n")
 
@@ -306,7 +286,7 @@ def run_scenario(
         plt.gcf().text(
             0.99,
             0.01,
-            _data_label(filtered),
+            _data_label(balanced),
             ha="right",
             va="bottom",
             fontsize=7,
@@ -321,7 +301,6 @@ def run_scenario(
             n_attack_windows=len(attack_tx),
             n_benign_windows=len(benign_tx),
         )
-        pair_tfidf.to_csv(out_path / f"{scenario}_pair_tfidf.csv", index=False)
         f.write("Top 20 item pairs by attack TF-IDF score:\n")
         f.write(
             pair_tfidf.sort_values("tfidf_attack", ascending=False)
@@ -342,17 +321,11 @@ def run_scenario(
         f.write("Top 30 most common signatures:\n")
         f.write(sig_counts.head(30).to_string(index=False) + "\n\n")
 
-        sig_dir = summary_path / "signatures"
-        os.makedirs(sig_dir, exist_ok=True)
-        sig_counts.to_csv(
-            sig_dir / f"{scenario}_unique_signature_counts.csv", index=False
-        )
-
     print(f"  {scenario}: done → {out_path}")
 
 
 def save_overview_table(
-    all_df: pd.DataFrame, run_dir: Path, filtered: str | None = None
+    all_df: pd.DataFrame, run_dir: Path, balanced: str | None = None
 ) -> None:
     scenarios = [s for s in SCENARIOS if s in all_df["scenario"].unique()]
 
@@ -429,7 +402,7 @@ def save_overview_table(
     fig.text(
         0.99,
         0.01,
-        _data_label(filtered),
+        _data_label(balanced),
         ha="right",
         va="bottom",
         fontsize=7,
@@ -441,20 +414,20 @@ def save_overview_table(
     print(f"  overview_table.png → {run_dir / 'overview_table.png'}")
 
 
-def _data_label(filtered: str | None) -> str:
-    if filtered is None:
+def _data_label(balanced: str | None) -> str:
+    if balanced is None:
         return "data: raw"
-    return f"data: filtered ({filtered})" if filtered else "data: filtered"
+    return f"data: balanced ({balanced})"
 
 
-def _tx_version(filtered: str | None) -> str:
-    if filtered is None:
-        return "raw"
-    return filtered if filtered else "detector_filtered"
+def _tx_dir(balanced: str | None) -> Path:
+    if balanced is None:
+        return TRANSACTIONS_BASE_DIR / "raw"
+    return TRANSACTIONS_BASE_DIR / "from_balanced_alerts" / balanced
 
 
 def save_label_distribution_table(
-    all_df: pd.DataFrame, run_dir: Path, filtered: str | None = None
+    all_df: pd.DataFrame, run_dir: Path, balanced: str | None = None
 ) -> None:
     """
     Plot a table showing per-scenario breakdown of each time_label:
@@ -558,7 +531,7 @@ def save_label_distribution_table(
     fig.text(
         0.99,
         0.01,
-        _data_label(filtered),
+        _data_label(balanced),
         ha="right",
         va="bottom",
         fontsize=7,
@@ -575,7 +548,7 @@ def _run_plots_phase(
     scenarios: list[str],
     all_df: pd.DataFrame,
     run_dir: Path,
-    filtered: str | None,
+    balanced: str | None,
     bin_hours: float = 1.0,
     fmt: str = "png",
     top_k: int = 20,
@@ -583,7 +556,7 @@ def _run_plots_phase(
     plots_dir = run_dir / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
 
-    tx_dir = TRANSACTIONS_BASE_DIR / _tx_version(filtered)
+    tx_dir = _tx_dir(balanced)
     tx_df = None
     if tx_dir.exists():
         try:
@@ -597,7 +570,7 @@ def _run_plots_phase(
             "Run without --plots-only first to generate them."
         )
 
-    data_label = _data_label(filtered)
+    data_label = _data_label(balanced)
 
     def _out(name: str) -> str:
         return str(plots_dir / f"{name}.{fmt}")
@@ -694,15 +667,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Run EDA for all scenarios.",
     )
     p.add_argument(
-        "--filtered",
-        nargs="?",
-        const="",
+        "--balanced",
         default=None,
         metavar="METHOD",
         help=(
-            "Load a pre-processed variant instead of raw alerts. "
-            "Pass a method name to load alerts_filtered_<METHOD>.csv "
-            "(e.g. --filtered naive50), or bare --filtered for alerts_filtered.csv."
+            "Load balanced data instead of raw. "
+            "For Phase 1, loads artifacts/alerts/balanced/<METHOD>/<scenario>_alerts.csv. "
+            "For Phase 2, loads artifacts/transactions/balanced/<METHOD>/. "
+            "Example: --balanced naive50"
         ),
     )
     p.add_argument(
@@ -755,21 +727,26 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(1)
 
     run_ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    run_dir = EXPERIMENTS_DIR / f"run_{run_ts}"
+    balanced_method = args.balanced
+    data_tag = f"balanced_{balanced_method}" if balanced_method else "raw"
+    run_dir = EXPERIMENTS_DIR / f"run_{run_ts}_{data_tag}"
     summary_path = run_dir / "summary"
 
-    filtered_method = (
-        args.filtered
-    )  # None = raw, "" = alerts_filtered.csv, "naive50" = alerts_filtered_naive50.csv
-    suffix = f"_{filtered_method}" if filtered_method else ""
-    filtered_filename = f"alerts_filtered{suffix}.csv"
-
     print(f"Loading alerts for: {', '.join(scenarios)}")
-    if filtered_method is not None:
-        print(f"  Source: artifacts/processed-data/<scenario>/{filtered_filename}")
+    if balanced_method is not None:
+        print(
+            f"  Source: artifacts/alerts/balanced/{balanced_method}/<scenario>_alerts.csv"
+        )
         frames = []
         for sc in scenarios:
-            path = _REPO / "artifacts" / "processed-data" / sc / filtered_filename
+            path = (
+                _REPO
+                / "artifacts"
+                / "alerts"
+                / "balanced"
+                / balanced_method
+                / f"{sc}_alerts.csv"
+            )
             df = pd.read_csv(path, dtype=str)
             df["time"] = pd.to_numeric(df["time"], errors="coerce")
             df["timestamp"] = pd.to_datetime(df["time"], unit="s", utc=True)
@@ -792,14 +769,14 @@ def main(argv: list[str] | None = None) -> None:
                 scenario,
                 run_dir / scenario,
                 summary_path,
-                filtered=filtered_method,
+                balanced=balanced_method,
             )
 
         print("\nComputing dataset overview table...")
-        save_overview_table(all_df, run_dir, filtered=filtered_method)
+        save_overview_table(all_df, run_dir, balanced=balanced_method)
 
         print("\nComputing label distribution table...")
-        save_label_distribution_table(all_df, run_dir, filtered=filtered_method)
+        save_label_distribution_table(all_df, run_dir, balanced=balanced_method)
 
     # Phase 2: overview plots
     if not args.no_plots:
@@ -807,7 +784,7 @@ def main(argv: list[str] | None = None) -> None:
             scenarios,
             all_df,
             run_dir,
-            filtered_method,
+            balanced_method,
             bin_hours=args.bin_hours,
             fmt=args.fmt,
             top_k=args.top_k,

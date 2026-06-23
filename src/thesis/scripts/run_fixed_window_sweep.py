@@ -78,7 +78,8 @@ class _Tee:
 
 
 _DEFAULT_WINDOWS = [1, 2, 5, 10, 30, 60]
-_PROCESSED_DATA_DIR = _REPO / "artifacts" / "processed-data"
+_RAW_ALERTS_DIR = _REPO / "data" / "alerts_csv"
+_BALANCED_ALERTS_DIR = _REPO / "artifacts" / "alerts" / "balanced"
 _EXPERIMENTS_DIR = _REPO / "artifacts" / "experiments" / "run_fixed_window_sweep"
 _BENIGN_LABEL = "false_positive"
 
@@ -86,6 +87,23 @@ _BENIGN_LABEL = "false_positive"
 # ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
+
+
+def _alerts_source_path(scenario: str, filter_method: str | None) -> Path:
+    if filter_method:
+        return _BALANCED_ALERTS_DIR / filter_method / f"{scenario}_alerts.json"
+    return _RAW_ALERTS_DIR / f"{scenario}_alerts.txt"
+
+
+def _load_alert_rows(path: Path) -> list[dict]:
+    """Read alert rows from JSON (balanced) or CSV/txt (raw)."""
+    if path.suffix == ".json":
+        with path.open("r", encoding="utf-8") as f:
+            return json.load(f)
+    import csv
+
+    with path.open("r", encoding="utf-8", newline="") as f:
+        return list(csv.DictReader(f))
 
 
 def _tok_cache_path(scenario: str, filter_method: str | None) -> Path:
@@ -141,15 +159,11 @@ def load_and_tokenize(
         print(f"  [cache] Loading tokenized alerts from {cache_path}")
         return _load_tok_cache(cache_path)
 
-    filename = (
-        f"alerts_filtered_{filter_method}.json" if filter_method else "alerts.json"
-    )
-    alerts_path = _PROCESSED_DATA_DIR / scenario / filename
+    alerts_path = _alerts_source_path(scenario, filter_method)
     if not alerts_path.exists():
-        raise FileNotFoundError(f"Processed alerts not found: {alerts_path}")
+        raise FileNotFoundError(f"Alerts not found: {alerts_path}")
 
-    with alerts_path.open("r", encoding="utf-8") as f:
-        rows = json.load(f)
+    rows = _load_alert_rows(alerts_path)
 
     tokenized: list[TokenizedAlert] = []
     skipped = 0
@@ -996,6 +1010,258 @@ def plot_cross_scenario(
     print(f"\nCross-scenario plots saved → {out_path}")
 
 
+def plot_scenario_window_overview(
+    scenario_results: dict[str, list[dict]],
+    out_dir: Path,
+    windows: list[float],
+    filter_method: str | None = None,
+) -> None:
+    """
+    Matplotlib table — one row per (scenario, window), grouped by scenario.
+
+    Columns: Scenario | Window | [per method: Total, Benign, Attack, Att%]
+    Attack count = n_attack + n_mixed (all non-benign transactions).
+    """
+    scenarios = sorted(scenario_results.keys())
+    methods = ["fixed_window", "fixed_window_host"]
+    method_labels = [_LBL_METHOD[m] for m in methods]
+
+    col_labels = ["Scenario", "Window"]
+    for ml in method_labels:
+        col_labels += [f"{ml}\nTotal", f"{ml}\nBenign", f"{ml}\nAttack", f"{ml}\nAtt%"]
+
+    sc_bg = ["#EEF3FF", "#FFF8EE"]
+    cell_text: list[list[str]] = []
+    cell_colors: list[list[str]] = []
+
+    for i, sc in enumerate(scenarios):
+        rows_for_sc = scenario_results[sc]
+        bg = sc_bg[i % 2]
+        first = True
+        for w in sorted(windows):
+            row: list[str] = [sc if first else "", f"{w:g}s"]
+            first = False
+            for m in methods:
+                result = next(
+                    (
+                        r
+                        for r in rows_for_sc
+                        if r["method"] == m and r["window_val"] == w
+                    ),
+                    None,
+                )
+                if result:
+                    n_tx = result["n_tx"]
+                    n_benign = result["n_benign"]
+                    n_att = result["n_attack"] + result["n_mixed"]
+                    att_pct = f"{100 * n_att / n_tx:.1f}%" if n_tx else "—"
+                    row += [f"{n_tx:,}", f"{n_benign:,}", f"{n_att:,}", att_pct]
+                else:
+                    row += ["—", "—", "—", "—"]
+            cell_text.append(row)
+            cell_colors.append([bg] * len(col_labels))
+
+    n_rows = len(cell_text)
+    n_cols = len(col_labels)
+    fig_height = max(4, 0.32 * (n_rows + 2))
+    fig_width = max(10, 1.5 * n_cols)
+
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+    ax.axis("off")
+    tbl = ax.table(
+        cellText=cell_text,
+        colLabels=col_labels,
+        cellColours=cell_colors,
+        loc="center",
+        cellLoc="center",
+    )
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(8)
+    tbl.scale(1.0, 1.4)
+
+    for j in range(n_cols):
+        tbl[0, j].set_facecolor("#2D2D2D")
+        tbl[0, j].set_text_props(fontweight="bold", color="white")
+
+    ax.set_title("Transaction counts by scenario and window size", fontsize=12, pad=10)
+    plt.tight_layout()
+    fig.text(
+        0.99,
+        0.01,
+        f"data: filtered ({filter_method})" if filter_method else "data: raw",
+        ha="right",
+        va="bottom",
+        fontsize=7,
+        color="gray",
+        transform=fig.transFigure,
+    )
+    out_path = out_dir / "scenario_window_overview.png"
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Scenario/window overview saved → {out_path}")
+
+
+def plot_metrics_heatmap(
+    scenario_results: dict[str, list[dict]],
+    out_dir: Path,
+    windows: list[float],
+    method: str = "fixed_window",
+    filter_method: str | None = None,
+) -> None:
+    """
+    2×3 grid of (scenario × window) heatmaps — one metric per panel.
+
+      A  Attack %             (attack+mixed)/n_tx — class imbalance
+      B  Purity %             (benign+attack)/n_tx — no mixed-label tx
+      C  Mean alerts/tx       transaction richness
+      D  Single-alert tx %    degenerate transactions (window too small?)
+      E  Recurring profiles % same alert type fires multiple times (window too large?)
+      F  Split viable         temporal 70/30 split has both classes in train+test
+    """
+    scenarios = sorted(scenario_results.keys())
+    n_scen = len(scenarios)
+    n_win = len(windows)
+    win_labels = [f"{w:g}s" for w in windows]
+
+    keys = [
+        "att_pct",
+        "purity_pct",
+        "mean_alerts",
+        "pct_single_alert",
+        "pct_profile_repeated",
+        "split_ok",
+    ]
+    mats: dict[str, np.ndarray] = {k: np.full((n_scen, n_win), np.nan) for k in keys}
+
+    for i, sc in enumerate(scenarios):
+        rows = [r for r in scenario_results[sc] if r["method"] == method]
+        for j, w in enumerate(windows):
+            r = next((x for x in rows if x["window_val"] == w), None)
+            if r is None:
+                continue
+            n_tx = r["n_tx"]
+            n_att = r["n_attack"] + r["n_mixed"]
+            mats["att_pct"][i, j] = 100 * n_att / n_tx if n_tx else 0.0
+            mats["purity_pct"][i, j] = r["purity_pct"]
+            mats["mean_alerts"][i, j] = r["mean_alerts"]
+            mats["pct_single_alert"][i, j] = r["pct_single_alert"]
+            mats["pct_profile_repeated"][i, j] = r["pct_profile_repeated"]
+            mats["split_ok"][i, j] = float(r["split_ok"])
+
+    # (key, title, cmap, vmin, vmax, cell_fmt)
+    panels = [
+        (
+            "att_pct",
+            "(A) Attack %\n(attack+mixed) / total",
+            "RdYlGn",
+            0,
+            100,
+            lambda v: f"{v:.1f}%",
+        ),
+        (
+            "purity_pct",
+            "(B) Purity %\npure-label transactions",
+            "RdYlGn",
+            0,
+            100,
+            lambda v: f"{v:.1f}%",
+        ),
+        (
+            "mean_alerts",
+            "(C) Mean alerts / tx\ntransaction richness",
+            "Blues",
+            None,
+            None,
+            lambda v: f"{v:.1f}",
+        ),
+        (
+            "pct_single_alert",
+            "(D) Single-alert tx %\n(window too small?)",
+            "RdYlGn_r",
+            0,
+            100,
+            lambda v: f"{v:.1f}%",
+        ),
+        (
+            "pct_profile_repeated",
+            "(E) Recurring profiles %\n(window too large?)",
+            "RdYlGn_r",
+            0,
+            100,
+            lambda v: f"{v:.1f}%",
+        ),
+        (
+            "split_ok",
+            "(F) Train/test split viable\n(both classes in train & test)",
+            "RdYlGn",
+            0,
+            1,
+            lambda v: "OK" if v > 0.5 else "WARN",
+        ),
+    ]
+
+    fig, axes = plt.subplots(2, 3, figsize=(16, 7))
+    fig.suptitle(
+        f"Cross-scenario metric overview — {_LBL_METHOD.get(method, method)}",
+        fontsize=13,
+    )
+
+    for ax, (key, title, cmap_name, vmin, vmax, fmt_fn) in zip(axes.flat, panels):
+        mat = mats[key]
+        _vmin = vmin if vmin is not None else float(np.nanmin(mat))
+        _vmax = vmax if vmax is not None else float(np.nanmax(mat))
+        if _vmin == _vmax:
+            _vmax = _vmin + 1
+
+        im = ax.imshow(mat, aspect="auto", cmap=cmap_name, vmin=_vmin, vmax=_vmax)
+        cmap_obj = plt.get_cmap(cmap_name)
+
+        for i in range(n_scen):
+            for j in range(n_win):
+                v = mat[i, j]
+                if np.isnan(v):
+                    continue
+                norm_v = np.clip((v - _vmin) / max(_vmax - _vmin, 1e-9), 0, 1)
+                rgba = cmap_obj(norm_v)
+                lum = 0.299 * rgba[0] + 0.587 * rgba[1] + 0.114 * rgba[2]
+                txt_color = "black" if lum > 0.45 else "white"
+                ax.text(
+                    j,
+                    i,
+                    fmt_fn(v),
+                    ha="center",
+                    va="center",
+                    fontsize=8,
+                    color=txt_color,
+                )
+
+        if key != "split_ok":
+            plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+        ax.set_xticks(range(n_win))
+        ax.set_xticklabels(win_labels, fontsize=8)
+        ax.set_yticks(range(n_scen))
+        ax.set_yticklabels(scenarios, fontsize=8)
+        ax.set_title(title, fontsize=9)
+        ax.set_xlabel("Window size", fontsize=8)
+
+    plt.tight_layout()
+    fig.text(
+        0.99,
+        0.01,
+        f"data: filtered ({filter_method})" if filter_method else "data: raw",
+        ha="right",
+        va="bottom",
+        fontsize=7,
+        color="gray",
+        transform=fig.transFigure,
+    )
+    out_path = out_dir / f"metrics_heatmap_{method}.png"
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Metrics heatmap ({method}) saved → {out_path}")
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -1024,13 +1290,15 @@ def _run_method(
 
 
 def _discover_scenarios(filter_method: str | None) -> list[str]:
-    filename = (
-        f"alerts_filtered_{filter_method}.json" if filter_method else "alerts.json"
-    )
+    if filter_method:
+        search_dir = _BALANCED_ALERTS_DIR / filter_method
+        if not search_dir.exists():
+            return []
+        return sorted(
+            p.stem.removesuffix("_alerts") for p in search_dir.glob("*_alerts.json")
+        )
     return sorted(
-        d.name
-        for d in _PROCESSED_DATA_DIR.iterdir()
-        if d.is_dir() and (d / filename).exists()
+        p.stem.removesuffix("_alerts") for p in _RAW_ALERTS_DIR.glob("*_alerts.txt")
     )
 
 
@@ -1129,10 +1397,7 @@ def main() -> None:
         "--all",
         action="store_true",
         dest="all_scenarios",
-        help=(
-            f"Run for every scenario found under {_PROCESSED_DATA_DIR} "
-            "that has the expected alerts file."
-        ),
+        help="Run for every scenario found in the alerts source directory.",
     )
     parser.add_argument(
         "--windows",
@@ -1149,12 +1414,13 @@ def main() -> None:
         help="Output directory for saved results",
     )
     parser.add_argument(
-        "--filtered",
+        "--balanced",
         metavar="METHOD",
+        dest="filtered",
         default=None,
         help=(
-            "Load alerts_filtered_<METHOD>.json instead of alerts.json. "
-            "E.g. --filtered detection_score"
+            "Load balanced alerts from artifacts/alerts/balanced/<METHOD>/<scenario>_alerts.json "
+            "instead of raw alerts from data/alerts_csv/. E.g. --balanced naive50"
         ),
     )
     parser.add_argument(
@@ -1179,25 +1445,39 @@ def main() -> None:
     if args.all_scenarios:
         scenarios = _discover_scenarios(filter_method)
         if not scenarios:
-            print(f"No scenarios found under {_PROCESSED_DATA_DIR}.", file=sys.stderr)
+            search_dir = (
+                _BALANCED_ALERTS_DIR / filter_method
+                if filter_method
+                else _RAW_ALERTS_DIR
+            )
+            print(f"No scenarios found under {search_dir}.", file=sys.stderr)
             sys.exit(1)
         print(f"Running all {len(scenarios)} scenarios: {scenarios}")
     else:
         scenarios = [args.scenario]
 
     all_results: dict[str, list[dict]] = {}
+    sweep_dir = args.out_dir / f"sweep_{run_ts}"
     for scenario in scenarios:
-        out_dir = args.out_dir / f"sweep_{run_ts}" / scenario
+        out_dir = sweep_dir / scenario
         results = run_scenario(
             scenario, windows, train_frac, filter_method, out_dir, run_ts
         )
         if results:
             all_results[scenario] = results
 
+    if all_results:
+        plot_scenario_window_overview(
+            all_results, sweep_dir, windows, filter_method=filter_method
+        )
+        for m in ("fixed_window", "fixed_window_host"):
+            plot_metrics_heatmap(
+                all_results, sweep_dir, windows, method=m, filter_method=filter_method
+            )
+
     if len(all_results) > 1:
-        cross_dir = args.out_dir / f"sweep_{run_ts}"
         plot_cross_scenario(
-            all_results, cross_dir, windows, filter_method=filter_method
+            all_results, sweep_dir, windows, filter_method=filter_method
         )
 
 
