@@ -25,7 +25,8 @@ Usage:
     python src/thesis/scripts/run_eda.py --all --balanced type_stratified
 
     # balanced transaction variants — loads artifacts/transactions/balanced/<METHOD>/ (plots only)
-    python src/thesis/scripts/run_eda.py --all --balanced naive50 --plots-only
+    # (raw alerts for alert plots; transactions balanced in transaction space)
+    python src/thesis/scripts/run_eda.py --all --tx-balanced naive50 --plots-only
 
 Output (all under artifacts/experiments/run_eda/run_<ts>/):
     <scenario>/                               -- per-scenario CSVs and plots (Phase 1)
@@ -164,6 +165,7 @@ def run_scenario(
     out_path: Path,
     summary_path: Path,
     balanced: str | None = None,
+    tx_balanced: str | None = None,
 ) -> None:
     os.makedirs(out_path, exist_ok=True)
     os.makedirs(summary_path, exist_ok=True)
@@ -189,7 +191,7 @@ def run_scenario(
             f.write(f"Max timestamp: {df['time'].max()}\n\n")
 
         transactions = build_labeled_window_transactions(df, window_size_s=2)
-        tx_cache_dir = _tx_dir(balanced)
+        tx_cache_dir = _tx_dir(balanced, tx_balanced)
         tx_cache_dir.mkdir(parents=True, exist_ok=True)
         transactions.to_csv(tx_cache_dir / f"{scenario}_transactions.csv", index=False)
 
@@ -227,7 +229,7 @@ def run_scenario(
         plt.gcf().text(
             0.99,
             0.01,
-            _data_label(balanced),
+            _data_label(balanced, tx_balanced),
             ha="right",
             va="bottom",
             fontsize=7,
@@ -286,7 +288,7 @@ def run_scenario(
         plt.gcf().text(
             0.99,
             0.01,
-            _data_label(balanced),
+            _data_label(balanced, tx_balanced),
             ha="right",
             va="bottom",
             fontsize=7,
@@ -325,7 +327,10 @@ def run_scenario(
 
 
 def save_overview_table(
-    all_df: pd.DataFrame, run_dir: Path, balanced: str | None = None
+    all_df: pd.DataFrame,
+    run_dir: Path,
+    balanced: str | None = None,
+    tx_balanced: str | None = None,
 ) -> None:
     scenarios = [s for s in SCENARIOS if s in all_df["scenario"].unique()]
 
@@ -402,7 +407,7 @@ def save_overview_table(
     fig.text(
         0.99,
         0.01,
-        _data_label(balanced),
+        _data_label(balanced, tx_balanced),
         ha="right",
         va="bottom",
         fontsize=7,
@@ -414,20 +419,27 @@ def save_overview_table(
     print(f"  overview_table.png → {run_dir / 'overview_table.png'}")
 
 
-def _data_label(balanced: str | None) -> str:
+def _data_label(balanced: str | None, tx_balanced: str | None = None) -> str:
+    if tx_balanced is not None:
+        return f"data: raw alerts, tx balanced ({tx_balanced})"
     if balanced is None:
         return "data: raw"
     return f"data: balanced ({balanced})"
 
 
-def _tx_dir(balanced: str | None) -> Path:
+def _tx_dir(balanced: str | None, tx_balanced: str | None = None) -> Path:
+    if tx_balanced is not None:
+        return TRANSACTIONS_BASE_DIR / "balanced" / tx_balanced
     if balanced is None:
         return TRANSACTIONS_BASE_DIR / "raw"
     return TRANSACTIONS_BASE_DIR / "from_balanced_alerts" / balanced
 
 
 def save_label_distribution_table(
-    all_df: pd.DataFrame, run_dir: Path, balanced: str | None = None
+    all_df: pd.DataFrame,
+    run_dir: Path,
+    balanced: str | None = None,
+    tx_balanced: str | None = None,
 ) -> None:
     """
     Plot a table showing per-scenario breakdown of each time_label:
@@ -531,7 +543,7 @@ def save_label_distribution_table(
     fig.text(
         0.99,
         0.01,
-        _data_label(balanced),
+        _data_label(balanced, tx_balanced),
         ha="right",
         va="bottom",
         fontsize=7,
@@ -549,6 +561,7 @@ def _run_plots_phase(
     all_df: pd.DataFrame,
     run_dir: Path,
     balanced: str | None,
+    tx_balanced: str | None = None,
     bin_hours: float = 1.0,
     fmt: str = "png",
     top_k: int = 20,
@@ -556,7 +569,7 @@ def _run_plots_phase(
     plots_dir = run_dir / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
 
-    tx_dir = _tx_dir(balanced)
+    tx_dir = _tx_dir(balanced, tx_balanced)
     tx_df = None
     if tx_dir.exists():
         try:
@@ -570,7 +583,7 @@ def _run_plots_phase(
             "Run without --plots-only first to generate them."
         )
 
-    data_label = _data_label(balanced)
+    data_label = _data_label(balanced, tx_balanced)
 
     def _out(name: str) -> str:
         return str(plots_dir / f"{name}.{fmt}")
@@ -671,10 +684,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         metavar="METHOD",
         help=(
-            "Load balanced data instead of raw. "
+            "Load balanced alerts instead of raw. "
             "For Phase 1, loads artifacts/alerts/balanced/<METHOD>/<scenario>_alerts.csv. "
-            "For Phase 2, loads artifacts/transactions/balanced/<METHOD>/. "
+            "For Phase 2, loads artifacts/transactions/from_balanced_alerts/<METHOD>/. "
             "Example: --balanced naive50"
+        ),
+    )
+    p.add_argument(
+        "--tx-balanced",
+        default=None,
+        metavar="METHOD",
+        help=(
+            "Load transactions balanced in transaction space from "
+            "artifacts/transactions/balanced/<METHOD>/. "
+            "Alert plots use raw alert data. "
+            "Example: --tx-balanced naive50 --plots-only"
         ),
     )
     p.add_argument(
@@ -728,12 +752,18 @@ def main(argv: list[str] | None = None) -> None:
 
     run_ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     balanced_method = args.balanced
-    data_tag = f"balanced_{balanced_method}" if balanced_method else "raw"
+    tx_balanced_method = args.tx_balanced
+    if tx_balanced_method is not None:
+        data_tag = f"balanced_tx_{tx_balanced_method}"
+    elif balanced_method is not None:
+        data_tag = f"balanced_alerts_{balanced_method}"
+    else:
+        data_tag = "raw"
     run_dir = EXPERIMENTS_DIR / f"run_{run_ts}_{data_tag}"
     summary_path = run_dir / "summary"
 
     print(f"Loading alerts for: {', '.join(scenarios)}")
-    if balanced_method is not None:
+    if balanced_method is not None and tx_balanced_method is None:
         print(
             f"  Source: artifacts/alerts/balanced/{balanced_method}/<scenario>_alerts.csv"
         )
@@ -757,6 +787,10 @@ def main(argv: list[str] | None = None) -> None:
             frames.append(df)
         all_df = pd.concat(frames, ignore_index=True)
     else:
+        if tx_balanced_method is not None:
+            print(
+                "  Source: raw alerts (transactions will be loaded from balanced tx dir)"
+            )
         all_df = load_alerts(str(DATA_DIR), scenarios=scenarios)
     print(f"  {len(all_df):,} alerts loaded.\n")
 
@@ -770,13 +804,18 @@ def main(argv: list[str] | None = None) -> None:
                 run_dir / scenario,
                 summary_path,
                 balanced=balanced_method,
+                tx_balanced=tx_balanced_method,
             )
 
         print("\nComputing dataset overview table...")
-        save_overview_table(all_df, run_dir, balanced=balanced_method)
+        save_overview_table(
+            all_df, run_dir, balanced=balanced_method, tx_balanced=tx_balanced_method
+        )
 
         print("\nComputing label distribution table...")
-        save_label_distribution_table(all_df, run_dir, balanced=balanced_method)
+        save_label_distribution_table(
+            all_df, run_dir, balanced=balanced_method, tx_balanced=tx_balanced_method
+        )
 
     # Phase 2: overview plots
     if not args.no_plots:
@@ -785,6 +824,7 @@ def main(argv: list[str] | None = None) -> None:
             all_df,
             run_dir,
             balanced_method,
+            tx_balanced=tx_balanced_method,
             bin_hours=args.bin_hours,
             fmt=args.fmt,
             top_k=args.top_k,

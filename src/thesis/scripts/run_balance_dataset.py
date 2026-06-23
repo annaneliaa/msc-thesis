@@ -40,6 +40,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -53,6 +55,28 @@ _REPO = next(p for p in _HERE.parents if (p / "pyproject.toml").exists())
 _ALERTS_DIR = _REPO / "data" / "alerts_csv"
 _ALERTS_BALANCED_DIR = _REPO / "artifacts" / "alerts" / "balanced"
 _TX_BALANCED_DIR = _REPO / "artifacts" / "transactions" / "balanced"
+_EXPERIMENTS_DIR = _REPO / "artifacts" / "experiments" / "run_balance_dataset"
+
+
+class _Tee:
+    """Write to both a file and the original stdout simultaneously."""
+
+    def __init__(self, log_path: Path) -> None:
+        self._file = log_path.open("w", encoding="utf-8", buffering=1)
+        self._stdout = sys.stdout
+
+    def write(self, data: str) -> int:
+        self._stdout.write(data)
+        return self._file.write(data)
+
+    def flush(self) -> None:
+        self._stdout.flush()
+        self._file.flush()
+
+    def close(self) -> None:
+        sys.stdout = self._stdout
+        self._file.close()
+
 
 SCENARIOS = [
     "fox",
@@ -181,6 +205,12 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_dir = _EXPERIMENTS_DIR / f"{timestamp}_{args.level}_{args.method}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    tee = _Tee(run_dir / "run.log")
+    sys.stdout = tee
+
     available = ALERT_METHODS if args.level == "alert" else TX_METHODS
     if args.method not in available:
         parser.error(
@@ -202,6 +232,8 @@ def main() -> None:
             run_transactions(scenario, args.method, args.seed, args.window_size)
 
     print("\nDone.")
+    print(f"\nLog saved → {run_dir / 'run.log'}")
+    tee.close()
 
 
 if __name__ == "__main__":
