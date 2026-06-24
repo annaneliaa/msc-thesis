@@ -30,11 +30,12 @@ from thesis.mining.token_abstraction import (
 from thesis.mining.util import (
     add_cross_label_sequence_supports,
     add_cross_label_itemset_sequence_supports,
+    cleanup_run_intermediates,
     sort_sequences_for_class,
     save_filtered_sequence_views,
     save_filtered_itemset_sequence_views,
+    add_confidence_scores,
 )
-from thesis.mining.util import add_confidence_scores
 from thesis.mining.load_mining_transactions import load_and_prepare_mining_transactions
 
 
@@ -300,6 +301,7 @@ def run_transaction_prefixspan_job(
 
         log_artifact(str(run_dir))
 
+        cleanup_run_intermediates(run_dir)
         print(f"Finished sequence mining job. Saved artifacts to {run_dir}")
 
         return MiningJobResult(
@@ -526,6 +528,7 @@ def run_transaction_itemset_prefixspan_job(
 
         log_artifact(str(run_dir))
 
+        cleanup_run_intermediates(run_dir)
         print(f"Finished itemset sequence mining job. Saved artifacts to {run_dir}")
 
         return MiningJobResult(

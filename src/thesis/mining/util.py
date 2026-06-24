@@ -4,6 +4,22 @@ from pathlib import Path
 
 import pandas as pd
 
+# Files written during mining as debug/intermediate artifacts — not read by any downstream code.
+_INTERMEDIATE_FILES = [
+    "prepared_transactions.csv",
+    "tidsets.json",
+    "items_with_tidsets.json",
+]
+
+
+def cleanup_run_intermediates(run_dir: Path) -> None:
+    """Delete intermediate files from a mining sub-directory after the run completes."""
+    for fname in _INTERMEDIATE_FILES:
+        p = run_dir / fname
+        if p.exists():
+            p.unlink()
+
+
 # Worker-process state; populated once per child process by _init_parallel_workers
 _worker_seqs: list | None = None
 

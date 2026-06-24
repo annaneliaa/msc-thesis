@@ -83,6 +83,8 @@ def abstract_mail_hosts_mined_df(
 
     if "k" in out.columns:
         out["k"] = out[column].apply(len)
+    if f"{column}_str" in out.columns:
+        out[f"{column}_str"] = out[column].apply(lambda x: " | ".join(x))
 
     if "support_diff" in out.columns:
         out = (

@@ -59,6 +59,7 @@ def _encode_for_anomaly(
     transactions: list,
     schema_name: str,
     feature_selection=None,
+    filter_attack_leaning: bool = False,
 ) -> tuple[pd.DataFrame, object]:
     """Encode transactions without caching (avoids order/schema conflicts with classifier runs)."""
     from thesis.features.util import select_symbolic_features
@@ -69,6 +70,17 @@ def _encode_for_anomaly(
         schema_name=schema_name,
         schema_version=None,
     )
+
+    if filter_attack_leaning and schema.symbolic is not None:
+        n_before = len(schema.symbolic.features)
+        schema.symbolic.features = [
+            f for f in schema.symbolic.features if f.source_label != "attack"
+        ]
+        n_dropped = n_before - len(schema.symbolic.features)
+        if n_dropped:
+            print(
+                f"  [anomaly] Dropped {n_dropped} attack-leaning symbolic features ({len(schema.symbolic.features)} kept)"
+            )
 
     if feature_selection is not None and (
         feature_selection.top_k is not None
@@ -127,13 +139,13 @@ def _compute_anomaly_metrics(
 
     # Feature importances — tree-based models only (IsolationForest)
     # by_coefficient: MDI from feature_importances_ — always available for tree ensembles
+    # IsolationForest is a BaggingMeta-estimator: no top-level feature_importances_,
+    # but each ExtraTreeRegressor estimator has one — average them for MDI.
     tree_importances: dict = {}
-    if hasattr(model, "feature_importances_"):
-        pairs = sorted(
-            zip(feature_names, model.feature_importances_),
-            key=lambda kv: kv[1],
-            reverse=True,
-        )
+    estimators = getattr(model, "estimators_", None)
+    if estimators and hasattr(estimators[0], "feature_importances_"):
+        mdi = np.mean([e.feature_importances_ for e in estimators], axis=0)
+        pairs = sorted(zip(feature_names, mdi), key=lambda kv: kv[1], reverse=True)
         tree_importances = {name: float(v) for name, v in pairs[:top_n] if v > 0}
 
     shap_importances: dict = {}
@@ -141,18 +153,17 @@ def _compute_anomaly_metrics(
         import shap
 
         x_explain = X_test.iloc[:200] if len(X_test) > 200 else X_test
-        if hasattr(model, "feature_importances_"):
-            sv = shap.TreeExplainer(model).shap_values(x_explain)
-            # IsolationForest returns shape (n_samples, n_features)
-            if isinstance(sv, list):
-                sv = sv[-1]
-            mean_signed = np.asarray(sv).mean(axis=0)
-            pairs = sorted(
-                zip(feature_names, mean_signed),
-                key=lambda kv: abs(kv[1]),
-                reverse=True,
-            )
-            shap_importances = {name: float(v) for name, v in pairs[:top_n]}
+        sv = shap.TreeExplainer(model).shap_values(x_explain)
+        # IsolationForest returns shape (n_samples, n_features)
+        if isinstance(sv, list):
+            sv = sv[-1]
+        mean_signed = np.asarray(sv).mean(axis=0)
+        pairs = sorted(
+            zip(feature_names, mean_signed),
+            key=lambda kv: abs(kv[1]),
+            reverse=True,
+        )
+        shap_importances = {name: float(v) for name, v in pairs[:top_n]}
     except Exception as shap_err:
         print(
             f"  [warn] SHAP failed ({shap_err}); using tree feature_importances_ only"
@@ -273,6 +284,7 @@ def run_anomaly_experiment(config: AnomalyExperimentConfig) -> ExperimentResult:
             filter_config=config.filter_config,
             abstraction_map_path=config.abstraction_map_path,
             abstraction_level=config.abstraction_level,
+            run_attack_pass=False,
         )
     else:
         print("[5/6] Skipping mining (base schema).")
@@ -287,6 +299,9 @@ def run_anomaly_experiment(config: AnomalyExperimentConfig) -> ExperimentResult:
             transactions,
             config.schema_name,
             feature_selection=feature_selection if do_symbolic else None,
+            filter_attack_leaning=config.filter_attack_leaning
+            if do_symbolic
+            else False,
         )
     except Exception as e:
         print(f"  [error] Failed to encode: {e}")

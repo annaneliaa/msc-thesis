@@ -59,6 +59,12 @@ def build_symbolic_feature_schema(
     seen_names: set[str] = set()
 
     for _, row in df.iterrows():
+        row_source_label = (
+            str(row["source_label"])
+            if "source_label" in row.index and pd.notna(row.get("source_label"))
+            else source_label
+        )
+
         is_or = (
             "clauses" in row.index
             and row["clauses"] is not None
@@ -75,7 +81,7 @@ def build_symbolic_feature_schema(
                 SymbolicFeature(
                     feature_name=feature_name,
                     itemset=(),
-                    source_label=source_label,
+                    source_label=row_source_label,
                     clauses=clauses,
                     confidence_attack=(
                         float(row["confidence_attack"])
@@ -103,7 +109,7 @@ def build_symbolic_feature_schema(
                 SymbolicFeature(
                     feature_name=feature_name,
                     itemset=itemset,
-                    source_label=source_label,
+                    source_label=row_source_label,
                     support=(
                         float(row["support"])
                         if "support" in row and pd.notna(row["support"])

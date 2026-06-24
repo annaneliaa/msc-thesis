@@ -65,6 +65,9 @@ class AnomalyExperimentConfig:
     mine_frac: float = 1.0
     no_overlap: bool = False
     filter_config: Path | None = None
+    filter_attack_leaning: bool = (
+        True  # drop attack-leaning symbolic features before encoding
+    )
     abstraction_map_path: Path | None = None
     abstraction_level: int = 0
     cache_dir: Path = field(default_factory=lambda: CACHE_DIR)

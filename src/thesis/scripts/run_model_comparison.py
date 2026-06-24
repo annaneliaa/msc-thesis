@@ -373,6 +373,12 @@ def _collect_importances(
                 imp = _load_importance(rf, "by_permutation")
                 if imp:
                     print(f"  [info] {model}/{scenario}: SHAP empty, using permutation")
+            if not imp:
+                imp = _load_importance(rf, "by_coefficient")
+                if imp:
+                    print(
+                        f"  [info] {model}/{scenario}: SHAP+permutation empty, using coefficient/MDI"
+                    )
             result[model][scenario] = imp
     return result
 

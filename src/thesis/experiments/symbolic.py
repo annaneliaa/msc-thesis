@@ -109,10 +109,12 @@ def _mine_and_register_symbolic_schema(
     jaccard_threshold: float = 0.98,
     abstraction_map_path: Path | None = None,
     abstraction_level: int = 0,
+    min_support_diff: float = 0.05,
+    run_attack_pass: bool = True,
 ) -> Path:
     run_dir = create_run_dir(run_name)
 
-    print("--- Running Eclat itemset mining (AND + AND/OR) --- ")
+    print("--- Running Eclat itemset mining on benign (AND + AND/OR) ---")
     eclat_result = run_transaction_eclat_job(
         transactions_path=transactions_path,
         scenario_name=scenario,
@@ -176,6 +178,140 @@ def _mine_and_register_symbolic_schema(
             print(f"  OR patterns {n_or_before}→{len(eclat_result.or_df)}")
             mining_stats["n_or_after_abstraction"] = len(eclat_result.or_df)
 
+    print("--- Applying direction filter to benign mining results ---")
+    if "support_diff" in eclat_df.columns:
+        n_before = len(eclat_df)
+        eclat_df = eclat_df[eclat_df["support_diff"] >= min_support_diff].reset_index(
+            drop=True
+        )
+        print(
+            f"  Benign itemsets: {n_before} → {len(eclat_df)} (support_diff >= {min_support_diff})"
+        )
+    if "support_diff" in item_seq_df.columns:
+        n_before = len(item_seq_df)
+        item_seq_df = item_seq_df[
+            item_seq_df["support_diff"] >= min_support_diff
+        ].reset_index(drop=True)
+        print(
+            f"  Benign sequences: {n_before} → {len(item_seq_df)} (support_diff >= {min_support_diff})"
+        )
+    if eclat_result.or_df is not None and not eclat_result.or_df.empty:
+        if "support_diff" in eclat_result.or_df.columns:
+            n_before = len(eclat_result.or_df)
+            eclat_result.or_df = eclat_result.or_df[
+                eclat_result.or_df["support_diff"] >= min_support_diff
+            ].reset_index(drop=True)
+            print(
+                f"  Benign OR patterns: {n_before} → {len(eclat_result.or_df)} (support_diff >= {min_support_diff})"
+            )
+
+    eclat_df["source_label"] = "benign"
+    item_seq_df["source_label"] = "benign"
+    if eclat_result.or_df is not None and not eclat_result.or_df.empty:
+        eclat_result.or_df["source_label"] = "benign"
+
+    mining_stats["n_itemsets_benign_leaning"] = len(eclat_df)
+    mining_stats["n_sequences_benign_leaning"] = len(item_seq_df)
+
+    # --- Attack mining pass (binary classifier only; skip for anomaly) ---
+    attack_eclat_df = pd.DataFrame()
+    attack_seq_df = pd.DataFrame()
+    attack_or_df: pd.DataFrame | None = None
+    mining_stats["attack_pass_skipped"] = not run_attack_pass
+
+    if run_attack_pass:
+        print("--- Running Eclat itemset mining on attack (AND + AND/OR) ---")
+        attack_eclat_result = run_transaction_eclat_job(
+            transactions_path=transactions_path,
+            scenario_name=scenario,
+            run_name=run_name,
+            min_support=min_support,
+            max_len=max_itemset_size,
+            target_label="attack",
+            run_dir=run_dir / "attack",
+            jaccard_threshold=jaccard_threshold,
+        )
+
+        print("--- Running PrefixSpan sequence mining on attack ---")
+        attack_seq_result = run_transaction_prefixspan_job(
+            transactions_path=transactions_path,
+            scenario_name=scenario,
+            run_name=run_name,
+            min_support=min_support,
+            max_len=max_seq_len,
+            target_label="attack",
+            run_dir=run_dir / "attack",
+        )
+
+        attack_eclat_df = attack_eclat_result.mined_df.copy()
+        attack_seq_df = attack_seq_result.mined_df.copy()
+
+        mining_stats["n_attack_itemsets_mined"] = len(attack_eclat_df)
+        mining_stats["n_attack_sequences_mined"] = len(attack_seq_df)
+        mining_stats["n_attack_or_mined"] = (
+            len(attack_eclat_result.or_df)
+            if attack_eclat_result.or_df is not None
+            else 0
+        )
+
+        if abstraction_map_path is not None:
+            abstraction_map = load_abstraction_map(abstraction_map_path)
+            attack_eclat_df = abstract_mined_df(
+                attack_eclat_df, abstraction_map, level=abstraction_level
+            )
+            attack_seq_df = abstract_mined_df(
+                attack_seq_df,
+                abstraction_map,
+                level=abstraction_level,
+                column="sequence",
+            )
+            if (
+                attack_eclat_result.or_df is not None
+                and not attack_eclat_result.or_df.empty
+            ):
+                attack_eclat_result.or_df = abstract_or_clauses_df(
+                    attack_eclat_result.or_df, abstraction_map, level=abstraction_level
+                )
+
+        print("--- Applying direction filter to attack mining results ---")
+        if "support_diff" in attack_eclat_df.columns:
+            n_before = len(attack_eclat_df)
+            attack_eclat_df = attack_eclat_df[
+                attack_eclat_df["support_diff"] >= min_support_diff
+            ].reset_index(drop=True)
+            print(
+                f"  Attack itemsets: {n_before} → {len(attack_eclat_df)} (support_diff >= {min_support_diff})"
+            )
+        if "support_diff" in attack_seq_df.columns:
+            n_before = len(attack_seq_df)
+            attack_seq_df = attack_seq_df[
+                attack_seq_df["support_diff"] >= min_support_diff
+            ].reset_index(drop=True)
+            print(
+                f"  Attack sequences: {n_before} → {len(attack_seq_df)} (support_diff >= {min_support_diff})"
+            )
+        if (
+            attack_eclat_result.or_df is not None
+            and not attack_eclat_result.or_df.empty
+        ):
+            if "support_diff" in attack_eclat_result.or_df.columns:
+                n_before = len(attack_eclat_result.or_df)
+                attack_eclat_result.or_df = attack_eclat_result.or_df[
+                    attack_eclat_result.or_df["support_diff"] >= min_support_diff
+                ].reset_index(drop=True)
+                print(
+                    f"  Attack OR patterns: {n_before} → {len(attack_eclat_result.or_df)} (support_diff >= {min_support_diff})"
+                )
+            attack_or_df = attack_eclat_result.or_df
+
+        attack_eclat_df["source_label"] = "attack"
+        attack_seq_df["source_label"] = "attack"
+        if attack_or_df is not None and not attack_or_df.empty:
+            attack_or_df["source_label"] = "attack"
+
+        mining_stats["n_attack_itemsets_attack_leaning"] = len(attack_eclat_df)
+        mining_stats["n_attack_sequences_attack_leaning"] = len(attack_seq_df)
+
     print("--- Filtering mining results ---")
     if filter_config is not None:
         if not filter_config.is_absolute():
@@ -236,6 +372,11 @@ def _mine_and_register_symbolic_schema(
     eclat_df["mining_type"] = "itemset"
     item_seq_df = item_seq_df.rename(columns={"sequence": "itemset"})
     item_seq_df["mining_type"] = "item_sequence"
+    if not attack_eclat_df.empty:
+        attack_eclat_df["mining_type"] = "itemset"
+    if not attack_seq_df.empty:
+        attack_seq_df = attack_seq_df.rename(columns={"sequence": "itemset"})
+        attack_seq_df["mining_type"] = "item_sequence"
 
     print("--- Constructing combined dataframe from mining results ---")
     cols_to_keep = [
@@ -244,12 +385,14 @@ def _mine_and_register_symbolic_schema(
         "support",
         "confidence_attack",
         "confidence_benign",
+        "source_label",
     ]
     or_cols_to_keep = [
         "clauses",
         "mining_type",
         "confidence_attack",
         "confidence_benign",
+        "source_label",
     ]
     eclat_df = eclat_df[[c for c in cols_to_keep if c in eclat_df.columns]]
     item_seq_df = item_seq_df[[c for c in cols_to_keep if c in item_seq_df.columns]]
@@ -260,6 +403,18 @@ def _mine_and_register_symbolic_schema(
             [c for c in or_cols_to_keep if c in eclat_result.or_df.columns]
         ]
         dfs_to_concat.append(or_df)
+    if not attack_eclat_df.empty:
+        dfs_to_concat.append(
+            attack_eclat_df[[c for c in cols_to_keep if c in attack_eclat_df.columns]]
+        )
+    if not attack_seq_df.empty:
+        dfs_to_concat.append(
+            attack_seq_df[[c for c in cols_to_keep if c in attack_seq_df.columns]]
+        )
+    if attack_or_df is not None and not attack_or_df.empty:
+        dfs_to_concat.append(
+            attack_or_df[[c for c in or_cols_to_keep if c in attack_or_df.columns]]
+        )
 
     combined_df = pd.concat(dfs_to_concat, axis=0, ignore_index=True)
     combined_df.to_csv(
@@ -468,6 +623,11 @@ def run_symbolic_experiment(
     # 5. Mine and register symbolic schema
     print("[5/8] Mining transactions...")
     run_name = f"symbolic_{config.scenario}"
+    n_attack_in_mine = sum(1 for t in transactions[:n_mine] if t.tx_label == "attack")
+    if n_attack_in_mine == 0:
+        print(
+            f"  [info] No attack transactions in mine window ({n_mine}/{n_total}) — skipping attack mining pass."
+        )
     symbolic_schema_path, mining_stats = _mine_and_register_symbolic_schema(
         scenario=config.scenario,
         transactions_path=mining_transactions_path,
@@ -480,6 +640,7 @@ def run_symbolic_experiment(
         jaccard_threshold=config.jaccard_threshold,
         abstraction_map_path=config.abstraction_map_path,
         abstraction_level=config.abstraction_level,
+        run_attack_pass=n_attack_in_mine > 0,
     )
 
     # 6. Encode under base+symbolic schema

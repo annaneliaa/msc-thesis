@@ -26,6 +26,7 @@ from thesis.mining.or_mining import mine_or_disjunctions
 from thesis.mining.util import (
     add_cross_label_supports,
     add_confidence_scores,
+    cleanup_run_intermediates,
     sort_itemsets_for_class,
     save_filtered_views,
     select_top_itemsets_per_class,
@@ -281,6 +282,7 @@ def run_transaction_eclat_job(
 
         log_artifact(str(run_dir))
 
+        cleanup_run_intermediates(run_dir)
         print(f"Finished mining job. Saved artifacts to {run_dir}")
 
         return MiningJobResult(
