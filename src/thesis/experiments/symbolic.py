@@ -15,6 +15,40 @@ Steps:
 The mining filter config is optional. Pass a path to a YAML file (see
 src/thesis/configs/) to apply quality filters after mining; omit to use
 all mined patterns as features.
+
+Mining scope (mine_frac) and train/test overlap
+------------------------------------------------
+Transactions are sorted chronologically before any split is applied.
+The mine_frac and no_overlap fields on SymbolicExperimentConfig (exposed
+as --mine-frac and --no-overlap in the run scripts) control which
+transactions feed the miner and which feed training:
+
+  mine_frac=1.0 (default)
+    Mine: [0%, 100%)   Train: [0%, 70%)   Test: [70%, 100%)
+    The miner sees all data; training and testing use the standard
+    temporal holdout.
+
+  mine_frac=0.7, no_overlap=False (default)
+    Mine: [0%, 70%)    Train: [0%, 70%)   Test: [70%, 100%)
+    Mining and training cover the same window, ensuring no test-period
+    data leaks into the mined patterns.
+
+  mine_frac=0.5, no_overlap=False (default)
+    Mine: [0%, 50%)    Train: [0%, 70%)   Test: [70%, 100%)
+    Mining uses only the earliest 50%; training still uses the full
+    [0%, 70%) window.
+
+  mine_frac=0.3, no_overlap=True
+    Mine: [0%, 30%)    Train: [30%, 70%)  Test: [70%, 100%)
+    Mining and training are strictly disjoint; patterns are discovered
+    on a held-out prefix and evaluated on subsequent unseen data.
+
+  mine_frac=0.5, no_overlap=True
+    Mine: [0%, 50%)    Train: [50%, 70%)  Test: [70%, 100%)
+    Same disjoint setup with a larger mining window.
+
+In all cases test_frac (default 0.3) controls the size of the test set
+and the encoding/training always operates on the full transaction list.
 """
 
 from __future__ import annotations
@@ -34,6 +68,7 @@ from thesis.experiments.baseline import (
     _convert_alerts_to_json,
     _encode_transactions,
     _ensure_feature_manifest,
+    _is_single_class_split,
     _load_transactions,
     _process_alert_batch,
 )
@@ -300,12 +335,142 @@ def run_symbolic_experiment(
     transactions = _load_transactions(config.scenario, config.cache_dir)
     transactions_path = config.cache_dir / "transactions" / "transactions_raw.json"
 
+    # Sort chronologically so that positional train/test split = temporal split.
+    # This also ensures the mining subset and training set are drawn from the
+    # same ordering regardless of how the cache stored the groups.
+    transactions.sort(key=lambda t: t.start_ts or "")
+
+    if config.random_split:
+        import random as _random
+
+        rng = _random.Random(config.random_seed)
+        rng.shuffle(transactions)
+        print(
+            f"  [random-split] Shuffled {len(transactions)} transactions (seed={config.random_seed})"
+        )
+
+    n_total = len(transactions)
+    n_mine = int(config.mine_frac * n_total) if config.mine_frac < 1.0 else n_total
+
+    # When --no-overlap is set, training starts after the mine window so mining
+    # and training data are strictly disjoint.  Default (overlap) always trains
+    # from 0, meaning mine_frac only controls what the miner sees.
+    train_start = n_mine if (config.no_overlap and config.mine_frac < 1.0) else 0
+
+    if _is_single_class_split(
+        transactions,
+        config.test_frac,
+        train_start,
+        random_split=config.random_split,
+        random_seed=config.random_seed,
+    ):
+        n_train = int((1 - config.test_frac) * n_total) - train_start
+        n_test = n_total - int((1 - config.test_frac) * n_total)
+        print(
+            f"  [skip] Single-class split detected for '{config.scenario}' "
+            f"({n_train} train / {n_test} test, train_start={train_start}) — skipping symbolic."
+        )
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        results_dir = (
+            config.results_dir
+            if config.results_dir is not None
+            else _EXPERIMENTS_DIR / config.scenario
+        )
+        results_dir.mkdir(parents=True, exist_ok=True)
+        results_file = results_dir / f"symbolic_{timestamp}.json"
+        with results_file.open("w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "experiment": "symbolic",
+                    "scenario": config.scenario,
+                    "timestamp": timestamp,
+                    "skipped": True,
+                    "mine_frac": config.mine_frac,
+                    "no_overlap": config.no_overlap,
+                    "test_frac": config.test_frac,
+                    "train_frac": 1.0 - config.test_frac,
+                    "metrics": {"single_class_split": True},
+                },
+                f,
+                indent=2,
+            )
+        return ExperimentResult(
+            scenario=config.scenario,
+            model_name=config.model_name,
+            model_version=config.model_version,
+            schema_name=config.schema_name,
+            schema_version="skipped",
+            auc=float("nan"),
+            n_transactions=n_total,
+            n_features=0,
+            metrics={"single_class_split": True},
+            results_file=results_file,
+            grouping_mode=config.grouping.mode,
+        )
+
+    mining_transactions_path = transactions_path
+    if config.mine_frac < 1.0:
+        # Serialize the already-ordered (temporal or shuffled) in-memory list so the
+        # mining job reads the same ordering that train/test will use.
+
+        mine_path = (
+            transactions_path.parent
+            / f"transactions_mine_{config.mine_frac}{'_rs' + str(config.random_seed) if config.random_split else ''}.json"
+        )
+        mine_path.write_text(
+            json.dumps(
+                [
+                    {
+                        "transaction_id": t.transaction_id,
+                        "group_id": t.group_id,
+                        "method": t.method,
+                        "start_ts": t.start_ts,
+                        "end_ts": t.end_ts,
+                        "n_alerts": t.n_alerts,
+                        "alert_ids": t.alert_ids,
+                        "abs_items": sorted(list(t.abs_items)),
+                        "raw_items": sorted(list(t.raw_items))
+                        if t.raw_items is not None
+                        else None,
+                        "sorted_items": [sorted(s) for s in t.sorted_items],
+                        "alert_ips": sorted(list(t.alert_ips)),
+                        "tx_label": t.tx_label,
+                        "alert_labels": sorted(list(t.alert_labels))
+                        if t.alert_labels is not None
+                        else None,
+                        "weight": t.weight,
+                    }
+                    for t in transactions[:n_mine]
+                ]
+            )
+        )
+        mining_transactions_path = mine_path
+        split_label = "random" if config.random_split else "first"
+        print(
+            f"  Mining on {split_label} {n_mine}/{n_total} transactions (mine_frac={config.mine_frac:.2f})"
+        )
+        if train_start > 0:
+            print(
+                f"  Training on transactions [{train_start}, {int((1.0 - config.test_frac) * n_total)}) — no overlap with mining window"
+            )
+
+    # Invalidate the cached parquet: the symbolic schema is re-mined every run
+    # and transactions are now in sorted order, so any existing parquet is stale.
+    stale_parquet = (
+        config.cache_dir
+        / "transactions"
+        / f"transactions_{config.schema_name.replace('+', '_')}.parquet"
+    )
+    if stale_parquet.exists():
+        stale_parquet.unlink()
+        print(f"  Removed stale encoded parquet: {stale_parquet.name}")
+
     # 5. Mine and register symbolic schema
     print("[5/8] Mining transactions...")
     run_name = f"symbolic_{config.scenario}"
     symbolic_schema_path, mining_stats = _mine_and_register_symbolic_schema(
         scenario=config.scenario,
-        transactions_path=transactions_path,
+        transactions_path=mining_transactions_path,
         run_name=run_name,
         min_support=config.min_support,
         max_itemset_size=config.max_itemset_size,
@@ -352,6 +517,9 @@ def run_symbolic_experiment(
         model_version=effective_version,
         output_dir=output_dir,
         test_frac=config.test_frac,
+        train_start=train_start,
+        random_split=config.random_split,
+        random_seed=config.random_seed,
     )
 
     # 8. Load full metrics and write results file
@@ -422,6 +590,9 @@ def run_symbolic_experiment(
                     "max_itemset_size": config.max_itemset_size,
                     "max_seq_len": config.max_seq_len,
                     "target_label": config.target_label,
+                    "mine_frac": config.mine_frac,
+                    "no_overlap": config.no_overlap,
+                    "train_start": train_start,
                     "filter_config": (
                         str(config.filter_config)
                         if config.filter_config is not None
@@ -432,7 +603,10 @@ def run_symbolic_experiment(
                 "n_transactions": len(df),
                 "n_mixed_dropped": n_mixed,
                 "n_features": summary.n_features,
-                "test_size": summary.test_size,
+                "test_frac": config.test_frac,
+                "train_frac": 1.0 - config.test_frac,
+                "n_train": summary.test_idx_start - train_start,
+                "n_test": summary.test_size,
                 "metrics": full_metrics,
             },
             f,

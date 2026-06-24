@@ -460,27 +460,27 @@ def plot_funnel(
         ("n_final", "Final\n(dedup)"),
         ("n_learned", "Learned"),
     ]
-    n_stages = len(stages)
-    n_sc = len(scenarios)
-    x = np.arange(n_stages)
-    w = 0.15
-    offsets = [w * (i - (n_sc - 1) / 2) for i in range(n_sc)]
+    x = np.arange(len(stages))
 
     fig, ax = plt.subplots(figsize=(11, 5))
-    for i, sc in enumerate(scenarios):
+    for sc in scenarios:
         vals = [funnels[sc].get(key, 0) for key, _ in stages]
-        bars = ax.bar(x + offsets[i], vals, w, label=sc, color=_color(sc))
-        for bar, val in zip(bars, vals):
-            if val > 0:
-                ax.text(
-                    bar.get_x() + bar.get_width() / 2,
-                    bar.get_height() * 1.02,
-                    f"{val:,}",
-                    ha="center",
-                    va="bottom",
-                    fontsize=6,
-                    rotation=45,
-                )
+        # mask zeros so the line terminates rather than dropping to the bottom
+        xs = [xi for xi, v in zip(x, vals) if v > 0]
+        ys = [v for v in vals if v > 0]
+        color = _color(sc)
+        ax.plot(xs, ys, marker="o", linewidth=1.8, markersize=5, label=sc, color=color)
+        for xi, yi in zip(xs, ys):
+            ax.annotate(
+                f"{yi:,}",
+                xy=(xi, yi),
+                xytext=(0, 6),
+                textcoords="offset points",
+                ha="center",
+                va="bottom",
+                fontsize=6,
+                color=color,
+            )
 
     ax.set_yscale("log")
     ax.set_xticks(x)

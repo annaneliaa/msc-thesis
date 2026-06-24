@@ -1,6 +1,7 @@
 from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import RandomForestClassifier, IsolationForest
 from sklearn.neural_network import MLPClassifier
+from sklearn.svm import OneClassSVM
 from typing import Callable, Any
 
 from thesis.training.lstm_classifier import LSTMClassifier
@@ -35,6 +36,17 @@ MODEL_FACTORIES = {
         validation_fraction=0.1,
     ),
     "lstm": lambda: LSTMClassifier(),
+    "iforest": lambda: IsolationForest(
+        n_estimators=200,
+        contamination="auto",
+        random_state=42,
+        n_jobs=-1,
+    ),
+    "ocsvm": lambda: OneClassSVM(
+        kernel="rbf",
+        nu=0.1,
+        gamma="scale",
+    ),
 }
 
 

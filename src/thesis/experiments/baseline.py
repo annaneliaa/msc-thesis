@@ -219,6 +219,34 @@ def _load_transactions(
     return transactions
 
 
+def _is_single_class_split(
+    transactions: list,
+    test_frac: float = 0.3,
+    train_start: int = 0,
+    random_split: bool = False,
+    random_seed: int = 42,
+) -> bool:
+    """Return True if the train or test split contains only one class.
+
+    Mirrors the positional split in make_holdout_split after mixed-label rows
+    are dropped, so this can short-circuit before encoding/mining/training.
+    """
+    import random as _random
+
+    label_map = {"benign": 0, "attack": 1}
+    labels = [label_map[t.tx_label] for t in transactions if t.tx_label in label_map]
+    n = len(labels)
+    if n == 0:
+        return True
+    if random_split:
+        rng = _random.Random(random_seed)
+        rng.shuffle(labels)
+    split = int((1 - test_frac) * n)
+    if split <= 0 or split >= n:
+        return True
+    return len(set(labels[train_start:split])) < 2 or len(set(labels[split:])) < 2
+
+
 def _encode_transactions(
     scenario: str,
     transactions: list,
@@ -316,6 +344,74 @@ def run_baseline_experiment(
     print("[4/7] Building transactions from cache...")
     transactions = _load_transactions(config.scenario, config.cache_dir)
 
+    # Sort chronologically first, then shuffle if requested.
+    # The encoding will preserve this order; prepare_training_frame skips the
+    # timestamp sort when random_split=True so the shuffled order is kept intact.
+    if config.random_split:
+        import random as _random
+
+        transactions.sort(key=lambda t: t.start_ts or "")
+        _random.Random(config.random_seed).shuffle(transactions)
+        print(
+            f"  [random-split] Shuffled {len(transactions)} transactions (seed={config.random_seed})"
+        )
+        # Invalidate the cached parquet so it is re-encoded in shuffled order.
+        stale = (
+            config.cache_dir
+            / "transactions"
+            / f"transactions_{config.schema_name.replace('+', '_')}.parquet"
+        )
+        if stale.exists():
+            stale.unlink()
+            print(f"  Removed stale parquet for random-split encoding: {stale.name}")
+
+    if _is_single_class_split(
+        transactions,
+        config.test_frac,
+        random_split=config.random_split,
+        random_seed=config.random_seed,
+    ):
+        print(
+            f"  [skip] Single-class split detected for '{config.scenario}' "
+            f"({int((1-config.test_frac)*len(transactions))} train / "
+            f"{len(transactions)-int((1-config.test_frac)*len(transactions))} test) — skipping baseline."
+        )
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        results_dir = (
+            config.results_dir
+            if config.results_dir is not None
+            else _EXPERIMENTS_DIR / config.scenario
+        )
+        results_dir.mkdir(parents=True, exist_ok=True)
+        results_file = results_dir / f"baseline_{timestamp}.json"
+        with results_file.open("w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "experiment": "baseline",
+                    "scenario": config.scenario,
+                    "timestamp": timestamp,
+                    "skipped": True,
+                    "test_frac": config.test_frac,
+                    "train_frac": 1.0 - config.test_frac,
+                    "metrics": {"single_class_split": True},
+                },
+                f,
+                indent=2,
+            )
+        return ExperimentResult(
+            scenario=config.scenario,
+            model_name=config.model_name,
+            model_version=config.model_version,
+            schema_name=config.schema_name,
+            schema_version="skipped",
+            auc=float("nan"),
+            n_transactions=len(transactions),
+            n_features=0,
+            metrics={"single_class_split": True},
+            results_file=results_file,
+            grouping_mode=config.grouping.mode,
+        )
+
     # 5. Encode under baseline schema
     print(f"[5/7] Encoding transactions (schema='{config.schema_name}')...")
     df, schema = _encode_transactions(
@@ -350,6 +446,8 @@ def run_baseline_experiment(
         model_version=effective_version,
         output_dir=output_dir,
         test_frac=config.test_frac,
+        random_split=config.random_split,
+        random_seed=config.random_seed,
     )
 
     # 7. Load full metrics from saved metadata and write results file
@@ -394,7 +492,10 @@ def run_baseline_experiment(
                 "n_transactions": len(df),
                 "n_mixed_dropped": n_mixed,
                 "n_features": summary.n_features,
-                "test_size": summary.test_size,
+                "test_frac": config.test_frac,
+                "train_frac": 1.0 - config.test_frac,
+                "n_train": summary.test_idx_start,
+                "n_test": summary.test_size,
                 "metrics": full_metrics,
             },
             f,

@@ -22,6 +22,7 @@ def prepare_training_frame(
     y,
     schema: FeatureSchema,
     time_col: str = "timestamp",
+    random_split: bool = False,
 ) -> tuple[pd.DataFrame, np.ndarray]:
     if hasattr(y, "reset_index"):
         y = y.reset_index(drop=True)
@@ -31,7 +32,7 @@ def prepare_training_frame(
     df = X_full.reset_index(drop=True).copy()
     df["__y__"] = y.values
 
-    if time_col in df.columns:
+    if not random_split and time_col in df.columns:
         df = df.sort_values(time_col, kind="stable").reset_index(drop=True)
 
     feature_names = schema.feature_names()
@@ -45,6 +46,7 @@ def make_holdout_split(
     X: pd.DataFrame,
     y: np.ndarray,
     test_frac: float = 0.3,
+    train_start: int = 0,
 ) -> tuple[pd.DataFrame, pd.DataFrame, np.ndarray, np.ndarray, int]:
     n = len(X)
     split = int((1 - test_frac) * n)
@@ -52,7 +54,7 @@ def make_holdout_split(
     if split <= 0 or split >= n:
         raise ValueError(f"Invalid split index {split} for dataset of size {n}.")
 
-    X_train, X_test = X.iloc[:split], X.iloc[split:]
-    y_train, y_test = y[:split], y[split:]
+    X_train, X_test = X.iloc[train_start:split], X.iloc[split:]
+    y_train, y_test = y[train_start:split], y[split:]
 
     return X_train, X_test, y_train, y_test, split

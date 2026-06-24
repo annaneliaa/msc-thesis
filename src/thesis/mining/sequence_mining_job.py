@@ -123,7 +123,15 @@ def run_transaction_prefixspan_job(
                 f"Expected binary labels, got target={target_label} and others={other_labels}"
             )
 
-        other_label = other_labels[0] if other_labels else "other"
+        _complement = {"benign": "attack", "attack": "benign"}
+        if other_labels:
+            other_label = other_labels[0]
+        else:
+            other_label = _complement.get(target_label, "other")
+            print(
+                f"  [warn] No '{other_label}' transactions in mining window; "
+                f"confidence_{other_label} will be 0 for all patterns."
+            )
 
         target_group = [tx for tx in transactions if tx.tx_label == target_label]
         other_group = [tx for tx in transactions if tx.tx_label != target_label]
@@ -378,7 +386,15 @@ def run_transaction_itemset_prefixspan_job(
                 f"Expected binary labels, got target={target_label} and others={other_labels}"
             )
 
-        other_label = other_labels[0] if other_labels else "other"
+        _complement = {"benign": "attack", "attack": "benign"}
+        if other_labels:
+            other_label = other_labels[0]
+        else:
+            other_label = _complement.get(target_label, "other")
+            print(
+                f"  [warn] No '{other_label}' transactions in mining window; "
+                f"confidence_{other_label} will be 0 for all patterns."
+            )
 
         target_group = [tx for tx in transactions if tx.tx_label == target_label]
         other_group = [tx for tx in transactions if tx.tx_label != target_label]

@@ -24,6 +24,9 @@ def train_model_for_schema(
     model_version: str,
     output_dir: Path,
     test_frac: float = 0.3,
+    train_start: int = 0,
+    random_split: bool = False,
+    random_seed: int = 42,
 ) -> TrainedModelSummary:
     """
     Train, evaluate, and persist a model for a given feature schema.
@@ -47,12 +50,14 @@ def train_model_for_schema(
         X_full=X,
         y=y,
         schema=schema,
+        random_split=random_split,
     )
 
     X_train, X_test, y_train, y_test, split = make_holdout_split(
         X=X_used,
         y=y_used,
         test_frac=test_frac,
+        train_start=train_start,
     )
 
     print("Training and evaluating model...")
@@ -99,6 +104,7 @@ def train_model_for_schema(
         model_version=model_version,
         training_config={
             "test_frac": test_frac,
+            "train_start": train_start,
             "schema_name": schema.schema_name,
             "schema_version": schema.schema_version,
             "model_name": model_name,

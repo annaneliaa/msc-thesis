@@ -14,6 +14,53 @@ Usage:
   python src/thesis/scripts/run_model_comparison.py fox wheeler harrison --filtered
   python src/thesis/scripts/run_model_comparison.py --all --filtered naive50
   python src/thesis/scripts/run_model_comparison.py --all --no-run --filtered
+  python src/thesis/scripts/run_model_comparison.py fox --models logreg
+  python src/thesis/scripts/run_model_comparison.py fox --models logreg mlp
+
+Mining scope (--mine-frac / --no-overlap):
+  Transactions are sorted chronologically before any split is applied.
+
+  --mine-frac 1.0  (default)
+    Mine: [0%, 100%)   Train: [0%, 70%)   Test: [70%, 100%)
+
+  --mine-frac 0.7
+    Mine: [0%, 70%)    Train: [0%, 70%)   Test: [70%, 100%)
+    Mining and training cover the same window; no test-period data
+    leaks into the mined patterns.
+
+  --mine-frac 0.5
+    Mine: [0%, 50%)    Train: [0%, 70%)   Test: [70%, 100%)
+    Mining uses only the earliest 50%; training still uses [0%, 70%).
+
+  --mine-frac 0.3 --no-overlap
+    Mine: [0%, 30%)    Train: [30%, 70%)  Test: [70%, 100%)
+    Mining and training are strictly disjoint.
+
+  --mine-frac 0.5 --no-overlap
+    Mine: [0%, 50%)    Train: [50%, 70%)  Test: [70%, 100%)
+
+  --no-overlap without --mine-frac is a no-op (mine_frac=1.0).
+
+Random split (--random-split / --random-seed):
+  By default transactions are sorted chronologically before any split is
+  applied (temporal holdout).  Pass --random-split to shuffle the full
+  transaction list with a fixed random seed before mining, training, and
+  testing are performed.  This distributes attack traffic more evenly across
+  all splits, which is useful for checking whether the temporal ordering is
+  the main driver of model performance.
+
+  --random-split                  (seed defaults to 42)
+    Shuffle: random   Mine: random 100%   Train: random 70%   Test: random 30%
+
+  --random-split --random-seed 123
+    Same, but with seed 123 for a different shuffle.
+
+  --random-split --mine-frac 0.7
+    Shuffle first, then mine on the first 70% of the shuffled list.
+    Train/test are still 70/30 of the full shuffled list.
+
+  --random-split runs are stored in a separate directory (tagged _rs<seed>)
+  so they never collide with temporal-split runs of the same configuration.
 
 
 Output (under artifacts/experiments/run_model_comparison/comparison_<ts>/):
@@ -60,6 +107,8 @@ from thesis.experiments.symbolic import (
     SymbolicExperimentConfig,
     run_symbolic_experiment,
 )
+from thesis.experiments.anomaly import run_anomaly_experiment
+from thesis.schemas.experiments import AnomalyExperimentConfig
 from thesis.paths import ABSTRACTION_MAP_PATH, CACHE_DIR
 from thesis.visualization.eda import SCENARIOS as ALL_SCENARIOS
 from thesis.xai.overlap import jaccard as _jaccard, spearman_rank, top_k_names
@@ -73,9 +122,22 @@ _REPO = next(p for p in _HERE.parents if (p / "pyproject.toml").exists())
 sys.path.insert(0, str(_REPO / "src"))
 
 COMPARISON_BASE = _REPO / "artifacts" / "experiments" / "run_model_comparison"
-MODELS = ["logreg", "mlp", "lstm"]
-_MODEL_COLORS = {"logreg": "#4C72B0", "mlp": "#DD8452", "lstm": "#55A868"}
-_MODEL_LABELS = {"logreg": "LogReg", "mlp": "MLP", "lstm": "LSTM"}
+MODELS = ["logreg", "mlp", "lstm", "iforest", "ocsvm"]
+ANOMALY_MODELS = {"iforest", "ocsvm"}
+_MODEL_COLORS = {
+    "logreg": "#4C72B0",
+    "mlp": "#DD8452",
+    "lstm": "#55A868",
+    "iforest": "#9B59B6",
+    "ocsvm": "#E74C3C",
+}
+_MODEL_LABELS = {
+    "logreg": "LogReg",
+    "mlp": "MLP",
+    "lstm": "LSTM",
+    "iforest": "IForest",
+    "ocsvm": "OC-SVM",
+}
 
 
 def _data_label(filtered: bool, method: str | None = None) -> str:
@@ -123,6 +185,10 @@ def _run_for_model(
     alerts_json_path: Path | None,
     cache_dir: Path,
     grouping: GroupingConfig | None = None,
+    mine_frac: float = 1.0,
+    no_overlap: bool = False,
+    random_split: bool = False,
+    random_seed: int = 42,
 ) -> dict:
     """Run baseline + symbolic for one scenario/model, write compare JSON."""
     print(f"\n{'='*60}\n  {model_name.upper()} — {scenario}\n{'='*60}")
@@ -133,34 +199,71 @@ def _run_for_model(
     if grouping is not None:
         extra["grouping"] = grouping
 
-    print("\n--- baseline ---")
-    baseline = run_baseline_experiment(
-        BaselineExperimentConfig(
-            scenario=scenario,
-            model_name=model_name,
-            results_dir=scenario_dir,
-            alerts_json_path=alerts_json_path,
-            **extra,
-        )
-    )
-
-    print("\n--- symbolic ---")
-    symbolic = run_symbolic_experiment(
-        SymbolicExperimentConfig(
-            scenario=scenario,
-            filter_config=filter_config,
-            abstraction_map_path=ABSTRACTION_MAP_PATH,
-            model_name=model_name,
-            results_dir=scenario_dir,
-            alerts_json_path=alerts_json_path,
-            **extra,
-        )
-    )
-
-    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-
     def _nan(v):
         return None if v != v else v
+
+    if model_name in ANOMALY_MODELS:
+        print("\n--- anomaly (base features) ---")
+        baseline = run_anomaly_experiment(
+            AnomalyExperimentConfig(
+                scenario=scenario,
+                model_name=model_name,
+                schema_name="base",
+                results_dir=scenario_dir,
+                alerts_json_path=alerts_json_path,
+                mine_frac=mine_frac,
+                filter_config=filter_config,
+                abstraction_map_path=ABSTRACTION_MAP_PATH,
+                **extra,
+            )
+        )
+
+        print("\n--- anomaly (base + symbolic features) ---")
+        symbolic = run_anomaly_experiment(
+            AnomalyExperimentConfig(
+                scenario=scenario,
+                model_name=model_name,
+                schema_name="base+symbolic",
+                results_dir=scenario_dir,
+                alerts_json_path=alerts_json_path,
+                mine_frac=mine_frac,
+                filter_config=filter_config,
+                abstraction_map_path=ABSTRACTION_MAP_PATH,
+                **extra,
+            )
+        )
+    else:
+        print("\n--- baseline ---")
+        baseline = run_baseline_experiment(
+            BaselineExperimentConfig(
+                scenario=scenario,
+                model_name=model_name,
+                results_dir=scenario_dir,
+                alerts_json_path=alerts_json_path,
+                random_split=random_split,
+                random_seed=random_seed,
+                **extra,
+            )
+        )
+
+        print("\n--- symbolic ---")
+        symbolic = run_symbolic_experiment(
+            SymbolicExperimentConfig(
+                scenario=scenario,
+                filter_config=filter_config,
+                abstraction_map_path=ABSTRACTION_MAP_PATH,
+                model_name=model_name,
+                results_dir=scenario_dir,
+                alerts_json_path=alerts_json_path,
+                mine_frac=mine_frac,
+                no_overlap=no_overlap,
+                random_split=random_split,
+                random_seed=random_seed,
+                **extra,
+            )
+        )
+
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
 
     combined = {
         "experiment": "compare",
@@ -557,17 +660,35 @@ def run_per_model_feature_analysis(
     if not present:
         print(f"  [warn] No loaded data for {model_name}.")
         return
+
+    # Recover symbolic results files whose stored absolute path is stale (e.g. after
+    # a directory rename or a run resumed into a different folder).  We look for the
+    # file by name in the scenario's local directory before giving up.
+    for s in present:
+        if s not in sym_data:
+            stored = compare[s].get("symbolic", {}).get("results_file")
+            if stored:
+                local = model_dir / "scenario" / s / Path(stored).name
+                if local.exists():
+                    with local.open() as _f:
+                        sym_data[s] = json.load(_f)
+                    print(
+                        f"  [fix] Recovered symbolic results for '{s}' from local path"
+                    )
+
     filtered = any(compare[s].get("filtered", False) for s in present)
     funnels = {s: sfa.feature_funnel(sym_data[s]) for s in present if s in sym_data}
+    # Only pass scenarios that have funnel data to functions that do funnels[s] lookups.
+    funnel_present = [s for s in present if s in funnels]
 
     model_out = out_dir / model_name
     model_out.mkdir(parents=True, exist_ok=True)
 
-    sfa.print_funnel_table(present, funnels)
+    sfa.print_funnel_table(funnel_present, funnels)
     sfa.print_overlap_table(present, sym_data, top_k)
 
     if funnels:
-        sfa.plot_funnel(present, funnels, filtered, model_out)
+        sfa.plot_funnel(funnel_present, funnels, filtered, model_out)
     sfa.plot_fp_analysis(present, compare, filtered, model_out)
     if sym_data:
         sfa.plot_type_breakdown(present, sym_data, filtered, model_out)
@@ -1192,7 +1313,7 @@ examples:
         choices=MODELS,
         default=None,
         metavar="MODEL",
-        help=f"Models to run (default: all). Choices: {', '.join(MODELS)}.",
+        help=f"Models to run (default: all). Choices: {', '.join(MODELS)}. Anomaly models: {', '.join(sorted(ANOMALY_MODELS))}.",
     )
     parser.add_argument(
         "--window-size",
@@ -1200,6 +1321,33 @@ examples:
         default=2,
         metavar="W",
         help="Fixed-window size in seconds for alert grouping (default: 2).",
+    )
+    parser.add_argument(
+        "--mine-frac",
+        type=float,
+        default=1.0,
+        dest="mine_frac",
+        help="Fraction of transactions (sorted by time) to use for mining (default: 1.0 = all).",
+    )
+    parser.add_argument(
+        "--no-overlap",
+        action="store_true",
+        dest="no_overlap",
+        help="Exclude the mining window from training data (train starts after mine_frac).",
+    )
+    parser.add_argument(
+        "--random-split",
+        action="store_true",
+        dest="random_split",
+        help="Shuffle transactions randomly before any split (mining, train, test) instead of using temporal order.",
+    )
+    parser.add_argument(
+        "--random-seed",
+        type=int,
+        default=42,
+        dest="random_seed",
+        metavar="SEED",
+        help="Random seed for --random-split (default: 42).",
     )
     args = parser.parse_args()
 
@@ -1224,11 +1372,22 @@ examples:
         filter_tag = "filtered"
 
     window_tag = f"_w{args.window_size}" if args.window_size != 2 else ""
-    dir_prefix = f"comparison_{filter_tag}{window_tag}_"
+    mine_tag = ""
+    if args.mine_frac != 1.0:
+        mine_tag = f"_mf{args.mine_frac}".replace(".", "p")
+    if args.no_overlap:
+        mine_tag += "_nool"
+    if args.random_split:
+        mine_tag += f"_rs{args.random_seed}"
+    dir_prefix = f"comparison_{filter_tag}{window_tag}{mine_tag}_"
     existing_runs = sorted(
         p
         for p in COMPARISON_BASE.iterdir()
-        if p.is_dir() and p.name.startswith(dir_prefix)
+        if p.is_dir()
+        and p.name.startswith(dir_prefix)
+        # Exclude subdirectories that have extra tags beyond the expected prefix.
+        # e.g. prefix "comparison_raw_mf0p7_" must not match "comparison_raw_mf0p7_rs42_..."
+        and p.name[len(dir_prefix) : len(dir_prefix) + 2].isdigit()
     )
 
     if args.no_run or args.resume:
@@ -1312,6 +1471,10 @@ def _run_main(args, run_dir: Path, plots_dir: Path) -> None:
                         alerts_json_path=alerts_path,
                         cache_dir=scenario_cache_dir,
                         grouping=grouping,
+                        mine_frac=args.mine_frac,
+                        no_overlap=args.no_overlap,
+                        random_split=args.random_split,
+                        random_seed=args.random_seed,
                     )
                 except Exception as exc:
                     print(f"\n[{model}/{scenario}] FAILED: {exc}")

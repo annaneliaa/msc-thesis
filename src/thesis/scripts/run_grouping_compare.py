@@ -160,6 +160,10 @@ def _run_pair(
     filter_config: Path | None,
     results_dir: Path,
     alerts_json_path: Path | None = None,
+    mine_frac: float = 1.0,
+    no_overlap: bool = False,
+    random_split: bool = False,
+    random_seed: int = 42,
 ) -> tuple[ExperimentResult, ExperimentResult, list]:
     baseline = run_baseline_experiment(
         BaselineExperimentConfig(
@@ -168,6 +172,8 @@ def _run_pair(
             grouping=grouping,
             results_dir=results_dir,
             alerts_json_path=alerts_json_path,
+            random_split=random_split,
+            random_seed=random_seed,
         )
     )
     symbolic = run_symbolic_experiment(
@@ -179,6 +185,10 @@ def _run_pair(
             abstraction_map_path=ABSTRACTION_MAP_PATH,
             results_dir=results_dir,
             alerts_json_path=alerts_json_path,
+            mine_frac=mine_frac,
+            no_overlap=no_overlap,
+            random_split=random_split,
+            random_seed=random_seed,
         )
     )
     txs = _load_transactions(scenario, cache_dir)
@@ -1440,6 +1450,33 @@ def main() -> None:
         default=25,
         help="Top-K features for overlap/Jaccard analysis in Phase 4 (default: 25).",
     )
+    parser.add_argument(
+        "--mine-frac",
+        type=float,
+        default=1.0,
+        dest="mine_frac",
+        help="Fraction of transactions (sorted by time) to use for mining (default: 1.0 = all).",
+    )
+    parser.add_argument(
+        "--no-overlap",
+        action="store_true",
+        dest="no_overlap",
+        help="Exclude the mining window from training data (train starts after mine_frac).",
+    )
+    parser.add_argument(
+        "--random-split",
+        action="store_true",
+        dest="random_split",
+        help="Shuffle transactions randomly before any split instead of using temporal order.",
+    )
+    parser.add_argument(
+        "--random-seed",
+        type=int,
+        default=42,
+        dest="random_seed",
+        metavar="SEED",
+        help="Random seed for --random-split (default: 42).",
+    )
     args = parser.parse_args()
 
     scenario = args.scenario
@@ -1590,6 +1627,10 @@ def _main_body(
         args.filter_config,
         results_dir=scenario_dir,
         alerts_json_path=alerts_json_path,
+        mine_frac=args.mine_frac,
+        no_overlap=args.no_overlap,
+        random_split=args.random_split,
+        random_seed=args.random_seed,
     )
     gc.collect()
 
@@ -1601,6 +1642,10 @@ def _main_body(
         args.filter_config,
         results_dir=scenario_dir,
         alerts_json_path=alerts_json_path,
+        mine_frac=args.mine_frac,
+        no_overlap=args.no_overlap,
+        random_split=args.random_split,
+        random_seed=args.random_seed,
     )
     gc.collect()
 
@@ -1612,6 +1657,10 @@ def _main_body(
         args.filter_config,
         results_dir=scenario_dir,
         alerts_json_path=alerts_json_path,
+        mine_frac=args.mine_frac,
+        no_overlap=args.no_overlap,
+        random_split=args.random_split,
+        random_seed=args.random_seed,
     )
     gc.collect()
 
@@ -1623,6 +1672,10 @@ def _main_body(
         args.filter_config,
         results_dir=scenario_dir,
         alerts_json_path=alerts_json_path,
+        mine_frac=args.mine_frac,
+        no_overlap=args.no_overlap,
+        random_split=args.random_split,
+        random_seed=args.random_seed,
     )
 
     gc.collect()
@@ -1635,6 +1688,10 @@ def _main_body(
         args.filter_config,
         results_dir=scenario_dir,
         alerts_json_path=alerts_json_path,
+        mine_frac=args.mine_frac,
+        no_overlap=args.no_overlap,
+        random_split=args.random_split,
+        random_seed=args.random_seed,
     )
 
     stats_fw = _compute_tx_stats(txs_fw)

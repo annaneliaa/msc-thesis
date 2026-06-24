@@ -299,6 +299,33 @@ def main() -> None:
         action="store_true",
         help="Use detector-filtered alerts (alerts_filtered.json) instead of alerts.json.",
     )
+    parser.add_argument(
+        "--mine-frac",
+        type=float,
+        default=1.0,
+        dest="mine_frac",
+        help="Fraction of transactions (sorted by time) to use for mining (default: 1.0 = all).",
+    )
+    parser.add_argument(
+        "--no-overlap",
+        action="store_true",
+        dest="no_overlap",
+        help="Exclude the mining window from training data (train starts after mine_frac).",
+    )
+    parser.add_argument(
+        "--random-split",
+        action="store_true",
+        dest="random_split",
+        help="Shuffle transactions randomly before any split instead of using temporal order.",
+    )
+    parser.add_argument(
+        "--random-seed",
+        type=int,
+        default=42,
+        dest="random_seed",
+        metavar="SEED",
+        help="Random seed for --random-split (default: 42).",
+    )
     args = parser.parse_args()
 
     scenario: str = args.scenario
@@ -401,6 +428,8 @@ def _main_body(
             cache_dir=cache_dir_fw,
             grouping=grouping_fw,
             alerts_json_path=alerts_json_path,
+            random_split=args.random_split,
+            random_seed=args.random_seed,
         )
     )
     print("\n--- Extracting probabilities ---")
@@ -415,6 +444,10 @@ def _main_body(
             filter_config=args.filter_config,
             abstraction_map_path=ABSTRACTION_MAP_PATH,
             alerts_json_path=alerts_json_path,
+            mine_frac=args.mine_frac,
+            no_overlap=args.no_overlap,
+            random_split=args.random_split,
+            random_seed=args.random_seed,
         )
     )
     print("\n--- Extracting probabilities ---")
@@ -429,6 +462,8 @@ def _main_body(
             cache_dir=cache_dir_ab,
             grouping=grouping_ab,
             alerts_json_path=alerts_json_path,
+            random_split=args.random_split,
+            random_seed=args.random_seed,
         )
     )
     print("\n--- Extracting probabilities ---")
@@ -443,6 +478,10 @@ def _main_body(
             filter_config=args.filter_config,
             abstraction_map_path=ABSTRACTION_MAP_PATH,
             alerts_json_path=alerts_json_path,
+            mine_frac=args.mine_frac,
+            no_overlap=args.no_overlap,
+            random_split=args.random_split,
+            random_seed=args.random_seed,
         )
     )
     print("\n--- Extracting probabilities ---")

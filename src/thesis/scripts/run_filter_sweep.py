@@ -174,6 +174,10 @@ def _run_params_point(
     value: float,
     tmp_dir: Path,
     alerts_json_path: Path | None = None,
+    mine_frac: float = 1.0,
+    no_overlap: bool = False,
+    random_split: bool = False,
+    random_seed: int = 42,
 ) -> dict:
     params = {**DEFAULTS, sweep_param: value}
     with tempfile.TemporaryDirectory(dir=tmp_dir) as td:
@@ -186,6 +190,10 @@ def _run_params_point(
             model_name="logreg_sweep",
             model_version="0.1.0",
             alerts_json_path=alerts_json_path,
+            mine_frac=mine_frac,
+            no_overlap=no_overlap,
+            random_split=random_split,
+            random_seed=random_seed,
         )
         result = run_symbolic_experiment(cfg)
     n_sym = result.metrics.get("n_symbolic_features_used", result.n_features - 8)
@@ -409,6 +417,10 @@ def _params_body(args: argparse.Namespace) -> None:
                         value,
                         tmp_dir,
                         alerts_json_path=alerts_json_path,
+                        mine_frac=args.mine_frac,
+                        no_overlap=args.no_overlap,
+                        random_split=args.random_split,
+                        random_seed=args.random_seed,
                     )
                     cached = _append_and_save(cached, row, csv_path)
                     print(
@@ -967,6 +979,8 @@ def _presets_body(args: argparse.Namespace) -> None:
                 grouping=grouping,
                 results_dir=run_dir,
                 alerts_json_path=alerts_json_path,
+                random_split=args.random_split,
+                random_seed=args.random_seed,
             )
         )
         gc.collect()
@@ -985,6 +999,10 @@ def _presets_body(args: argparse.Namespace) -> None:
                     abstraction_map_path=ABSTRACTION_MAP_PATH,
                     results_dir=run_dir,
                     alerts_json_path=alerts_json_path,
+                    mine_frac=args.mine_frac,
+                    no_overlap=args.no_overlap,
+                    random_split=args.random_split,
+                    random_seed=args.random_seed,
                 )
             )
             sym_results[cond] = result
@@ -1103,6 +1121,33 @@ def main() -> None:
         type=int,
         default=25,
         help="[presets mode] Number of top features for Jaccard overlap (default: 25).",
+    )
+    parser.add_argument(
+        "--mine-frac",
+        type=float,
+        default=1.0,
+        dest="mine_frac",
+        help="Fraction of transactions (sorted by time) to use for mining (default: 1.0 = all).",
+    )
+    parser.add_argument(
+        "--no-overlap",
+        action="store_true",
+        dest="no_overlap",
+        help="Exclude the mining window from training data (train starts after mine_frac).",
+    )
+    parser.add_argument(
+        "--random-split",
+        action="store_true",
+        dest="random_split",
+        help="Shuffle transactions randomly before any split instead of using temporal order.",
+    )
+    parser.add_argument(
+        "--random-seed",
+        type=int,
+        default=42,
+        dest="random_seed",
+        metavar="SEED",
+        help="Random seed for --random-split (default: 42).",
     )
 
     args = parser.parse_args()
