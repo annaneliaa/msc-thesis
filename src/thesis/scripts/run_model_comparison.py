@@ -189,8 +189,15 @@ def _run_for_model(
     no_overlap: bool = False,
     random_split: bool = False,
     random_seed: int = 42,
+    schema_cache: dict | None = None,
 ) -> dict:
-    """Run baseline + symbolic for one scenario/model, write compare JSON."""
+    """Run baseline + symbolic for one scenario/model, write compare JSON.
+
+    schema_cache maps scenario -> Path of the already-mined symbolic schema.
+    When populated, the mining step is skipped and the cached schema is reused.
+    After a successful symbolic run the cache is updated so subsequent models
+    in the same script invocation can skip mining too.
+    """
     print(f"\n{'='*60}\n  {model_name.upper()} — {scenario}\n{'='*60}")
 
     scenario_dir = model_dir / "scenario" / scenario
@@ -198,6 +205,10 @@ def _run_for_model(
     extra: dict = {"cache_dir": cache_dir}
     if grouping is not None:
         extra["grouping"] = grouping
+
+    if schema_cache is None:
+        schema_cache = {}
+    prebuilt = schema_cache.get(scenario)
 
     def _nan(v):
         return None if v != v else v
@@ -229,6 +240,7 @@ def _run_for_model(
                 mine_frac=mine_frac,
                 filter_config=filter_config,
                 abstraction_map_path=ABSTRACTION_MAP_PATH,
+                prebuilt_symbolic_schema_path=prebuilt,
                 **extra,
             )
         )
@@ -259,9 +271,14 @@ def _run_for_model(
                 no_overlap=no_overlap,
                 random_split=random_split,
                 random_seed=random_seed,
+                prebuilt_symbolic_schema_path=prebuilt,
                 **extra,
             )
         )
+
+    # Cache the schema path so subsequent models in this run skip mining
+    if symbolic.symbolic_schema_path is not None:
+        schema_cache[scenario] = symbolic.symbolic_schema_path
 
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
 
@@ -1454,6 +1471,9 @@ def _run_main(args, run_dir: Path, plots_dir: Path) -> None:
 
     # ── Phase 1: Run ──────────────────────────────────────────────────────────
     if not args.no_run:
+        # Shared cache of scenario → symbolic schema path, populated on first mine
+        # and reused by subsequent models to skip redundant mining.
+        schema_cache: dict[str, Path] = {}
         for model in models:
             model_dir = run_dir / model
             for scenario in scenarios:
@@ -1481,6 +1501,7 @@ def _run_main(args, run_dir: Path, plots_dir: Path) -> None:
                         no_overlap=args.no_overlap,
                         random_split=args.random_split,
                         random_seed=args.random_seed,
+                        schema_cache=schema_cache,
                     )
                 except Exception as exc:
                     print(f"\n[{model}/{scenario}] FAILED: {exc}")

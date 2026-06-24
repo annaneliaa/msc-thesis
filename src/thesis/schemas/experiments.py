@@ -37,6 +37,7 @@ class SymbolicExperimentConfig:
     grouping: GroupingConfig = field(default_factory=GroupingConfig)
     results_dir: Path | None = None
     alerts_json_path: Path | None = None
+    prebuilt_symbolic_schema_path: Path | None = None
 
 
 @dataclass
@@ -74,6 +75,7 @@ class AnomalyExperimentConfig:
     grouping: GroupingConfig = field(default_factory=GroupingConfig)
     results_dir: Path | None = None
     alerts_json_path: Path | None = None
+    prebuilt_symbolic_schema_path: Path | None = None
 
 
 @dataclass

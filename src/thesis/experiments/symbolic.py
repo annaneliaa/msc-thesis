@@ -357,10 +357,55 @@ def _mine_and_register_symbolic_schema(
                 max_n_clauses=f.max_n_clauses,
             )
 
+        # Apply the same filter to attack-pass results
+        if not attack_eclat_df.empty:
+            f = mining_filters.itemsets
+            attack_eclat_df = filter_mined_itemsets(
+                attack_eclat_df,
+                min_k=f.min_k,
+                max_k=f.max_k,
+                min_support_count=f.min_support_count,
+                min_abs_support_diff=f.min_abs_support_diff,
+                min_confidence_attack=f.min_confidence_attack,
+                max_confidence_attack=f.max_confidence_attack,
+                min_confidence_benign=f.min_confidence_benign,
+                max_overlap=f.max_overlap,
+                remove_subsumed=f.remove_subsumed,
+            )
+        if not attack_seq_df.empty:
+            f = mining_filters.item_sequences
+            attack_seq_df = filter_mined_sequences(
+                attack_seq_df,
+                min_k=f.min_k,
+                min_support_count=f.min_support_count,
+                min_abs_support_diff=f.min_abs_support_diff,
+                min_confidence_attack=f.min_confidence_attack,
+                max_confidence_attack=f.max_confidence_attack,
+                min_confidence_benign=f.min_confidence_benign,
+                min_lift=f.min_lift,
+                max_overlap=f.max_overlap,
+                remove_subsumed=f.remove_subsumed,
+            )
+        if attack_or_df is not None and not attack_or_df.empty:
+            f = mining_filters.or_features
+            attack_or_df = filter_or_patterns(
+                attack_or_df,
+                min_abs_support_diff=f.min_abs_support_diff,
+                min_confidence_attack=f.min_confidence_attack,
+                max_confidence_attack=f.max_confidence_attack,
+                min_confidence_benign=f.min_confidence_benign,
+                max_n_clauses=f.max_n_clauses,
+            )
+
         n_or_after = len(eclat_result.or_df) if eclat_result.or_df is not None else 0
+        n_attack_or_after = len(attack_or_df) if attack_or_df is not None else 0
         print(
-            f"  After filtering: {len(eclat_df)} itemsets, "
+            f"  After filtering (benign): {len(eclat_df)} itemsets, "
             f"{len(item_seq_df)} sequences, {n_or_after} OR patterns"
+        )
+        print(
+            f"  After filtering (attack): {len(attack_eclat_df)} itemsets, "
+            f"{len(attack_seq_df)} sequences, {n_attack_or_after} OR patterns"
         )
 
     mining_stats["n_itemsets_after_filter"] = len(eclat_df)
@@ -421,10 +466,12 @@ def _mine_and_register_symbolic_schema(
         os.path.join(run_dir, "final_combined_mining_df.csv"), index=False
     )
     n_or = len(eclat_result.or_df) if eclat_result.or_df is not None else 0
+    n_attack_or = len(attack_or_df) if attack_or_df is not None else 0
     mining_stats["n_candidate_features"] = len(combined_df)
     print(
-        f"  Combined {len(eclat_df)} itemsets + {len(item_seq_df)} sequences "
-        f"+ {n_or} OR patterns = {len(combined_df)} candidate features"
+        f"  Combined {len(eclat_df) + len(attack_eclat_df)} itemsets "
+        f"+ {len(item_seq_df) + len(attack_seq_df)} sequences "
+        f"+ {n_or + n_attack_or} OR patterns = {len(combined_df)} candidate features"
     )
 
     print("--- Building and saving symbolic schema ---")
@@ -621,27 +668,36 @@ def run_symbolic_experiment(
         print(f"  Removed stale encoded parquet: {stale_parquet.name}")
 
     # 5. Mine and register symbolic schema
-    print("[5/8] Mining transactions...")
-    run_name = f"symbolic_{config.scenario}"
-    n_attack_in_mine = sum(1 for t in transactions[:n_mine] if t.tx_label == "attack")
-    if n_attack_in_mine == 0:
+    print("[5/8] Mining transactions for symbolic schema...")
+    if config.prebuilt_symbolic_schema_path is not None:
         print(
-            f"  [info] No attack transactions in mine window ({n_mine}/{n_total}) — skipping attack mining pass."
+            f"  [skip] Reusing prebuilt schema: {config.prebuilt_symbolic_schema_path}"
         )
-    symbolic_schema_path, mining_stats = _mine_and_register_symbolic_schema(
-        scenario=config.scenario,
-        transactions_path=mining_transactions_path,
-        run_name=run_name,
-        min_support=config.min_support,
-        max_itemset_size=config.max_itemset_size,
-        max_seq_len=config.max_seq_len,
-        target_label=config.target_label,
-        filter_config=config.filter_config,
-        jaccard_threshold=config.jaccard_threshold,
-        abstraction_map_path=config.abstraction_map_path,
-        abstraction_level=config.abstraction_level,
-        run_attack_pass=n_attack_in_mine > 0,
-    )
+        symbolic_schema_path = config.prebuilt_symbolic_schema_path
+        mining_stats: dict = {"prebuilt": True}
+    else:
+        run_name = f"symbolic_{config.scenario}"
+        n_attack_in_mine = sum(
+            1 for t in transactions[:n_mine] if t.tx_label == "attack"
+        )
+        if n_attack_in_mine == 0:
+            print(
+                f"  [info] No attack transactions in mine window ({n_mine}/{n_total}) — skipping attack mining pass."
+            )
+        symbolic_schema_path, mining_stats = _mine_and_register_symbolic_schema(
+            scenario=config.scenario,
+            transactions_path=mining_transactions_path,
+            run_name=run_name,
+            min_support=config.min_support,
+            max_itemset_size=config.max_itemset_size,
+            max_seq_len=config.max_seq_len,
+            target_label=config.target_label,
+            filter_config=config.filter_config,
+            jaccard_threshold=config.jaccard_threshold,
+            abstraction_map_path=config.abstraction_map_path,
+            abstraction_level=config.abstraction_level,
+            run_attack_pass=n_attack_in_mine > 0,
+        )
 
     # 6. Encode under base+symbolic schema
     print(f"[6/8] Encoding transactions (schema='{config.schema_name}')...")

@@ -21,7 +21,9 @@ encoding — same mining code as the classifier symbolic experiment.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import datetime, timezone
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -73,13 +75,16 @@ def _encode_for_anomaly(
 
     if filter_attack_leaning and schema.symbolic is not None:
         n_before = len(schema.symbolic.features)
-        schema.symbolic.features = [
+        filtered_features = [
             f for f in schema.symbolic.features if f.source_label != "attack"
         ]
-        n_dropped = n_before - len(schema.symbolic.features)
+        n_dropped = n_before - len(filtered_features)
         if n_dropped:
             print(
-                f"  [anomaly] Dropped {n_dropped} attack-leaning symbolic features ({len(schema.symbolic.features)} kept)"
+                f"  [anomaly] Dropped {n_dropped} attack-leaning symbolic features ({len(filtered_features)} kept)"
+            )
+            schema = replace(
+                schema, symbolic=replace(schema.symbolic, features=filtered_features)
             )
 
     if feature_selection is not None and (
@@ -225,9 +230,9 @@ def run_anomaly_experiment(config: AnomalyExperimentConfig) -> ExperimentResult:
     n_mine = int(config.mine_frac * n_total) if config.mine_frac < 1.0 else n_total
 
     # 5. Mine symbolic schema if needed
+    symbolic_schema_path: Path | None = None
     if do_symbolic:
         print("[5/6] Mining transactions for symbolic schema...")
-        transactions_path = config.cache_dir / "transactions" / "transactions_raw.json"
 
         feature_selection = None
         if config.filter_config is not None:
@@ -239,53 +244,63 @@ def run_anomaly_experiment(config: AnomalyExperimentConfig) -> ExperimentResult:
             mining_filters = load_mining_filter_config(resolved)
             feature_selection = mining_filters.feature_selection
 
-        mine_path = transactions_path
-        if config.mine_frac < 1.0:
-            mine_path = (
-                transactions_path.parent
-                / f"transactions_mine_{config.mine_frac}_anomaly.json"
+        if config.prebuilt_symbolic_schema_path is not None:
+            print(
+                f"  [skip] Reusing prebuilt schema: {config.prebuilt_symbolic_schema_path}"
             )
-            mine_path.write_text(
-                json.dumps(
-                    [
-                        {
-                            "transaction_id": t.transaction_id,
-                            "group_id": t.group_id,
-                            "method": t.method,
-                            "start_ts": t.start_ts,
-                            "end_ts": t.end_ts,
-                            "n_alerts": t.n_alerts,
-                            "alert_ids": t.alert_ids,
-                            "abs_items": sorted(list(t.abs_items)),
-                            "raw_items": sorted(list(t.raw_items))
-                            if t.raw_items is not None
-                            else None,
-                            "sorted_items": [sorted(s) for s in t.sorted_items],
-                            "alert_ips": sorted(list(t.alert_ips)),
-                            "tx_label": t.tx_label,
-                            "alert_labels": sorted(list(t.alert_labels))
-                            if t.alert_labels is not None
-                            else None,
-                            "weight": t.weight,
-                        }
-                        for t in transactions[:n_mine]
-                    ]
+            symbolic_schema_path = config.prebuilt_symbolic_schema_path
+            mining_stats: dict = {"prebuilt": True}
+        else:
+            transactions_path = (
+                config.cache_dir / "transactions" / "transactions_raw.json"
+            )
+            mine_path = transactions_path
+            if config.mine_frac < 1.0:
+                mine_path = (
+                    transactions_path.parent
+                    / f"transactions_mine_{config.mine_frac}_anomaly.json"
                 )
-            )
+                mine_path.write_text(
+                    json.dumps(
+                        [
+                            {
+                                "transaction_id": t.transaction_id,
+                                "group_id": t.group_id,
+                                "method": t.method,
+                                "start_ts": t.start_ts,
+                                "end_ts": t.end_ts,
+                                "n_alerts": t.n_alerts,
+                                "alert_ids": t.alert_ids,
+                                "abs_items": sorted(list(t.abs_items)),
+                                "raw_items": sorted(list(t.raw_items))
+                                if t.raw_items is not None
+                                else None,
+                                "sorted_items": [sorted(s) for s in t.sorted_items],
+                                "alert_ips": sorted(list(t.alert_ips)),
+                                "tx_label": t.tx_label,
+                                "alert_labels": sorted(list(t.alert_labels))
+                                if t.alert_labels is not None
+                                else None,
+                                "weight": t.weight,
+                            }
+                            for t in transactions[:n_mine]
+                        ]
+                    )
+                )
 
-        _, mining_stats = _mine_and_register_symbolic_schema(
-            scenario=config.scenario,
-            transactions_path=mine_path,
-            run_name=f"anomaly_symbolic_{config.scenario}",
-            min_support=0.05,
-            max_itemset_size=3,
-            max_seq_len=5,
-            target_label="benign",
-            filter_config=config.filter_config,
-            abstraction_map_path=config.abstraction_map_path,
-            abstraction_level=config.abstraction_level,
-            run_attack_pass=False,
-        )
+            symbolic_schema_path, mining_stats = _mine_and_register_symbolic_schema(
+                scenario=config.scenario,
+                transactions_path=mine_path,
+                run_name=f"anomaly_symbolic_{config.scenario}",
+                min_support=0.05,
+                max_itemset_size=3,
+                max_seq_len=5,
+                target_label="benign",
+                filter_config=config.filter_config,
+                abstraction_map_path=config.abstraction_map_path,
+                abstraction_level=config.abstraction_level,
+                run_attack_pass=False,
+            )
     else:
         print("[5/6] Skipping mining (base schema).")
         mining_stats = {}
@@ -438,4 +453,5 @@ def run_anomaly_experiment(config: AnomalyExperimentConfig) -> ExperimentResult:
         metrics=full_metrics,
         results_file=results_file,
         grouping_mode=config.grouping.mode,
+        symbolic_schema_path=symbolic_schema_path,
     )
