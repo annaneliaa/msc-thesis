@@ -185,7 +185,12 @@ def _smart_filter_itemsets(
     expected_sa = sb * f_attack
     ratio = sa / (expected_sa.replace(0, float("nan")))
 
-    passes = (sd.abs() >= f.min_abs_support_diff) | (ratio <= ratio_threshold)
+    # Rescue only features where sb already clears the threshold independently —
+    # i.e., the feature is genuinely strong in benign but attack contamination is
+    # pulling support_diff below the cutoff.  Features with sb < min_abs_support_diff
+    # are weak regardless of attack support and should not be rescued.
+    rescue = (sb >= f.min_abs_support_diff) & (ratio <= ratio_threshold)
+    passes = (sd.abs() >= f.min_abs_support_diff) | rescue
     result = structurally_valid[passes].reset_index(drop=True)
 
     if f.remove_subsumed:
@@ -243,7 +248,8 @@ def _smart_filter_sequences(
     expected_sa = sb * f_attack
     ratio = sa / (expected_sa.replace(0, float("nan")))
 
-    passes = (sd.abs() >= f.min_abs_support_diff) | (ratio <= ratio_threshold)
+    rescue = (sb >= f.min_abs_support_diff) & (ratio <= ratio_threshold)
+    passes = (sd.abs() >= f.min_abs_support_diff) | rescue
     result = structurally_valid[passes].reset_index(drop=True)
 
     if f.remove_subsumed:
