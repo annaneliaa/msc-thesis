@@ -122,20 +122,22 @@ _REPO = next(p for p in _HERE.parents if (p / "pyproject.toml").exists())
 sys.path.insert(0, str(_REPO / "src"))
 
 COMPARISON_BASE = _REPO / "artifacts" / "experiments" / "run_model_comparison"
-MODELS = ["logreg", "mlp", "lstm", "iforest", "ocsvm"]
-ANOMALY_MODELS = {"iforest", "ocsvm"}
+MODELS = ["logreg", "mlp", "lstm", "bernoulli_oc", "autoencoder_oc", "ocsvm"]
+ANOMALY_MODELS = {"bernoulli_oc", "autoencoder_oc", "ocsvm"}
 _MODEL_COLORS = {
     "logreg": "#4C72B0",
     "mlp": "#DD8452",
     "lstm": "#55A868",
-    "iforest": "#9B59B6",
+    "bernoulli_oc": "#9B59B6",
+    "autoencoder_oc": "#17BECF",
     "ocsvm": "#E74C3C",
 }
 _MODEL_LABELS = {
     "logreg": "LogReg",
     "mlp": "MLP",
     "lstm": "LSTM",
-    "iforest": "IForest",
+    "bernoulli_oc": "Bernoulli",
+    "autoencoder_oc": "Autoencoder",
     "ocsvm": "OC-SVM",
 }
 
@@ -279,6 +281,13 @@ def _run_for_model(
     # Cache the schema path so subsequent models in this run skip mining
     if symbolic.symbolic_schema_path is not None:
         schema_cache[scenario] = symbolic.symbolic_schema_path
+
+    # Generate mining inspection plots when this run actually performed mining
+    if symbolic.mining_run_dir is not None:
+        _run_mining_inspection(
+            symbolic.mining_run_dir,
+            out_dir=model_dir.parent / "mining" / scenario,
+        )
 
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
 
@@ -672,6 +681,32 @@ def _load_sfa():
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+def _load_inspect_mining():
+    spec = importlib.util.spec_from_file_location(
+        "inspect_mining_run",
+        _HERE.parent / "inspect_mining_run.py",
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _run_mining_inspection(mining_run_dir: Path, out_dir: Path) -> None:
+    try:
+        insp = _load_inspect_mining()
+        out_dir.mkdir(parents=True, exist_ok=True)
+        raw = insp.load_run(mining_run_dir, threshold=0.05)
+        insp.plot_support_scatter(raw, 0.05, out_dir)
+        insp.plot_support_diff_hist(raw, 0.05, out_dir)
+        insp.plot_feature_counts(raw, 0.05, out_dir)
+        insp.plot_token_frequency(raw, 0.05, out_dir)
+        table_text = insp.print_tables(raw, 0.05)
+        (out_dir / "tables.txt").write_text(table_text, encoding="utf-8")
+        print(f"  [mining inspect] Saved plots → {out_dir}")
+    except Exception as exc:
+        print(f"  [mining inspect] Failed: {exc}")
 
 
 def run_per_model_feature_analysis(

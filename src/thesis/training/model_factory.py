@@ -1,10 +1,11 @@
 from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier, IsolationForest
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.neural_network import MLPClassifier
 from sklearn.svm import OneClassSVM
 from typing import Callable, Any
 
 from thesis.training.lstm_classifier import LSTMClassifier
+from thesis.training.anomaly_models import BernoulliOneClass, BinaryAutoencoder
 
 MODEL_FACTORIES = {
     "logreg": lambda: LogisticRegression(
@@ -36,11 +37,12 @@ MODEL_FACTORIES = {
         validation_fraction=0.1,
     ),
     "lstm": lambda: LSTMClassifier(),
-    "iforest": lambda: IsolationForest(
-        n_estimators=200,
-        contamination="auto",
+    "bernoulli_oc": lambda: BernoulliOneClass(contamination=0.05, alpha=1.0),
+    "autoencoder_oc": lambda: BinaryAutoencoder(
+        hidden_layer_sizes=(64, 32, 64),
+        max_iter=500,
+        contamination=0.05,
         random_state=42,
-        n_jobs=-1,
     ),
     "ocsvm": lambda: OneClassSVM(
         kernel="rbf",

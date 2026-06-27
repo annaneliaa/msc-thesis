@@ -28,6 +28,7 @@ class SequenceFilterConfig(BaseModel):
     min_lift: float | None = None
     max_overlap: float | None = None
     remove_subsumed: bool = True
+    top_k_per_pass: int | None = None
 
 
 class FeatureSelectionConfig(BaseModel):

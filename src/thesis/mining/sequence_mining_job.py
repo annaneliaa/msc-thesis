@@ -59,6 +59,7 @@ def run_transaction_prefixspan_job(
     max_len: int | None = 3,
     target_label: str = "benign",
     run_dir: Path | None = None,
+    top_k_per_pass: int | None = None,
 ) -> MiningJobResult:
     """
     Mine frequent sequential patterns from MiningTransaction records.
@@ -147,6 +148,17 @@ def run_transaction_prefixspan_job(
             max_len=max_len,
             run_dir=run_dir,
         )
+
+        if top_k_per_pass is not None and len(mined_df) > top_k_per_pass:
+            n_before = len(mined_df)
+            mined_df = (
+                mined_df.sort_values("support_count", ascending=False)
+                .head(top_k_per_pass)
+                .reset_index(drop=True)
+            )
+            print(
+                f"  top_k_per_pass={top_k_per_pass}: kept {len(mined_df)} of {n_before} patterns"
+            )
 
         mined_df = add_cross_label_sequence_supports(
             mined_df=mined_df,
@@ -320,6 +332,7 @@ def run_transaction_itemset_prefixspan_job(
     max_len: int | None = 3,
     target_label: str = "benign",
     run_dir: Path | None = None,
+    top_k_per_pass: int | None = None,
 ) -> MiningJobResult:
     """
     Mine frequent itemset sequential patterns from MiningTransaction records.
@@ -422,6 +435,17 @@ def run_transaction_itemset_prefixspan_job(
             max_len=max_len,
             run_dir=run_dir,
         )
+
+        if top_k_per_pass is not None and len(mined_df) > top_k_per_pass:
+            n_before = len(mined_df)
+            mined_df = (
+                mined_df.sort_values("support_count", ascending=False)
+                .head(top_k_per_pass)
+                .reset_index(drop=True)
+            )
+            print(
+                f"  top_k_per_pass={top_k_per_pass}: kept {len(mined_df)} of {n_before} patterns"
+            )
 
         mined_df = add_cross_label_itemset_sequence_supports(
             mined_df=mined_df,

@@ -10,8 +10,8 @@
 itemsets:
   min_k: 2
   max_k: null
-  min_support_count: 50        
-  min_abs_support_diff: 0.20    # 20pp class separation
+  min_support_count: 10        
+  min_abs_support_diff: 0.05
   min_confidence_attack: 0.0
   max_confidence_attack: null
   min_confidence_benign: 0.0
@@ -20,14 +20,15 @@ itemsets:
 
 item_sequences:
   min_k: 3
-  min_support_count: 50        # higher bar for sequences because far more candidates
-  min_abs_support_diff: 0.20    # 20pp class separation
+  min_support_count: 100        # higher bar for sequences because far more candidates
+  min_abs_support_diff: 0.30    # 20pp class separation
   min_confidence_attack: 0.0
   max_confidence_attack: null
   min_confidence_benign: 0.0
-  min_lift: null
-  max_overlap: 0.90
-  remove_subsumed: true         # prune subsequences covered by longer patterns
+  min_lift: 0.2
+  max_overlap: 0.3
+  remove_subsumed: true
+  top_k_per_pass: 500         # cap patterns per mining pass before cross-label support (perf)
 
 or_features:
   min_abs_support_diff: 0.20

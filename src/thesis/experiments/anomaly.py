@@ -8,10 +8,14 @@ Split (temporal):
 
 The difference from classifier experiments:
   - Only benign-labelled training transactions are passed to the model fit.
-  - Models (IsolationForest, OneClassSVM) score each test transaction; lower
-    decision_function output = more anomalous.
+  - Models score each test transaction; lower decision_function output = more anomalous.
   - Anomaly score = -decision_function(X_test) so higher = more likely attack.
   - AUC, F1, precision, recall are computed against the true attack labels.
+
+Supported models:
+  bernoulli_oc   — Bernoulli log-likelihood; analytic SHAP values; fast and interpretable.
+  autoencoder_oc — MLP reconstruction error; per-feature error attribution as SHAP proxy.
+  ocsvm          — One-class SVM with RBF kernel; no SHAP output.
 
 For schema_name="base+symbolic", frequent itemsets are mined from the benign
 portion of the training window and registered as a symbolic schema before
@@ -53,7 +57,7 @@ from thesis.paths import ensure_artifact_dirs
 from thesis.schemas.experiments import AnomalyExperimentConfig, ExperimentResult
 from thesis.training.model_factory import get_model_factory
 
-_ANOMALY_MODELS = {"iforest", "ocsvm"}
+_ANOMALY_MODELS = {"bernoulli_oc", "autoencoder_oc", "ocsvm"}
 
 
 def _encode_for_anomaly(
@@ -122,7 +126,6 @@ def _compute_anomaly_metrics(
     X_test: pd.DataFrame,
     y_test: np.ndarray,
     feature_names: list[str],
-    top_n: int = 30,
 ) -> dict:
     """Fit model on benign training data and evaluate on mixed test set."""
     model.fit(X_train)
@@ -142,36 +145,50 @@ def _compute_anomaly_metrics(
     cm = confusion_matrix(y_test, y_pred, labels=[0, 1])
     tn, fp, fn, tp = cm.ravel() if cm.shape == (2, 2) else (0, 0, 0, 0)
 
-    # Feature importances — tree-based models only (IsolationForest)
-    # by_coefficient: MDI from feature_importances_ — always available for tree ensembles
-    # IsolationForest is a BaggingMeta-estimator: no top-level feature_importances_,
-    # but each ExtraTreeRegressor estimator has one — average them for MDI.
-    tree_importances: dict = {}
-    estimators = getattr(model, "estimators_", None)
-    if estimators and hasattr(estimators[0], "feature_importances_"):
-        mdi = np.mean([e.feature_importances_ for e in estimators], axis=0)
-        pairs = sorted(zip(feature_names, mdi), key=lambda kv: kv[1], reverse=True)
-        tree_importances = {name: float(v) for name, v in pairs[:top_n] if v > 0}
-
-    shap_importances: dict = {}
-    try:
-        import shap
-
-        x_explain = X_test.iloc[:200] if len(X_test) > 200 else X_test
-        sv = shap.TreeExplainer(model).shap_values(x_explain)
-        # IsolationForest returns shape (n_samples, n_features)
-        if isinstance(sv, list):
-            sv = sv[-1]
-        mean_signed = np.asarray(sv).mean(axis=0)
+    # --- Native model importances ("by_coefficient") ---
+    # BernoulliOneClass: log odds ratio per feature (log(p/(1-p)))
+    # BinaryAutoencoder: mean per-feature reconstruction error on benign training data
+    native_importances: dict = {}
+    if hasattr(model, "log_odds_"):
         pairs = sorted(
-            zip(feature_names, mean_signed),
+            zip(feature_names, model.log_odds_),
             key=lambda kv: abs(kv[1]),
             reverse=True,
         )
-        shap_importances = {name: float(v) for name, v in pairs[:top_n]}
-    except Exception as shap_err:
+        native_importances = {name: {"importance": float(v)} for name, v in pairs}
+    elif hasattr(model, "train_feature_errors_"):
+        pairs = sorted(
+            zip(feature_names, model.train_feature_errors_),
+            key=lambda kv: kv[1],
+            reverse=True,
+        )
+        native_importances = {
+            name: {"importance": float(v)} for name, v in pairs if v > 0
+        }
+
+    # --- SHAP importances ("by_shap") ---
+    # Models that implement shap_values() provide analytic or pseudo-SHAP attributions.
+    # OneClassSVM has no such method and SHAP is skipped (KernelExplainer is impractical
+    # for 1000+ binary features with an SVM scoring function).
+    shap_importances: dict = {}
+    if hasattr(model, "shap_values"):
+        x_arr = X_test.values if hasattr(X_test, "values") else np.asarray(X_test)
+        x_explain = x_arr[:200] if len(x_arr) > 200 else x_arr
+        try:
+            sv = model.shap_values(x_explain)
+            mean_signed = np.asarray(sv).mean(axis=0)
+            pairs = sorted(
+                zip(feature_names, mean_signed),
+                key=lambda kv: abs(kv[1]),
+                reverse=True,
+            )
+            shap_importances = {name: {"importance": float(v)} for name, v in pairs}
+        except Exception as shap_err:
+            print(f"  [warn] shap_values() failed ({shap_err}); no SHAP importances")
+    else:
         print(
-            f"  [warn] SHAP failed ({shap_err}); using tree feature_importances_ only"
+            f"  [info] SHAP skipped for {type(model).__name__} "
+            "(no shap_values() method; use bernoulli_oc or autoencoder_oc for SHAP)"
         )
 
     return {
@@ -186,7 +203,7 @@ def _compute_anomaly_metrics(
         "fn": int(fn),
         "n_train_benign": int(len(X_train)),
         "top_feature_importances": {
-            "by_coefficient": tree_importances,
+            "by_coefficient": native_importances,
             "by_shap": shap_importances,
         },
     }
@@ -231,6 +248,7 @@ def run_anomaly_experiment(config: AnomalyExperimentConfig) -> ExperimentResult:
 
     # 5. Mine symbolic schema if needed
     symbolic_schema_path: Path | None = None
+    mining_run_dir: Path | None = None
     if do_symbolic:
         print("[5/6] Mining transactions for symbolic schema...")
 
@@ -288,18 +306,20 @@ def run_anomaly_experiment(config: AnomalyExperimentConfig) -> ExperimentResult:
                     )
                 )
 
-            symbolic_schema_path, mining_stats = _mine_and_register_symbolic_schema(
-                scenario=config.scenario,
-                transactions_path=mine_path,
-                run_name=f"anomaly_symbolic_{config.scenario}",
-                min_support=0.05,
-                max_itemset_size=3,
-                max_seq_len=5,
-                target_label="benign",
-                filter_config=config.filter_config,
-                abstraction_map_path=config.abstraction_map_path,
-                abstraction_level=config.abstraction_level,
-                run_attack_pass=False,
+            symbolic_schema_path, mining_run_dir, mining_stats = (
+                _mine_and_register_symbolic_schema(
+                    scenario=config.scenario,
+                    transactions_path=mine_path,
+                    run_name=f"anomaly_symbolic_{config.scenario}",
+                    min_support=0.05,
+                    max_itemset_size=3,
+                    max_seq_len=5,
+                    target_label="benign",
+                    filter_config=config.filter_config,
+                    abstraction_map_path=config.abstraction_map_path,
+                    abstraction_level=config.abstraction_level,
+                    run_attack_pass=False,
+                )
             )
     else:
         print("[5/6] Skipping mining (base schema).")
@@ -454,4 +474,5 @@ def run_anomaly_experiment(config: AnomalyExperimentConfig) -> ExperimentResult:
         results_file=results_file,
         grouping_mode=config.grouping.mode,
         symbolic_schema_path=symbolic_schema_path,
+        mining_run_dir=mining_run_dir,
     )

@@ -114,6 +114,11 @@ def _mine_and_register_symbolic_schema(
 ) -> Path:
     run_dir = create_run_dir(run_name)
 
+    _top_k_per_pass: int | None = None
+    if filter_config is not None:
+        _fc = filter_config if filter_config.is_absolute() else _ROOT / filter_config
+        _top_k_per_pass = load_mining_filter_config(_fc).item_sequences.top_k_per_pass
+
     print("--- Running Eclat itemset mining on benign (AND + AND/OR) ---")
     eclat_result = run_transaction_eclat_job(
         transactions_path=transactions_path,
@@ -135,6 +140,7 @@ def _mine_and_register_symbolic_schema(
         max_len=max_seq_len,
         target_label=target_label,
         run_dir=run_dir,
+        top_k_per_pass=_top_k_per_pass,
     )
 
     eclat_df = eclat_result.mined_df.copy()
@@ -241,6 +247,7 @@ def _mine_and_register_symbolic_schema(
             max_len=max_seq_len,
             target_label="attack",
             run_dir=run_dir / "attack",
+            top_k_per_pass=_top_k_per_pass,
         )
 
         attack_eclat_df = attack_eclat_result.mined_df.copy()
@@ -484,7 +491,7 @@ def _mine_and_register_symbolic_schema(
     )
     mining_stats.update(schema_build_stats)
     print(f"  Symbolic schema registered → {schema_path}")
-    return schema_path, mining_stats
+    return schema_path, run_dir, mining_stats
 
 
 # ---------------------------------------------------------------------------
@@ -669,6 +676,7 @@ def run_symbolic_experiment(
 
     # 5. Mine and register symbolic schema
     print("[5/8] Mining transactions for symbolic schema...")
+    mining_run_dir: Path | None = None
     if config.prebuilt_symbolic_schema_path is not None:
         print(
             f"  [skip] Reusing prebuilt schema: {config.prebuilt_symbolic_schema_path}"
@@ -684,19 +692,21 @@ def run_symbolic_experiment(
             print(
                 f"  [info] No attack transactions in mine window ({n_mine}/{n_total}) — skipping attack mining pass."
             )
-        symbolic_schema_path, mining_stats = _mine_and_register_symbolic_schema(
-            scenario=config.scenario,
-            transactions_path=mining_transactions_path,
-            run_name=run_name,
-            min_support=config.min_support,
-            max_itemset_size=config.max_itemset_size,
-            max_seq_len=config.max_seq_len,
-            target_label=config.target_label,
-            filter_config=config.filter_config,
-            jaccard_threshold=config.jaccard_threshold,
-            abstraction_map_path=config.abstraction_map_path,
-            abstraction_level=config.abstraction_level,
-            run_attack_pass=n_attack_in_mine > 0,
+        symbolic_schema_path, mining_run_dir, mining_stats = (
+            _mine_and_register_symbolic_schema(
+                scenario=config.scenario,
+                transactions_path=mining_transactions_path,
+                run_name=run_name,
+                min_support=config.min_support,
+                max_itemset_size=config.max_itemset_size,
+                max_seq_len=config.max_seq_len,
+                target_label=config.target_label,
+                filter_config=config.filter_config,
+                jaccard_threshold=config.jaccard_threshold,
+                abstraction_map_path=config.abstraction_map_path,
+                abstraction_level=config.abstraction_level,
+                run_attack_pass=n_attack_in_mine > 0,
+            )
         )
 
     # 6. Encode under base+symbolic schema
@@ -840,6 +850,7 @@ def run_symbolic_experiment(
         schema_name=summary.schema_name,
         schema_version=summary.schema_version,
         symbolic_schema_path=symbolic_schema_path,
+        mining_run_dir=mining_run_dir,
         auc=summary.auc,
         n_transactions=len(df),
         n_mixed_dropped=n_mixed,

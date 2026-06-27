@@ -59,7 +59,7 @@ class BaselineExperimentConfig:
 @dataclass
 class AnomalyExperimentConfig:
     scenario: str
-    model_name: str = "iforest"
+    model_name: str = "bernoulli_oc"
     model_version: str = "0.1.0"
     schema_name: str = "base"  # "base" or "base+symbolic"
     test_frac: float = 0.3
@@ -93,3 +93,4 @@ class ExperimentResult:
     grouping_mode: str
     n_mixed_dropped: int = 0
     symbolic_schema_path: Path | None = None
+    mining_run_dir: Path | None = None
