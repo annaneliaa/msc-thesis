@@ -45,7 +45,6 @@ Output (under artifacts/experiments/mining_window_sweep/<run_ts>/):
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import textwrap
 from collections import defaultdict
@@ -121,8 +120,8 @@ def _save_temp_transactions(rows: list[dict], path: Path) -> None:
 
 
 def _window_cache_key(scenario: str, mode: str, gran: float, win_idx: int) -> str:
-    raw = f"{scenario}|{mode}|{gran:.6f}|{win_idx}"
-    return hashlib.md5(raw.encode()).hexdigest()[:12]
+    gran_tag = f"{gran:.6f}".rstrip("0").rstrip(".")
+    return f"{scenario}__{mode}__{gran_tag}__{win_idx}"
 
 
 # ---------------------------------------------------------------------------
@@ -291,11 +290,26 @@ def _run_mining_for_window(
     eclat_filt_path = win_cache / "eclat_filtered.parquet"
     seq_raw_path = win_cache / "seq_raw.parquet"
     seq_filt_path = win_cache / "seq_filtered.parquet"
+    filter_hash_path = win_cache / "filter_config_hash.txt"
 
-    if all(
-        p.exists()
-        for p in [eclat_raw_path, eclat_filt_path, seq_raw_path, seq_filt_path]
-    ):
+    # Compute a fingerprint of the current filter config so we can detect stale
+    # filtered caches without re-running the expensive mining step.
+    def _filter_fingerprint() -> str:
+        import hashlib
+
+        if filter_config is None:
+            return "none"
+        raw = Path(filter_config).read_bytes() if Path(filter_config).exists() else b""
+        return hashlib.md5(raw).hexdigest()
+
+    raw_cached = eclat_raw_path.exists() and seq_raw_path.exists()
+    filt_cached = eclat_filt_path.exists() and seq_filt_path.exists()
+    filter_hash_matches = (
+        filter_hash_path.exists()
+        and filter_hash_path.read_text().strip() == _filter_fingerprint()
+    )
+
+    if raw_cached and filt_cached and filter_hash_matches:
         return (
             pd.read_parquet(eclat_raw_path),
             pd.read_parquet(eclat_filt_path),
@@ -413,6 +427,7 @@ def _run_mining_for_window(
 
     eclat_filtered.to_parquet(eclat_filt_path, index=False)
     seq_filtered.to_parquet(seq_filt_path, index=False)
+    filter_hash_path.write_text(_filter_fingerprint())
 
     return eclat_raw, eclat_filtered, seq_raw, seq_filtered
 
@@ -501,6 +516,8 @@ def table1_stability(results: list[WindowResult]) -> pd.DataFrame:
                     "window": w.win_idx,
                     "win_range": f"{w.win_start_frac:.0%}–{w.win_end_frac:.0%}",
                     "n_tx": w.n_transactions,
+                    "n_benign_tx": w.n_transactions - w.n_attack_transactions,
+                    "n_attack_tx": w.n_attack_transactions,
                     "n_features": len(cur),
                     "n_added": None,
                     "n_removed": None,
@@ -520,6 +537,8 @@ def table1_stability(results: list[WindowResult]) -> pd.DataFrame:
                     "window": w.win_idx,
                     "win_range": f"{w.win_start_frac:.0%}–{w.win_end_frac:.0%}",
                     "n_tx": w.n_transactions,
+                    "n_benign_tx": w.n_transactions - w.n_attack_transactions,
+                    "n_attack_tx": w.n_attack_transactions,
                     "n_features": len(cur),
                     "n_added": len(added),
                     "n_removed": len(removed),

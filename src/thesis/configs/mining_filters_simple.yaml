@@ -11,12 +11,12 @@ itemsets:
   min_k: 2
   max_k: null
   min_support_count: 10        
-  min_abs_support_diff: 0.05
+  min_abs_support_diff: 0.30
   min_confidence_attack: 0.0
   max_confidence_attack: null
   min_confidence_benign: 0.0
   max_overlap: null
-  remove_subsumed: false
+  remove_subsumed: true
 
 item_sequences:
   min_k: 3
