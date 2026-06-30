@@ -31,7 +31,7 @@ from thesis.mining.util import (
     save_filtered_views,
     select_top_itemsets_per_class,
 )
-from thesis.mining.load_mining_transactions import load_and_prepare_mining_transactions
+from thesis.mining.load_mining_alert_groups import load_and_prepare_mining_alert_groups
 from thesis.mining.token_abstraction import (
     abstract_mail_hosts_mined_df,
     abstract_mail_hosts_or_clauses_df,
@@ -50,8 +50,8 @@ def sort_frequent_itemsets(
     return df.sort_values(by=sort_by, ascending=False).reset_index(drop=True)
 
 
-def run_transaction_eclat_job(
-    transactions_path: str | Path,
+def run_alert_group_eclat_job(
+    alert_groups_path: str | Path,
     scenario_name: str,
     run_name: str = "debug",
     min_support: float = 0.05,
@@ -61,15 +61,15 @@ def run_transaction_eclat_job(
     jaccard_threshold: float = 0.98,
 ) -> MiningJobResult:
     """
-    Mine frequent itemsets from in-memory MiningTransaction records.
+    Mine frequent itemsets from in-memory MiningAlertGroup records.
 
     Expected input:
-    - transactions: sequence of MiningTransaction
+    - alert_groups: sequence of MiningAlertGroup
     - scenario_name: logical scenario identifier for logging/artifacts
     """
     ensure_artifact_dirs()
 
-    print("Starting transaction Eclat mining job...")
+    print("Starting alert_group Eclat mining job...")
     t0 = time.perf_counter()
 
     with start_run(run_name):
@@ -81,7 +81,7 @@ def run_transaction_eclat_job(
         set_tags(
             {
                 "stage": "mining",
-                "component": "transaction-itemset-mining",
+                "component": "alert_group-itemset-mining",
                 "algorithm": "eclat",
                 "run_name": run_name,
                 "scenario_name": scenario_name,
@@ -91,30 +91,30 @@ def run_transaction_eclat_job(
         log_params(
             {
                 "run_name": run_name,
-                "job_type": "transaction_eclat_mining",
+                "job_type": "alert_group_eclat_mining",
                 "scenario_name": scenario_name,
                 "target_label": target_label,
                 "min_support": min_support,
                 "max_len": max_len if max_len is not None else -1,
-                "input_type": "MiningTransaction",
+                "input_type": "MiningAlertGroup",
                 "output_format": "csv",
             }
         )
 
-        transactions = load_and_prepare_mining_transactions(
-            path=transactions_path,
+        alert_groups = load_and_prepare_mining_alert_groups(
+            path=alert_groups_path,
             run_dir=run_dir,
         )
 
-        n_mixed = sum(1 for tx in transactions if tx.tx_label == "mixed")
+        n_mixed = sum(1 for tx in alert_groups if tx.group_label == "mixed")
         if n_mixed:
             print(
-                f"  [warn] Dropping {n_mixed} mixed-label transactions before itemset mining"
+                f"  [warn] Dropping {n_mixed} mixed-label alert_groups before itemset mining"
             )
-            transactions = [tx for tx in transactions if tx.tx_label != "mixed"]
+            alert_groups = [tx for tx in alert_groups if tx.group_label != "mixed"]
 
         all_labels = sorted(
-            {tx.tx_label for tx in transactions if tx.tx_label is not None}
+            {tx.group_label for tx in alert_groups if tx.group_label is not None}
         )
         other_labels = [label for label in all_labels if label != target_label]
 
@@ -129,19 +129,19 @@ def run_transaction_eclat_job(
         else:
             other_label = _complement.get(target_label, "other")
             print(
-                f"  [warn] No '{other_label}' transactions in mining window; "
+                f"  [warn] No '{other_label}' alert_groups in mining window; "
                 f"confidence_{other_label} will be 0 for all patterns."
             )
 
-        target_group = [tx for tx in transactions if tx.tx_label == target_label]
-        other_group = [tx for tx in transactions if tx.tx_label != target_label]
+        target_group = [tx for tx in alert_groups if tx.group_label == target_label]
+        other_group = [tx for tx in alert_groups if tx.group_label != target_label]
 
         target_baskets = [frozenset(tx.items) for tx in target_group]
         other_baskets = [frozenset(tx.items) for tx in other_group]
-        all_baskets = [frozenset(tx.items) for tx in transactions]
+        all_baskets = [frozenset(tx.items) for tx in alert_groups]
 
         mined_df = run_eclat(
-            transactions=target_baskets,
+            alert_groups=target_baskets,
             min_support=min_support,
             max_len=max_len,
             run_dir=run_dir,
@@ -149,8 +149,8 @@ def run_transaction_eclat_job(
 
         mined_df = add_cross_label_supports(
             mined_df=mined_df,
-            target_transactions=target_baskets,
-            other_transactions=other_baskets,
+            target_alert_groups=target_baskets,
+            other_alert_groups=other_baskets,
             target_label=target_label,
             other_label=other_label,
         )
@@ -186,8 +186,8 @@ def run_transaction_eclat_job(
         )
         or_df = mine_or_disjunctions(
             base_df=feature_df,
-            target_transactions=target_baskets,
-            other_transactions=other_baskets,
+            target_alert_groups=target_baskets,
+            other_alert_groups=other_baskets,
             target_label=target_label,
             other_label=other_label,
             jaccard_threshold=jaccard_threshold,
@@ -205,9 +205,9 @@ def run_transaction_eclat_job(
             [
                 {
                     "scenario_name": scenario_name,
-                    "n_transactions_total": len(transactions),
-                    f"n_transactions_{target_label}": len(target_group),
-                    f"n_transactions_{other_label}": len(other_group),
+                    "n_alert_groups_total": len(alert_groups),
+                    f"n_alert_groups_{target_label}": len(target_group),
+                    f"n_alert_groups_{other_label}": len(other_group),
                     "n_unique_items": (
                         len(set().union(*all_baskets)) if all_baskets else 0
                     ),
@@ -232,7 +232,7 @@ def run_transaction_eclat_job(
             n_candidates=len(mined_df),
             run_id=run_dir.name,
             artifact_path=str(run_dir),
-            n_transactions=len(transactions),
+            n_alert_groups=len(alert_groups),
         )
 
         write_manifest(
@@ -243,16 +243,16 @@ def run_transaction_eclat_job(
                 "min_support": min_support,
                 "max_len": max_len,
                 "target_label": target_label,
-                "input_type": "MiningTransaction",
+                "input_type": "MiningAlertGroup",
             },
             metadata=meta.model_dump(mode="json"),
         )
 
         log_metrics(
             {
-                "n_transactions_total": float(len(transactions)),
-                f"n_transactions_{target_label}": float(len(target_group)),
-                f"n_transactions_{other_label}": float(len(other_group)),
+                "n_alert_groups_total": float(len(alert_groups)),
+                f"n_alert_groups_{target_label}": float(len(target_group)),
+                f"n_alert_groups_{other_label}": float(len(other_group)),
                 "n_itemsets": float(len(mined_df)),
                 "n_unique_items": float(
                     len(set().union(*all_baskets)) if all_baskets else 0

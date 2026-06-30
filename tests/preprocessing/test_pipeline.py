@@ -161,7 +161,7 @@ def test_duplicate_alert_ingestion_does_not_duplicate_group_entries(
     assert any("update" in item for item in snap.items)
 
     assert snap.alert_labels == {"false_positive"}
-    assert snap.tx_label == "benign"
+    assert snap.group_label == "benign"
 
 
 def test_empty_alerts_are_not_added_to_cache(tmp_path, monkeypatch):
@@ -264,14 +264,14 @@ def test_alerts_json_to_group_snapshot_selection_full_pipeline(tmp_path, monkeyp
     assert any("handshake" in item for item in all_items)
 
     all_labels = set()
-    tx_labels = set()
+    group_labels = set()
 
     for s in snapshots:
         if s.alert_labels:
             all_labels |= s.alert_labels
-        if s.tx_label:
-            tx_labels.add(s.tx_label)
+        if s.group_label:
+            group_labels.add(s.group_label)
 
     assert "false_positive" in all_labels
     assert "true_positive" in all_labels
-    assert any(lbl in {"mixed", "attack", "benign"} for lbl in tx_labels)
+    assert any(lbl in {"mixed", "attack", "benign"} for lbl in group_labels)

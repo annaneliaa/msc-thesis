@@ -2,7 +2,7 @@ from typing import Any, Iterable
 import ipaddress
 import pandas as pd
 
-from thesis.schemas.preprocessing import Transaction
+from thesis.schemas.preprocessing import AlertGroup
 
 
 def _count_items_with_prefix(items: set[str], prefix: str) -> int:
@@ -16,7 +16,7 @@ def _is_internal_ip(ip: str) -> bool:
         return False
 
 
-def compute_baseline_features(tx: Transaction) -> dict[str, Any]:
+def compute_baseline_features(tx: AlertGroup) -> dict[str, Any]:
     items = set(tx.abs_items or tx.raw_items or [])
     ip_values = list(tx.alert_ips or [])
 
@@ -45,16 +45,16 @@ class BaselineFeatureEncoder:
     Stateless baseline feature encoder for training and inference.
     """
 
-    def transform_one(self, tx: Transaction) -> pd.DataFrame:
+    def transform_one(self, tx: AlertGroup) -> pd.DataFrame:
         """
-        Encode one transaction into a 1-row feature DataFrame.
+        Encode one alert_group into a 1-row feature DataFrame.
         """
         features = compute_baseline_features(tx)
         return pd.DataFrame([features])
 
-    def transform(self, transactions: Iterable[Transaction]) -> pd.DataFrame:
+    def transform(self, alert_groups: Iterable[AlertGroup]) -> pd.DataFrame:
         """
-        Encode many transactions into a feature DataFrame.
+        Encode many alert_groups into a feature DataFrame.
         """
-        rows = [compute_baseline_features(tx) for tx in transactions]
+        rows = [compute_baseline_features(tx) for tx in alert_groups]
         return pd.DataFrame(rows)

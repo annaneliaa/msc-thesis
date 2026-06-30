@@ -36,7 +36,7 @@ from thesis.mining.util import (
     save_filtered_itemset_sequence_views,
     add_confidence_scores,
 )
-from thesis.mining.load_mining_transactions import load_and_prepare_mining_transactions
+from thesis.mining.load_mining_alert_groups import load_and_prepare_mining_alert_groups
 
 
 def sort_frequent_sequences(
@@ -51,8 +51,8 @@ def sort_frequent_sequences(
     return df.sort_values(by=sort_by, ascending=False).reset_index(drop=True)
 
 
-def run_transaction_prefixspan_job(
-    transactions_path: str | Path,
+def run_alert_group_prefixspan_job(
+    alert_groups_path: str | Path,
     scenario_name: str,
     run_name: str = "debug",
     min_support: float = 0.05,
@@ -62,16 +62,16 @@ def run_transaction_prefixspan_job(
     top_k_per_pass: int | None = None,
 ) -> MiningJobResult:
     """
-    Mine frequent sequential patterns from MiningTransaction records.
+    Mine frequent sequential patterns from MiningAlertGroup records.
 
     Expected input:
-    - transactions: sequence of MiningTransaction
-    - each transaction has sorted_items: list[set[str]] (one set per alert)
+    - alert_groups: sequence of MiningAlertGroup
+    - each alert_group has sorted_items: list[set[str]] (one set per alert)
     - scenario_name: logical scenario identifier for logging/artifacts
     """
     ensure_artifact_dirs()
 
-    print("Starting transaction PrefixSpan sequence mining job...")
+    print("Starting alert_group PrefixSpan sequence mining job...")
     t0 = time.perf_counter()
 
     with start_run(run_name):
@@ -83,7 +83,7 @@ def run_transaction_prefixspan_job(
         set_tags(
             {
                 "stage": "mining",
-                "component": "transaction-sequence-mining",
+                "component": "alert_group-sequence-mining",
                 "algorithm": "prefixspan",
                 "run_name": run_name,
                 "scenario_name": scenario_name,
@@ -93,30 +93,30 @@ def run_transaction_prefixspan_job(
         log_params(
             {
                 "run_name": run_name,
-                "job_type": "transaction_prefixspan_mining",
+                "job_type": "alert_group_prefixspan_mining",
                 "scenario_name": scenario_name,
                 "target_label": target_label,
                 "min_support": min_support,
                 "max_len": max_len if max_len is not None else -1,
-                "input_type": "MiningTransaction.sorted_items",
+                "input_type": "MiningAlertGroup.sorted_items",
                 "output_format": "csv",
             }
         )
 
-        transactions = load_and_prepare_mining_transactions(
-            path=transactions_path,
+        alert_groups = load_and_prepare_mining_alert_groups(
+            path=alert_groups_path,
             run_dir=run_dir,
         )
 
-        n_mixed = sum(1 for tx in transactions if tx.tx_label == "mixed")
+        n_mixed = sum(1 for tx in alert_groups if tx.group_label == "mixed")
         if n_mixed:
             print(
-                f"  [warn] Dropping {n_mixed} mixed-label transactions before sequence mining"
+                f"  [warn] Dropping {n_mixed} mixed-label alert_groups before sequence mining"
             )
-            transactions = [tx for tx in transactions if tx.tx_label != "mixed"]
+            alert_groups = [tx for tx in alert_groups if tx.group_label != "mixed"]
 
         all_labels = sorted(
-            {tx.tx_label for tx in transactions if tx.tx_label is not None}
+            {tx.group_label for tx in alert_groups if tx.group_label is not None}
         )
         other_labels = [label for label in all_labels if label != target_label]
 
@@ -131,16 +131,16 @@ def run_transaction_prefixspan_job(
         else:
             other_label = _complement.get(target_label, "other")
             print(
-                f"  [warn] No '{other_label}' transactions in mining window; "
+                f"  [warn] No '{other_label}' alert_groups in mining window; "
                 f"confidence_{other_label} will be 0 for all patterns."
             )
 
-        target_group = [tx for tx in transactions if tx.tx_label == target_label]
-        other_group = [tx for tx in transactions if tx.tx_label != target_label]
+        target_group = [tx for tx in alert_groups if tx.group_label == target_label]
+        other_group = [tx for tx in alert_groups if tx.group_label != target_label]
 
         target_sequences = [list(tx.sorted_items) for tx in target_group]
         other_sequences = [list(tx.sorted_items) for tx in other_group]
-        all_sequences = [list(tx.sorted_items) for tx in transactions]
+        all_sequences = [list(tx.sorted_items) for tx in alert_groups]
 
         mined_df = run_prefixspan(
             sequences=target_sequences,
@@ -223,16 +223,16 @@ def run_transaction_prefixspan_job(
             [
                 {
                     "scenario_name": scenario_name,
-                    "n_transactions_total": len(transactions),
-                    f"n_transactions_{target_label}": len(target_group),
-                    f"n_transactions_{other_label}": len(other_group),
+                    "n_alert_groups_total": len(alert_groups),
+                    f"n_alert_groups_{target_label}": len(target_group),
+                    f"n_alert_groups_{other_label}": len(other_group),
                     "n_unique_items": len(unique_items),
-                    "avg_transaction_sequence_length": (
+                    "avg_alert_group_sequence_length": (
                         float(sum(sequence_lengths) / len(sequence_lengths))
                         if sequence_lengths
                         else 0.0
                     ),
-                    "max_transaction_sequence_length": (
+                    "max_alert_group_sequence_length": (
                         max(sequence_lengths) if sequence_lengths else 0
                     ),
                     "n_sequences": len(mined_df),
@@ -256,7 +256,7 @@ def run_transaction_prefixspan_job(
             n_candidates=len(mined_df),
             run_id=run_dir.name,
             artifact_path=str(run_dir),
-            n_transactions=len(transactions),
+            n_alert_groups=len(alert_groups),
         )
 
         write_manifest(
@@ -267,7 +267,7 @@ def run_transaction_prefixspan_job(
                 "min_support": min_support,
                 "max_len": max_len,
                 "target_label": target_label,
-                "input_type": "MiningTransaction.sorted_items",
+                "input_type": "MiningAlertGroup.sorted_items",
                 "algorithm": "prefixspan",
             },
             metadata=meta.model_dump(mode="json"),
@@ -275,17 +275,17 @@ def run_transaction_prefixspan_job(
 
         log_metrics(
             {
-                "n_transactions_total": float(len(transactions)),
-                f"n_transactions_{target_label}": float(len(target_group)),
-                f"n_transactions_{other_label}": float(len(other_group)),
+                "n_alert_groups_total": float(len(alert_groups)),
+                f"n_alert_groups_{target_label}": float(len(target_group)),
+                f"n_alert_groups_{other_label}": float(len(other_group)),
                 "n_sequences": float(len(mined_df)),
                 "n_unique_items": float(len(unique_items)),
-                "avg_transaction_sequence_length": (
+                "avg_alert_group_sequence_length": (
                     float(sum(sequence_lengths) / len(sequence_lengths))
                     if sequence_lengths
                     else 0.0
                 ),
-                "max_transaction_sequence_length": (
+                "max_alert_group_sequence_length": (
                     float(max(sequence_lengths)) if sequence_lengths else 0.0
                 ),
                 "avg_sequence_size": (
@@ -324,8 +324,8 @@ def run_transaction_prefixspan_job(
         )
 
 
-def run_transaction_itemset_prefixspan_job(
-    transactions_path: str | Path,
+def run_alert_group_itemset_prefixspan_job(
+    alert_groups_path: str | Path,
     scenario_name: str,
     run_name: str = "debug",
     min_support: float = 0.05,
@@ -335,19 +335,19 @@ def run_transaction_itemset_prefixspan_job(
     top_k_per_pass: int | None = None,
 ) -> MiningJobResult:
     """
-    Mine frequent itemset sequential patterns from MiningTransaction records.
+    Mine frequent itemset sequential patterns from MiningAlertGroup records.
 
     Each pattern step is a frozenset of items that must all be present in a
     single alert.  Steps must appear in strictly increasing alert order (s-extension).
     Items within one step may come from the same alert (i-extension).
 
     Expected input:
-    - transactions: sequence of MiningTransaction
-    - each transaction has sorted_items: list[set[str]] (one set per alert)
+    - alert_groups: sequence of MiningAlertGroup
+    - each alert_group has sorted_items: list[set[str]] (one set per alert)
     """
     ensure_artifact_dirs()
 
-    print("Starting transaction itemset PrefixSpan sequence mining job...")
+    print("Starting alert_group itemset PrefixSpan sequence mining job...")
     t0 = time.perf_counter()
 
     with start_run(run_name):
@@ -359,7 +359,7 @@ def run_transaction_itemset_prefixspan_job(
         set_tags(
             {
                 "stage": "mining",
-                "component": "transaction-itemset-sequence-mining",
+                "component": "alert_group-itemset-sequence-mining",
                 "algorithm": "prefixspan-itemset",
                 "run_name": run_name,
                 "scenario_name": scenario_name,
@@ -369,30 +369,30 @@ def run_transaction_itemset_prefixspan_job(
         log_params(
             {
                 "run_name": run_name,
-                "job_type": "transaction_itemset_prefixspan_mining",
+                "job_type": "alert_group_itemset_prefixspan_mining",
                 "scenario_name": scenario_name,
                 "target_label": target_label,
                 "min_support": min_support,
                 "max_len": max_len if max_len is not None else -1,
-                "input_type": "MiningTransaction.sorted_items",
+                "input_type": "MiningAlertGroup.sorted_items",
                 "output_format": "csv",
             }
         )
 
-        transactions = load_and_prepare_mining_transactions(
-            path=transactions_path,
+        alert_groups = load_and_prepare_mining_alert_groups(
+            path=alert_groups_path,
             run_dir=run_dir,
         )
 
-        n_mixed = sum(1 for tx in transactions if tx.tx_label == "mixed")
+        n_mixed = sum(1 for tx in alert_groups if tx.group_label == "mixed")
         if n_mixed:
             print(
-                f"  [warn] Dropping {n_mixed} mixed-label transactions before sequence mining"
+                f"  [warn] Dropping {n_mixed} mixed-label alert_groups before sequence mining"
             )
-            transactions = [tx for tx in transactions if tx.tx_label != "mixed"]
+            alert_groups = [tx for tx in alert_groups if tx.group_label != "mixed"]
 
         all_labels = sorted(
-            {tx.tx_label for tx in transactions if tx.tx_label is not None}
+            {tx.group_label for tx in alert_groups if tx.group_label is not None}
         )
         other_labels = [label for label in all_labels if label != target_label]
 
@@ -407,16 +407,16 @@ def run_transaction_itemset_prefixspan_job(
         else:
             other_label = _complement.get(target_label, "other")
             print(
-                f"  [warn] No '{other_label}' transactions in mining window; "
+                f"  [warn] No '{other_label}' alert_groups in mining window; "
                 f"confidence_{other_label} will be 0 for all patterns."
             )
 
-        target_group = [tx for tx in transactions if tx.tx_label == target_label]
-        other_group = [tx for tx in transactions if tx.tx_label != target_label]
+        target_group = [tx for tx in alert_groups if tx.group_label == target_label]
+        other_group = [tx for tx in alert_groups if tx.group_label != target_label]
 
         target_sequences = [list(tx.sorted_items) for tx in target_group]
         other_sequences = [list(tx.sorted_items) for tx in other_group]
-        all_sequences = [list(tx.sorted_items) for tx in transactions]
+        all_sequences = [list(tx.sorted_items) for tx in alert_groups]
 
         print("Encoding consecutive token repeats...")
         target_sequences_encoded = [
@@ -486,16 +486,16 @@ def run_transaction_itemset_prefixspan_job(
             [
                 {
                     "scenario_name": scenario_name,
-                    "n_transactions_total": len(transactions),
-                    f"n_transactions_{target_label}": len(target_group),
-                    f"n_transactions_{other_label}": len(other_group),
+                    "n_alert_groups_total": len(alert_groups),
+                    f"n_alert_groups_{target_label}": len(target_group),
+                    f"n_alert_groups_{other_label}": len(other_group),
                     "n_unique_items": len(unique_items),
-                    "avg_transaction_length": (
+                    "avg_alert_group_length": (
                         float(sum(sequence_lengths) / len(sequence_lengths))
                         if sequence_lengths
                         else 0.0
                     ),
-                    "max_transaction_length": (
+                    "max_alert_group_length": (
                         max(sequence_lengths) if sequence_lengths else 0
                     ),
                     "n_itemset_sequences": len(mined_df),
@@ -522,7 +522,7 @@ def run_transaction_itemset_prefixspan_job(
             n_candidates=len(mined_df),
             run_id=run_dir.name,
             artifact_path=str(run_dir),
-            n_transactions=len(transactions),
+            n_alert_groups=len(alert_groups),
         )
 
         write_manifest(
@@ -533,7 +533,7 @@ def run_transaction_itemset_prefixspan_job(
                 "min_support": min_support,
                 "max_len": max_len,
                 "target_label": target_label,
-                "input_type": "MiningTransaction.sorted_items (itemset sequences)",
+                "input_type": "MiningAlertGroup.sorted_items (itemset sequences)",
                 "algorithm": "prefixspan-itemset",
             },
             metadata=meta.model_dump(mode="json"),
@@ -541,9 +541,9 @@ def run_transaction_itemset_prefixspan_job(
 
         log_metrics(
             {
-                "n_transactions_total": float(len(transactions)),
-                f"n_transactions_{target_label}": float(len(target_group)),
-                f"n_transactions_{other_label}": float(len(other_group)),
+                "n_alert_groups_total": float(len(alert_groups)),
+                f"n_alert_groups_{target_label}": float(len(target_group)),
+                f"n_alert_groups_{other_label}": float(len(other_group)),
                 "n_itemset_sequences": float(len(mined_df)),
                 "n_unique_items": float(len(unique_items)),
                 "runtime_sec": runtime_sec,

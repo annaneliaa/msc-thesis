@@ -3,12 +3,12 @@ Anomaly detection experiment: one-class model trained on benign traffic only.
 
 Split (temporal):
   Mine window  [0,   mine_frac)   — if schema_name includes "symbolic"
-  Train        [0,   1-test_frac) — benign transactions only
-  Test         [1-test_frac, 1)   — all transactions (mixed benign + attack)
+  Train        [0,   1-test_frac) — benign alert_groups only
+  Test         [1-test_frac, 1)   — all alert_groups (mixed benign + attack)
 
 The difference from classifier experiments:
-  - Only benign-labelled training transactions are passed to the model fit.
-  - Models score each test transaction; lower decision_function output = more anomalous.
+  - Only benign-labelled training alert_groups are passed to the model fit.
+  - Models score each test alert_group; lower decision_function output = more anomalous.
   - Anomaly score = -decision_function(X_test) so higher = more likely attack.
   - AUC, F1, precision, recall are computed against the true attack labels.
 
@@ -41,14 +41,14 @@ from sklearn.metrics import (
 )
 
 from thesis.config import load_mining_filter_config
-from thesis.encoders.service import encode_transactions_for_schema
+from thesis.encoders.service import encode_alert_groups_for_schema
 from thesis.experiments.baseline import (
     ALERTBERT_METHOD,
     _EXPERIMENTS_DIR,
     _ROOT,
     _convert_alerts_to_json,
     _ensure_feature_manifest,
-    _load_transactions,
+    _load_alert_groups,
     _process_alert_batch,
 )
 from thesis.experiments.symbolic import _mine_and_register_symbolic_schema
@@ -62,12 +62,12 @@ _ANOMALY_MODELS = {"bernoulli_oc", "autoencoder_oc", "ocsvm"}
 
 def _encode_for_anomaly(
     scenario: str,
-    transactions: list,
+    alert_groups: list,
     schema_name: str,
     feature_selection=None,
     filter_attack_leaning: bool = False,
 ) -> tuple[pd.DataFrame, object]:
-    """Encode transactions without caching (avoids order/schema conflicts with classifier runs)."""
+    """Encode alert_groups without caching (avoids order/schema conflicts with classifier runs)."""
     from thesis.features.util import select_symbolic_features
 
     registry = FeatureSchemaRegistry(root_dir=_ROOT / "artifacts" / "features")
@@ -98,19 +98,19 @@ def _encode_for_anomaly(
     ):
         schema = select_symbolic_features(schema, feature_selection)
 
-    feature_df = encode_transactions_for_schema(
-        transactions=transactions,
+    feature_df = encode_alert_groups_for_schema(
+        alert_groups=alert_groups,
         schema=schema,
         top_k=None,
     )
     meta_df = pd.DataFrame(
         [
             {
-                "transaction_id": t.transaction_id,
-                "tx_label": t.tx_label,
+                "alert_group_id": t.alert_group_id,
+                "group_label": t.group_label,
                 "n_alerts": t.n_alerts,
             }
-            for t in transactions
+            for t in alert_groups
         ]
     )
     df = pd.concat(
@@ -237,12 +237,12 @@ def run_anomaly_experiment(config: AnomalyExperimentConfig) -> ExperimentResult:
     print("[3/6] Checking feature manifest...")
     _ensure_feature_manifest(config.scenario)
 
-    # 4. Transactions (always temporal order)
-    print("[4/6] Building transactions from cache...")
-    transactions = _load_transactions(config.scenario, config.cache_dir)
-    transactions.sort(key=lambda t: t.start_ts or "")
+    # 4. AlertGroups (always temporal order)
+    print("[4/6] Building alert_groups from cache...")
+    alert_groups = _load_alert_groups(config.scenario, config.cache_dir)
+    alert_groups.sort(key=lambda t: t.start_ts or "")
 
-    n_total = len(transactions)
+    n_total = len(alert_groups)
     # n_test_start = int((1 - config.test_frac) * n_total)
     n_mine = int(config.mine_frac * n_total) if config.mine_frac < 1.0 else n_total
 
@@ -250,7 +250,7 @@ def run_anomaly_experiment(config: AnomalyExperimentConfig) -> ExperimentResult:
     symbolic_schema_path: Path | None = None
     mining_run_dir: Path | None = None
     if do_symbolic:
-        print("[5/6] Mining transactions for symbolic schema...")
+        print("[5/6] Mining alert_groups for symbolic schema...")
 
         feature_selection = None
         if config.filter_config is not None:
@@ -269,20 +269,20 @@ def run_anomaly_experiment(config: AnomalyExperimentConfig) -> ExperimentResult:
             symbolic_schema_path = config.prebuilt_symbolic_schema_path
             mining_stats: dict = {"prebuilt": True}
         else:
-            transactions_path = (
-                config.cache_dir / "transactions" / "transactions_raw.json"
+            alert_groups_path = (
+                config.cache_dir / "alert_groups" / "alert_groups_raw.json"
             )
-            mine_path = transactions_path
+            mine_path = alert_groups_path
             if config.mine_frac < 1.0:
                 mine_path = (
-                    transactions_path.parent
-                    / f"transactions_mine_{config.mine_frac}_anomaly.json"
+                    alert_groups_path.parent
+                    / f"alert_groups_mine_{config.mine_frac}_anomaly.json"
                 )
                 mine_path.write_text(
                     json.dumps(
                         [
                             {
-                                "transaction_id": t.transaction_id,
+                                "alert_group_id": t.alert_group_id,
                                 "group_id": t.group_id,
                                 "method": t.method,
                                 "start_ts": t.start_ts,
@@ -295,13 +295,13 @@ def run_anomaly_experiment(config: AnomalyExperimentConfig) -> ExperimentResult:
                                 else None,
                                 "sorted_items": [sorted(s) for s in t.sorted_items],
                                 "alert_ips": sorted(list(t.alert_ips)),
-                                "tx_label": t.tx_label,
+                                "group_label": t.group_label,
                                 "alert_labels": sorted(list(t.alert_labels))
                                 if t.alert_labels is not None
                                 else None,
                                 "weight": t.weight,
                             }
-                            for t in transactions[:n_mine]
+                            for t in alert_groups[:n_mine]
                         ]
                     )
                 )
@@ -309,7 +309,7 @@ def run_anomaly_experiment(config: AnomalyExperimentConfig) -> ExperimentResult:
             symbolic_schema_path, mining_run_dir, mining_stats = (
                 _mine_and_register_symbolic_schema(
                     scenario=config.scenario,
-                    transactions_path=mine_path,
+                    alert_groups_path=mine_path,
                     run_name=f"anomaly_symbolic_{config.scenario}",
                     min_support=0.05,
                     max_itemset_size=3,
@@ -331,7 +331,7 @@ def run_anomaly_experiment(config: AnomalyExperimentConfig) -> ExperimentResult:
     try:
         df, schema = _encode_for_anomaly(
             config.scenario,
-            transactions,
+            alert_groups,
             config.schema_name,
             feature_selection=feature_selection if do_symbolic else None,
             filter_attack_leaning=config.filter_attack_leaning
@@ -356,7 +356,7 @@ def run_anomaly_experiment(config: AnomalyExperimentConfig) -> ExperimentResult:
             schema_name=config.schema_name,
             schema_version="error",
             auc=float("nan"),
-            n_transactions=n_total,
+            n_alert_groups=n_total,
             n_features=0,
             metrics={"error": str(e)},
             results_file=results_file,
@@ -365,7 +365,7 @@ def run_anomaly_experiment(config: AnomalyExperimentConfig) -> ExperimentResult:
 
     feature_names = schema.feature_names()
     label_map = {"benign": 0, "attack": 1}
-    y = df["tx_label"].map(label_map)
+    y = df["group_label"].map(label_map)
     X = df[feature_names].fillna(0)
 
     mask = y.notna()
@@ -394,7 +394,7 @@ def run_anomaly_experiment(config: AnomalyExperimentConfig) -> ExperimentResult:
             schema_name=config.schema_name,
             schema_version="skipped",
             auc=float("nan"),
-            n_transactions=n_actual,
+            n_alert_groups=n_actual,
             n_features=len(feature_names),
             metrics={"single_class_split": True},
             results_file=results_file,
@@ -411,11 +411,11 @@ def run_anomaly_experiment(config: AnomalyExperimentConfig) -> ExperimentResult:
     X_train_benign = X_train_all[benign_mask]
     n_benign_train = int(benign_mask.sum())
     print(
-        f"  Training on {n_benign_train} benign transactions (of {split} total in train window)"
+        f"  Training on {n_benign_train} benign alert_groups (of {split} total in train window)"
     )
 
     if n_benign_train == 0:
-        print("  [skip] No benign transactions in training window.")
+        print("  [skip] No benign alert_groups in training window.")
         full_metrics = {"single_class_split": True}
         auc_val = float("nan")
     else:
@@ -446,7 +446,7 @@ def run_anomaly_experiment(config: AnomalyExperimentConfig) -> ExperimentResult:
                 "model_name": config.model_name,
                 "schema_name": config.schema_name,
                 "grouping": {"mode": config.grouping.mode, "params": grouping_params},
-                "n_transactions": n_actual,
+                "n_alert_groups": n_actual,
                 "n_train_total": split,
                 "n_train_benign": n_benign_train,
                 "n_test": int(len(X_test)),
@@ -468,7 +468,7 @@ def run_anomaly_experiment(config: AnomalyExperimentConfig) -> ExperimentResult:
         schema_name=config.schema_name,
         schema_version="anomaly",
         auc=auc_val,
-        n_transactions=n_actual,
+        n_alert_groups=n_actual,
         n_features=len(feature_names),
         metrics=full_metrics,
         results_file=results_file,

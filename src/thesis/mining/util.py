@@ -6,7 +6,7 @@ import pandas as pd
 
 # Files written during mining as debug/intermediate artifacts — not read by any downstream code.
 _INTERMEDIATE_FILES = [
-    "prepared_transactions.csv",
+    "prepared_alert_groups.csv",
     "tidsets.json",
     "items_with_tidsets.json",
 ]
@@ -38,25 +38,25 @@ def _sequence_pattern_support_worker(pattern):
 
 
 def support_in_group(
-    transactions: list[frozenset[str]],
+    alert_groups: list[frozenset[str]],
     itemset: tuple[str, ...],
 ) -> tuple[int, float]:
     """
-    Count how many transactions contain the itemset.
+    Count how many alert_groups contain the itemset.
     """
-    if not transactions:
+    if not alert_groups:
         return 0, 0.0
 
     itemset_set = set(itemset)
-    count = sum(1 for basket in transactions if itemset_set.issubset(basket))
-    support = count / len(transactions)
+    count = sum(1 for basket in alert_groups if itemset_set.issubset(basket))
+    support = count / len(alert_groups)
     return count, support
 
 
 def add_cross_label_supports(
     mined_df: pd.DataFrame,
-    target_transactions: list[frozenset[str]],
-    other_transactions: list[frozenset[str]],
+    target_alert_groups: list[frozenset[str]],
+    other_alert_groups: list[frozenset[str]],
     target_label: str,
     other_label: str,
 ) -> pd.DataFrame:
@@ -75,8 +75,8 @@ def add_cross_label_supports(
     other_supports = []
 
     for itemset in out["itemset"]:
-        c_t, s_t = support_in_group(target_transactions, itemset)
-        c_o, s_o = support_in_group(other_transactions, itemset)
+        c_t, s_t = support_in_group(target_alert_groups, itemset)
+        c_o, s_o = support_in_group(other_alert_groups, itemset)
 
         target_counts.append(c_t)
         target_supports.append(s_t)

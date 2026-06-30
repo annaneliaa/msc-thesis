@@ -74,24 +74,24 @@ class MiningMetadata(BaseModel):
     # basic stats (optional but useful)
     n_windows: Optional[int] = None
     n_alerts: Optional[int] = None
-    n_transactions: Optional[int] = None
+    n_alert_groups: Optional[int] = None
 
     # config traceability
     config_name: Optional[str] = None
 
 
 @dataclass(slots=True)
-class MiningTransaction:
+class MiningAlertGroup:
     """
     Canonical input record for the mining module.
 
-    This is the transaction-level representation consumed by itemset mining.
+    This is the alert_group-level representation consumed by itemset mining.
     It is independent from preprocessing/cache schemas.
-    Mining requires a label for the transaction (e.g. "benign" or "attack") and a set of items.
+    Mining requires a label for the alert_group (e.g. "benign" or "attack") and a set of items.
     """
 
-    transaction_id: int | str
-    tx_label: str
+    alert_group_id: int | str
+    group_label: str
     items: set[str] = field(default_factory=set)
     sorted_items: list[set[str]] = field(default_factory=list)
     window_start: int | None = None

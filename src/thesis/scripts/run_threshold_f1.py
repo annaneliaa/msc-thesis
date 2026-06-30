@@ -119,7 +119,7 @@ def _extract_probas(
     test_frac: float = 0.3,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
-    Reload the encoded-transaction parquet and saved model to reconstruct
+    Reload the encoded-alert_group parquet and saved model to reconstruct
     the exact test-set probabilities used during training.
 
     The split logic mirrors train_model_for_schema / make_holdout_split:
@@ -127,7 +127,7 @@ def _extract_probas(
     natural (parquet) order and split at int((1 - test_frac) * n).
     """
     safe_name = schema_name.replace("+", "_").replace("/", "_")
-    parquet_path = cache_dir / "transactions" / f"transactions_{safe_name}.parquet"
+    parquet_path = cache_dir / "alert_groups" / f"alert_groups_{safe_name}.parquet"
     grouping_tag = grouping_mode.replace("-", "_")
     model_version = f"0.1.0_{safe_name}_{grouping_tag}"
     model_path, metadata_path, _ = resolve_model_paths(
@@ -135,7 +135,7 @@ def _extract_probas(
     )
 
     if not parquet_path.exists():
-        raise FileNotFoundError(f"Encoded transactions not found: {parquet_path}")
+        raise FileNotFoundError(f"Encoded alert_groups not found: {parquet_path}")
     if not model_path.exists():
         raise FileNotFoundError(f"Saved model not found: {model_path}")
 
@@ -144,7 +144,7 @@ def _extract_probas(
     feature_names: list[str] = metadata["features"]
 
     df = pd.read_parquet(parquet_path)
-    y = df["tx_label"].map({"benign": 0, "attack": 1})
+    y = df["group_label"].map({"benign": 0, "attack": 1})
     X = df[feature_names].fillna(0)
     mask = y.notna()
     X = X[mask].reset_index(drop=True)
@@ -304,7 +304,7 @@ def main() -> None:
         type=float,
         default=1.0,
         dest="mine_frac",
-        help="Fraction of transactions (sorted by time) to use for mining (default: 1.0 = all).",
+        help="Fraction of alert_groups (sorted by time) to use for mining (default: 1.0 = all).",
     )
     parser.add_argument(
         "--no-overlap",
@@ -316,7 +316,7 @@ def main() -> None:
         "--random-split",
         action="store_true",
         dest="random_split",
-        help="Shuffle transactions randomly before any split instead of using temporal order.",
+        help="Shuffle alert_groups randomly before any split instead of using temporal order.",
     )
     parser.add_argument(
         "--random-seed",
@@ -361,7 +361,7 @@ def _main_body(
     if args.clear_parquets:
         print("--- Clearing cached parquets ---")
         for cache_dir in [cache_dir_fw, cache_dir_ab]:
-            tx_dir = cache_dir / "transactions"
+            tx_dir = cache_dir / "alert_groups"
             if tx_dir.exists():
                 for pq in tx_dir.glob("*.parquet"):
                     print(f"  Deleting {pq.name}")

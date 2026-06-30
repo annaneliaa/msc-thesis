@@ -1,4 +1,4 @@
-"""Transaction-level undersampling methods for the AIT-ADS dataset."""
+"""AlertGroup-level undersampling methods for the AIT-ADS dataset."""
 
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ import pandas as pd
 
 
 def naive50(df: pd.DataFrame, seed: int = 42) -> tuple[pd.DataFrame, dict]:
-    attack = df[df["tx_label"] == "attack"]
-    benign = df[df["tx_label"] == "benign"]
+    attack = df[df["group_label"] == "attack"]
+    benign = df[df["group_label"] == "benign"]
     n_attack, n_benign = len(attack), len(benign)
     minority_n = min(n_attack, n_benign)
 

@@ -1,13 +1,13 @@
 from collections.abc import Iterable
 import pandas as pd
 
-from thesis.schemas.preprocessing import Transaction
+from thesis.schemas.preprocessing import AlertGroup
 from thesis.schemas.features import SymbolicFeatureSchema, SymbolicFeature
 from thesis.mining.repeat_encoding import encode_sequence_of_itemsets
 from thesis.mining.token_abstraction import abstract_mail_hosts
 
 
-def _transaction_items(tx: Transaction) -> set[str]:
+def _alert_group_items(tx: AlertGroup) -> set[str]:
     base = set(tx.abs_items or tx.raw_items or [])
     if tx.sorted_items:
         encoded = encode_sequence_of_itemsets(tx.sorted_items)
@@ -43,8 +43,8 @@ class SymbolicFeatureEncoder:
 
         self.compiled_features = [_compile_feature(f) for f in self.features]
 
-    def transform_one(self, tx: Transaction) -> pd.DataFrame:
-        items = _transaction_items(tx)
+    def transform_one(self, tx: AlertGroup) -> pd.DataFrame:
+        items = _alert_group_items(tx)
 
         row = {
             name: int(any(clause.issubset(items) for clause in clauses))
@@ -53,11 +53,11 @@ class SymbolicFeatureEncoder:
 
         return pd.DataFrame([row])
 
-    def transform(self, transactions: Iterable[Transaction]) -> pd.DataFrame:
+    def transform(self, alert_groups: Iterable[AlertGroup]) -> pd.DataFrame:
         rows = []
 
-        for tx in transactions:
-            items = _transaction_items(tx)
+        for tx in alert_groups:
+            items = _alert_group_items(tx)
 
             row = {
                 name: int(any(clause.issubset(items) for clause in clauses))

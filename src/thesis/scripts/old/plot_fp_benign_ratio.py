@@ -113,7 +113,7 @@ def _load_run(run_dir: Path) -> list[dict]:
                     "fp_rate": fp_rate,
                     "benign_ratio": benign_ratio,
                     "n_features": data[model_type]["n_features"],
-                    "n_transactions": data[model_type]["n_transactions"],
+                    "n_alert_groups": data[model_type]["n_alert_groups"],
                 }
             )
     return records

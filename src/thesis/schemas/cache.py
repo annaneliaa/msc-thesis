@@ -36,7 +36,7 @@ class GroupCacheEntry:
     # embedding_centroid: Optional[list[float]] = None
 
     alert_labels: Optional[set[str]] = None
-    tx_label: Optional[str] = None
+    group_label: Optional[str] = None
 
     version: int = 1
     mined_at: Optional[int] = None

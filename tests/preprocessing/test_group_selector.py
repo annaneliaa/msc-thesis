@@ -22,7 +22,7 @@ def make_group_entry(
     n_alerts: int = 0,
     items: set[str] | None = None,
     alert_labels: set[str] | None = None,
-    tx_label: str | None = None,
+    group_label: str | None = None,
     version: int = 1,
 ) -> GroupCacheEntry:
     return GroupCacheEntry(
@@ -36,7 +36,7 @@ def make_group_entry(
         n_alerts=n_alerts,
         items=items or set(),
         alert_labels=alert_labels,
-        tx_label=tx_label,
+        group_label=group_label,
         version=version,
     )
 
@@ -197,7 +197,7 @@ def test_select_group_snapshots_from_response_without_labels():
                 n_alerts=2,
                 items={"short:A", "host:h1", "sig:update"},
                 alert_labels=None,
-                tx_label=None,
+                group_label=None,
                 version=1,
             )
         ]
@@ -222,7 +222,7 @@ def test_select_group_snapshots_from_response_without_labels():
     assert snap.n_alerts == 2
     assert snap.items == {"short:A", "host:h1", "sig:update"}
     assert snap.alert_labels is None
-    assert snap.tx_label is None
+    assert snap.group_label is None
     assert snap.status == "closed"
 
 
@@ -239,7 +239,7 @@ def test_select_group_snapshots_from_response_with_labels():
                 n_alerts=3,
                 items={"short:A", "host:h1", "sig:update"},
                 alert_labels={"benign", "false_positive"},
-                tx_label="benign",
+                group_label="benign",
                 version=2,
             )
         ]
@@ -263,7 +263,7 @@ def test_select_group_snapshots_from_response_with_labels():
     assert snap.n_alerts == 3
     assert snap.items == {"short:A", "host:h1", "sig:update"}
     assert snap.alert_labels == {"benign", "false_positive"}
-    assert snap.tx_label == "benign"
+    assert snap.group_label == "benign"
     assert snap.status == "closed"
 
 
@@ -397,7 +397,7 @@ def test_select_group_snapshots_queries_cache_and_returns_snapshots(tmp_path):
         n_alerts=2,
         items={"short:A", "sig:update"},
         alert_labels={"false_positive"},
-        tx_label="benign",
+        group_label="benign",
         version=1,
     )
     g2 = make_group_entry(
@@ -410,7 +410,7 @@ def test_select_group_snapshots_queries_cache_and_returns_snapshots(tmp_path):
         n_alerts=1,
         items={"short:B", "sig:invalid"},
         alert_labels=None,
-        tx_label=None,
+        group_label=None,
         version=1,
     )
 
@@ -437,7 +437,7 @@ def test_select_group_snapshots_queries_cache_and_returns_snapshots(tmp_path):
     assert s1.n_alerts == 2
     assert s1.items == {"short:A", "sig:update"}
     assert s1.alert_labels == {"false_positive"}
-    assert s1.tx_label == "benign"
+    assert s1.group_label == "benign"
     assert s1.status == "closed"
 
     s2 = snapshots[1]
@@ -449,5 +449,5 @@ def test_select_group_snapshots_queries_cache_and_returns_snapshots(tmp_path):
     assert s2.n_alerts == 1
     assert s2.items == {"short:B", "sig:invalid"}
     assert s2.alert_labels is None
-    assert s2.tx_label is None
+    assert s2.group_label is None
     assert s2.status == "closed"

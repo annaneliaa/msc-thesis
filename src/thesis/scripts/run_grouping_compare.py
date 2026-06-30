@@ -18,8 +18,8 @@ Output (all under artifacts/experiments/run_grouping_compare/grouping_compare_<r
     scenario/<scenario>/baseline_<ts>.json
     scenario/<scenario>/symbolic_<ts>.json
     plots/metrics.png        -- AUC / F1 / Precision / Recall per method
-    plots/transactions.png   -- transaction count + size distribution
-    plots/purity.png         -- transaction label purity (if label data available)
+    plots/alert_groups.png   -- alert_group count + size distribution
+    plots/purity.png         -- alert_group label purity (if label data available)
     plots/grouping_compare_<run_ts>.log
 """
 
@@ -44,7 +44,7 @@ from thesis.paths import ABSTRACTION_MAP_PATH, CACHE_DIR
 
 from thesis.config import AlertBERTConfig, GroupingConfig
 from thesis.experiments.baseline import (
-    _load_transactions,
+    _load_alert_groups,
     run_baseline_experiment,
 )
 from thesis.experiments.symbolic import (
@@ -191,19 +191,19 @@ def _run_pair(
             random_seed=random_seed,
         )
     )
-    txs = _load_transactions(scenario, cache_dir)
+    txs = _load_alert_groups(scenario, cache_dir)
     return baseline, symbolic, txs
 
 
 # ---------------------------------------------------------------------------
-# Transaction statistics
+# AlertGroup statistics
 # ---------------------------------------------------------------------------
 
 
 def _compute_tx_stats(txs: list) -> dict[str, Any]:
     if not txs:
         return {
-            "n_transactions": 0,
+            "n_alert_groups": 0,
             "sizes": [],
             "item_sizes": [],
             "unique_types": [],
@@ -212,12 +212,12 @@ def _compute_tx_stats(txs: list) -> dict[str, Any]:
 
     sizes = [t.n_alerts for t in txs]
     item_sizes = [len(t.abs_items) for t in txs]
-    # number of distinct alert token-sets per transaction (alert type diversity)
+    # number of distinct alert token-sets per alert_group (alert type diversity)
     unique_types = [len({frozenset(s) for s in t.sorted_items}) for t in txs]
     has_labels = any(t.alert_labels is not None for t in txs)
 
     stats: dict[str, Any] = {
-        "n_transactions": len(txs),
+        "n_alert_groups": len(txs),
         "sizes": sizes,
         "item_sizes": item_sizes,
         "unique_types": unique_types,
@@ -226,15 +226,15 @@ def _compute_tx_stats(txs: list) -> dict[str, Any]:
         "max_alerts_per_tx": int(max(sizes)),
         "mean_items_per_tx": float(np.mean(item_sizes)),
         "mean_unique_types_per_tx": float(np.mean(unique_types)),
-        "n_benign": sum(1 for t in txs if t.tx_label == "benign"),
-        "n_attack": sum(1 for t in txs if t.tx_label == "attack"),
+        "n_benign": sum(1 for t in txs if t.group_label == "benign"),
+        "n_attack": sum(1 for t in txs if t.group_label == "attack"),
         "has_label_data": has_labels,
     }
 
     if has_labels:
-        n_pure_benign = sum(1 for t in txs if t.tx_label == "benign")
-        n_pure_attack = sum(1 for t in txs if t.tx_label == "attack")
-        n_mixed = sum(1 for t in txs if t.tx_label == "mixed")
+        n_pure_benign = sum(1 for t in txs if t.group_label == "benign")
+        n_pure_attack = sum(1 for t in txs if t.group_label == "attack")
+        n_mixed = sum(1 for t in txs if t.group_label == "mixed")
         stats["n_mixed"] = n_mixed
         stats["n_pure_attack"] = n_pure_attack
         stats["n_pure_benign"] = n_pure_benign
@@ -254,7 +254,7 @@ def _result_to_dict(r: ExperimentResult | ExperimentResult) -> dict:
         "schema_version": r.schema_version,
         "grouping_mode": r.grouping_mode,
         "auc": r.auc,
-        "n_transactions": r.n_transactions,
+        "n_alert_groups": r.n_alert_groups,
         "n_mixed_dropped": r.n_mixed_dropped,
         "n_features": r.n_features,
         "metrics": r.metrics,
@@ -277,7 +277,7 @@ def _result_from_dict(d: dict, scenario: str) -> ExperimentResult:
         schema_name=d.get("schema_name", ""),
         schema_version=d.get("schema_version", ""),
         auc=d.get("auc", float("nan")),
-        n_transactions=d.get("n_transactions", 0),
+        n_alert_groups=d.get("n_alert_groups", 0),
         n_mixed_dropped=d.get("n_mixed_dropped", 0),
         n_features=d.get("n_features", 0),
         metrics=d.get("metrics", {}),
@@ -435,14 +435,14 @@ def _boxplot(ax, box_data, methods, ylabel, title):
     ax.grid(axis="y", alpha=0.3)
 
 
-def plot_transactions(data: dict, out_dir: Path, filtered: bool = False) -> None:
-    """2×2 grid: transaction count, alerts/tx, itemset size, unique alert types."""
+def plot_alert_groups(data: dict, out_dir: Path, filtered: bool = False) -> None:
+    """2×2 grid: alert_group count, alerts/tx, itemset size, unique alert types."""
     methods = [m for m in _ALL_METHODS if m in data]
     fig, axes = plt.subplots(2, 2, figsize=(10, 8))
 
-    # (0,0) — transaction count
+    # (0,0) — alert_group count
     ax = axes[0, 0]
-    counts = [data[m]["tx_stats"]["n_transactions"] for m in methods]
+    counts = [data[m]["tx_stats"]["n_alert_groups"] for m in methods]
     bars = ax.bar(
         [_LABELS[m] for m in methods],
         counts,
@@ -460,39 +460,39 @@ def plot_transactions(data: dict, out_dir: Path, filtered: bool = False) -> None
             fontsize=10,
             fontweight="bold",
         )
-    ax.set_ylabel("Number of transactions")
-    ax.set_title("Transaction count")
+    ax.set_ylabel("Number of alert_groups")
+    ax.set_title("AlertGroup count")
     ax.grid(axis="y", alpha=0.3)
 
-    # (0,1) — alerts per transaction
+    # (0,1) — alerts per alert_group
     _boxplot(
         axes[0, 1],
         [data[m]["tx_stats"]["sizes"] for m in methods],
         methods,
-        "Alerts per transaction",
-        "Transaction size (# alerts)",
+        "Alerts per alert_group",
+        "AlertGroup size (# alerts)",
     )
 
-    # (1,0) — itemset size (unique items/tokens per transaction)
+    # (1,0) — itemset size (unique items/tokens per alert_group)
     _boxplot(
         axes[1, 0],
         [data[m]["tx_stats"].get("item_sizes", []) for m in methods],
         methods,
-        "Unique items per transaction",
+        "Unique items per alert_group",
         "Itemset size (# unique tokens)",
     )
 
-    # (1,1) — unique alert types per transaction
+    # (1,1) — unique alert types per alert_group
     # (distinct per-alert token-sets, i.e. distinct (short, host, sig) combinations)
     _boxplot(
         axes[1, 1],
         [data[m]["tx_stats"].get("unique_types", []) for m in methods],
         methods,
-        "Unique alert types per transaction",
+        "Unique alert types per alert_group",
         "Alert type diversity\n(distinct token-sets)",
     )
 
-    fig.suptitle(f"Transaction structure — {data['scenario']}", fontsize=12)
+    fig.suptitle(f"AlertGroup structure — {data['scenario']}", fontsize=12)
     fig.tight_layout()
     fig.text(
         0.99,
@@ -504,7 +504,7 @@ def plot_transactions(data: dict, out_dir: Path, filtered: bool = False) -> None
         color="gray",
         transform=fig.transFigure,
     )
-    out = out_dir / "transactions.png"
+    out = out_dir / "alert_groups.png"
     fig.savefig(out, dpi=150)
     plt.close(fig)
     print(f"  Saved → {out}")
@@ -524,7 +524,7 @@ def plot_purity(data: dict, out_dir: Path, filtered: bool = False) -> None:
         stats = data[method]["tx_stats"]
         if not stats["has_label_data"]:
             continue
-        total = stats["n_transactions"]
+        total = stats["n_alert_groups"]
         n_b = stats.get("n_pure_benign", 0)
         n_a = stats.get("n_pure_attack", 0)
         n_m = stats.get("n_mixed", 0)
@@ -553,8 +553,8 @@ def plot_purity(data: dict, out_dir: Path, filtered: bool = False) -> None:
     ax.set_yticks(range(len(methods)))
     ax.set_yticklabels([_LABELS[m] for m in methods])
     ax.set_xlim(0, 1)
-    ax.set_xlabel("Fraction of transactions")
-    ax.set_title(f"Transaction label purity — {data['scenario']}")
+    ax.set_xlabel("Fraction of alert_groups")
+    ax.set_title(f"AlertGroup label purity — {data['scenario']}")
     ax.legend(loc="lower right", fontsize=8)
     ax.grid(axis="x", alpha=0.3)
     fig.tight_layout()
@@ -1455,7 +1455,7 @@ def main() -> None:
         type=float,
         default=1.0,
         dest="mine_frac",
-        help="Fraction of transactions (sorted by time) to use for mining (default: 1.0 = all).",
+        help="Fraction of alert_groups (sorted by time) to use for mining (default: 1.0 = all).",
     )
     parser.add_argument(
         "--no-overlap",
@@ -1467,7 +1467,7 @@ def main() -> None:
         "--random-split",
         action="store_true",
         dest="random_split",
-        help="Shuffle transactions randomly before any split instead of using temporal order.",
+        help="Shuffle alert_groups randomly before any split instead of using temporal order.",
     )
     parser.add_argument(
         "--random-seed",
@@ -1522,7 +1522,7 @@ def main() -> None:
                 }
         filtered = data.get("filtered", False)
         plot_metrics(plot_data, plot_dir, filtered=filtered)
-        plot_transactions(plot_data, plot_dir, filtered=filtered)
+        plot_alert_groups(plot_data, plot_dir, filtered=filtered)
         plot_purity(plot_data, plot_dir, filtered=filtered)
         print("Done.")
         return
@@ -1821,14 +1821,14 @@ def _main_body(
             ],
         ),
         (
-            "n_transactions",
+            "n_alert_groups",
             [
-                float(s["n_transactions"])
+                float(s["n_alert_groups"])
                 for s in [stats_fw, stats_fwh, stats_td, stats_tdh, stats_ab]
             ],
         ),
     ]:
-        fmt = ".4f" if label != "n_transactions" else ".0f"
+        fmt = ".4f" if label != "n_alert_groups" else ".0f"
         row = f"  {label:<20s}" + "".join(f"{v:>{col_w}{fmt}}" for v in vals)
         print(row)
     print(f"{'─'*100}")
@@ -1865,7 +1865,7 @@ def _main_body(
 
     filtered = bool(alerts_json_path is not None)
     plot_metrics(plot_data, plots_dir, filtered=filtered)
-    plot_transactions(plot_data, plots_dir, filtered=filtered)
+    plot_alert_groups(plot_data, plots_dir, filtered=filtered)
     plot_purity(plot_data, plots_dir, filtered=filtered)
 
     # Phase 4: feature overlap analysis

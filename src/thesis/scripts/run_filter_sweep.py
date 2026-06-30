@@ -548,7 +548,7 @@ def _result_to_dict(r: ExperimentResult) -> dict:
         "schema_version": r.schema_version,
         "grouping_mode": r.grouping_mode,
         "auc": r.auc,
-        "n_transactions": r.n_transactions,
+        "n_alert_groups": r.n_alert_groups,
         "n_mixed_dropped": r.n_mixed_dropped,
         "n_features": r.n_features,
         "metrics": r.metrics,
@@ -1127,7 +1127,7 @@ def main() -> None:
         type=float,
         default=1.0,
         dest="mine_frac",
-        help="Fraction of transactions (sorted by time) to use for mining (default: 1.0 = all).",
+        help="Fraction of alert_groups (sorted by time) to use for mining (default: 1.0 = all).",
     )
     parser.add_argument(
         "--no-overlap",
@@ -1139,7 +1139,7 @@ def main() -> None:
         "--random-split",
         action="store_true",
         dest="random_split",
-        help="Shuffle transactions randomly before any split instead of using temporal order.",
+        help="Shuffle alert_groups randomly before any split instead of using temporal order.",
     )
     parser.add_argument(
         "--random-seed",

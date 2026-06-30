@@ -143,12 +143,12 @@ def _load_compare_result(
                 "baseline": {
                     **data["baseline"]["metrics"],
                     "n_features": data["baseline"]["n_features"],
-                    "n_transactions": data["baseline"]["n_transactions"],
+                    "n_alert_groups": data["baseline"]["n_alert_groups"],
                 },
                 "symbolic": {
                     **data["symbolic"]["metrics"],
                     "n_features": data["symbolic"]["n_features"],
-                    "n_transactions": data["symbolic"]["n_transactions"],
+                    "n_alert_groups": data["symbolic"]["n_alert_groups"],
                 },
                 "filter_config": data.get("filter_config"),
                 "source": path.name,
@@ -221,7 +221,7 @@ def _run_compare(
             "schema_version": baseline.schema_version,
             "auc": _auc_or_null(baseline.auc),
             "n_features": baseline.n_features,
-            "n_transactions": baseline.n_transactions,
+            "n_alert_groups": baseline.n_alert_groups,
             "metrics": baseline.metrics,
             "results_file": str(baseline.results_file),
         },
@@ -230,7 +230,7 @@ def _run_compare(
             "schema_version": symbolic.schema_version,
             "auc": _auc_or_null(symbolic.auc),
             "n_features": symbolic.n_features,
-            "n_transactions": symbolic.n_transactions,
+            "n_alert_groups": symbolic.n_alert_groups,
             "metrics": symbolic.metrics,
             "results_file": str(symbolic.results_file),
         },
@@ -255,12 +255,12 @@ def _run_compare(
         "baseline": {
             **baseline.metrics,
             "n_features": baseline.n_features,
-            "n_transactions": baseline.n_transactions,
+            "n_alert_groups": baseline.n_alert_groups,
         },
         "symbolic": {
             **symbolic.metrics,
             "n_features": symbolic.n_features,
-            "n_transactions": symbolic.n_transactions,
+            "n_alert_groups": symbolic.n_alert_groups,
         },
         "filter_config": str(filter_config),
         "source": out_path.name,
@@ -281,7 +281,7 @@ TABLE_METRICS = [
     "fp",
     "fn",
     "n_features",
-    "n_transactions",
+    "n_alert_groups",
 ]
 
 
@@ -323,7 +323,7 @@ def _build_delta_table(results: list[dict]) -> pd.DataFrame:
                 "symbolic_recall": round(s.get("recall", float("nan")), 4),
                 "base_features": int(b.get("n_features", 0)),
                 "sym_features": int(s.get("n_features", 0)),
-                "n_transactions": int(b.get("n_transactions", 0)),
+                "n_alert_groups": int(b.get("n_alert_groups", 0)),
                 "baseline_fp": int(b.get("fp", 0)),
                 "symbolic_fp": int(s.get("fp", 0)),
                 "delta_fp": int(s.get("fp", 0)) - int(b.get("fp", 0)),
@@ -347,7 +347,7 @@ def _format_text_table(delta_df: pd.DataFrame) -> str:
             f"  {r['scenario']:<14} {r['baseline_auc']:>9.4f} {r['symbolic_auc']:>9.4f} {r['delta_auc']:>+7.4f}  "
             f"{r['baseline_f1']:>8.4f} {r['symbolic_f1']:>8.4f} {r['delta_f1']:>+7.4f}  "
             f"{r['baseline_fp']:>7d} {r['symbolic_fp']:>7d} {r['delta_fp']:>+6d}  "
-            f"{r['base_features']:>9d} {r['sym_features']:>9d}  {r['n_transactions']:>7d}"
+            f"{r['base_features']:>9d} {r['sym_features']:>9d}  {r['n_alert_groups']:>7d}"
         )
     lines.append(sep)
     return "\n".join(lines)

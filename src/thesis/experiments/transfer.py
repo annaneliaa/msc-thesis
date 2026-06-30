@@ -2,7 +2,7 @@
 Transfer experiment: train on scenario X, test on scenario Y.
 
 Tests how well a model trained on one scenario generalises to another.
-The train scenario's feature schema is used to encode the test transactions,
+The train scenario's feature schema is used to encode the test alert_groups,
 so symbolic features that never appear in the test data simply evaluate to 0.
 
 Steps:
@@ -10,8 +10,8 @@ Steps:
   2. Check if a trained model exists; train one on the train scenario if not
   3. Convert test scenario alerts CSV → JSON (skipped if already done)
   4. Tokenise + ingest test alerts into cache (skipped if already done)
-  5. Build transactions from test scenario cache
-  6. Encode test transactions under the train scenario schema
+  5. Build alert_groups from test scenario cache
+  6. Encode test alert_groups under the train scenario schema
   7. Run inference with the trained model
   8. Write results to artifacts/experiments/<train>_to_<test>/transfer_<ts>.json
 """
@@ -28,7 +28,7 @@ from thesis.experiments.baseline import (
     _ROOT,
     _convert_alerts_to_json,
     _ensure_feature_manifest,
-    _load_transactions,
+    _load_alert_groups,
     _process_alert_batch,
     BaselineExperimentConfig,
     run_baseline_experiment,
@@ -37,7 +37,7 @@ from thesis.features.schema_registry import FeatureSchemaRegistry
 from thesis.inference.service import (
     InferenceResult,
     load_model_for_inference,
-    run_inference_on_transactions,
+    run_inference_on_alert_groups,
 )
 from thesis.config import GroupingConfig
 from thesis.paths import CACHE_DIR, MODELS_DIR, MODEL_FILENAME, ensure_artifact_dirs
@@ -72,7 +72,7 @@ class TransferExperimentResult:
     model_version: str
     schema_name: str
     schema_version: str
-    n_test_transactions: int
+    n_test_alert_groups: int
     metrics: dict
     results_file: Path
 
@@ -166,9 +166,9 @@ def run_transfer_experiment(
         grouping=config.grouping,
     )
 
-    # 5. Build test transactions
-    print("[5/8] Building test transactions from cache...")
-    transactions = _load_transactions(config.test_scenario, config.cache_dir)
+    # 5. Build test alert_groups
+    print("[5/8] Building test alert_groups from cache...")
+    alert_groups = _load_alert_groups(config.test_scenario, config.cache_dir)
 
     # 6. Load model and train schema
     print("[6/8] Loading model and train schema...")
@@ -186,16 +186,16 @@ def run_transfer_experiment(
         f"({len(schema.feature_names())} features)"
     )
 
-    # 7. Run inference on test transactions
-    print("[7/8] Running inference on test transactions...")
-    result: InferenceResult = run_inference_on_transactions(
+    # 7. Run inference on test alert_groups
+    print("[7/8] Running inference on test alert_groups...")
+    result: InferenceResult = run_inference_on_alert_groups(
         model=model,
         schema=schema,
-        transactions=transactions,
+        alert_groups=alert_groups,
     )
 
     auc = result.metrics.get("auc", float("nan"))
-    print(f"  AUC: {auc:.4f}  (n={result.n_transactions})")
+    print(f"  AUC: {auc:.4f}  (n={result.n_alert_groups})")
 
     # 8. Save results
     print("[8/8] Saving transfer results...")
@@ -222,7 +222,7 @@ def run_transfer_experiment(
                     if config.filter_config is not None
                     else None
                 ),
-                "n_test_transactions": result.n_transactions,
+                "n_test_alert_groups": result.n_alert_groups,
                 "metrics": result.metrics,
             },
             f,
@@ -238,7 +238,7 @@ def run_transfer_experiment(
         model_version=config.model_version,
         schema_name=schema.schema_name,
         schema_version=schema.schema_version,
-        n_test_transactions=result.n_transactions,
+        n_test_alert_groups=result.n_alert_groups,
         metrics=result.metrics,
         results_file=results_file,
     )

@@ -332,7 +332,7 @@ def plot_attack_contamination(t5: pd.DataFrame, t1: pd.DataFrame, out: Path) -> 
     For each window: blue line = features mined on benign-only traffic,
     orange line = features surviving when attack traffic is included.
     Red shading between them = features lost to attack contamination.
-    Grey bars (secondary axis) = number of attack transactions in that window.
+    Grey bars (secondary axis) = number of attack alert_groups in that window.
     """
     grans = _grans(t5)
     scenarios = sorted(t5["scenario"].unique())
@@ -400,7 +400,7 @@ def plot_attack_contamination(t5: pd.DataFrame, t1: pd.DataFrame, out: Path) -> 
             ax.set_title(scenario, fontsize=9)
             ax.grid(axis="y", alpha=0.3)
 
-            # Identify windows with attack transactions and mark their x-ticks
+            # Identify windows with attack alert_groups and mark their x-ticks
             atk = (
                 sub_atk[sub_atk["scenario"] == scenario].sort_values("window")
                 if sub_atk is not None
@@ -875,8 +875,8 @@ def plot_feature_lifecycle(
                 squeeze=False,
             )
 
-            # Detect attack windows (any window containing attack transactions)
-            # using the mixed mode data (most complete transaction set)
+            # Detect attack windows (any window containing attack alert_groups)
+            # using the mixed mode data (most complete alert_group set)
             # ref_wf_any = next(iter(gran_data.values()))
             attack_wins: set[int] = set()
             for mode in ("mixed", "smart", "benign"):

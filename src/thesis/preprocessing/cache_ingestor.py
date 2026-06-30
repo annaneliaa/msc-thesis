@@ -115,7 +115,7 @@ class CacheIngestor:
                     sorted_items=[],
                     alert_ips=set(),
                     alert_labels=None,
-                    tx_label=None,
+                    group_label=None,
                     version=1,
                 )
 
@@ -139,7 +139,7 @@ class CacheIngestor:
                     group.alert_labels = set()
                 group.alert_labels.add(str(alert.time_label))
 
-                group.tx_label = label_window_from_alert_labels(
+                group.group_label = label_window_from_alert_labels(
                     group.alert_labels,
                     benign_label=benign_label,
                 )

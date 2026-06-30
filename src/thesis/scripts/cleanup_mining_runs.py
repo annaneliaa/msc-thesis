@@ -7,7 +7,7 @@ Usage:
 Actions (always previewed first unless --no-confirm is passed):
   1. Delete old runs — for each dataset+type combo, keep only the N most recent.
   2. Strip intermediate files from kept runs — removes files that are not read by
-     any downstream code (prepared_transactions.csv, tidsets.json, items_with_tidsets.json).
+     any downstream code (prepared_alert_groups.csv, tidsets.json, items_with_tidsets.json).
 
 Safe files that are NEVER removed from kept runs:
   eclat/frequent_itemsets.csv
@@ -27,7 +27,7 @@ from pathlib import Path
 
 # Files that are safe to delete from kept runs — write-only intermediate artifacts.
 INTERMEDIATE_FILES = [
-    "prepared_transactions.csv",
+    "prepared_alert_groups.csv",
     "tidsets.json",
     "items_with_tidsets.json",
 ]

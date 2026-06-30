@@ -2,7 +2,7 @@
 Exploratory Data Analysis for one or more alert scenarios.
 
 Combines two phases in one script:
-  Phase 1 (analysis): per-scenario transaction stats, pair frequencies, CSVs,
+  Phase 1 (analysis): per-scenario alert_group stats, pair frequencies, CSVs,
                       plus cross-scenario overview and label-distribution tables.
   Phase 2 (plots):    overview plots — volume timeline, class balance, attack-type
                       heatmap, top signatures, inter-arrival CDF, group sizes, etc.
@@ -24,8 +24,8 @@ Usage:
     python src/thesis/scripts/run_eda.py --all --balanced naive50
     python src/thesis/scripts/run_eda.py --all --balanced type_stratified
 
-    # balanced transaction variants — loads artifacts/transactions/balanced/<METHOD>/ (plots only)
-    # (raw alerts for alert plots; transactions balanced in transaction space)
+    # balanced alert_group variants — loads artifacts/alert_groups/balanced/<METHOD>/ (plots only)
+    # (raw alerts for alert plots; alert_groups balanced in alert_group space)
     python src/thesis/scripts/run_eda.py --all --tx-balanced naive50 --plots-only
 
 Output (all under artifacts/experiments/run_eda/run_<ts>/):
@@ -43,7 +43,7 @@ Output (all under artifacts/experiments/run_eda/run_<ts>/):
         inter_arrival_cdf.png
         group_size_dist.png
         scenario_overview.png
-        tx_volume_*.png                       -- only when transactions are available
+        tx_volume_*.png                       -- only when alert_groups are available
 """
 
 from __future__ import annotations
@@ -61,7 +61,7 @@ import pandas as pd
 from thesis.visualization.eda import (
     SCENARIOS,
     load_alerts,
-    load_transactions,
+    load_alert_groups,
     plot_alert_volume_concatenated,
     plot_attack_phase_zoom,
     plot_attack_type_heatmap,
@@ -70,10 +70,10 @@ from thesis.visualization.eda import (
     plot_inter_arrival_time_cdf,
     plot_scenario_overview,
     plot_top_alert_names,
-    plot_transaction_volume_attack_zoom,
-    plot_transaction_volume_concatenated,
+    plot_alert_group_volume_attack_zoom,
+    plot_alert_group_volume_concatenated,
 )
-from thesis.preprocessing.transactions import build_labeled_window_transactions
+from thesis.preprocessing.alert_groups import build_labeled_window_alert_groups
 
 import matplotlib
 
@@ -84,7 +84,7 @@ _HERE = Path(__file__).resolve()
 _REPO = next(p for p in _HERE.parents if (p / "pyproject.toml").exists())
 EXPERIMENTS_DIR = _REPO / "artifacts" / "experiments" / "run_eda"
 DATA_DIR = _REPO / "data" / "alerts_csv"
-TRANSACTIONS_BASE_DIR = _REPO / "artifacts" / "transactions"
+ALERT_GROUPS_BASE_DIR = _REPO / "artifacts" / "alert_groups"
 
 
 def count_pair_frequency(df: pd.DataFrame, items_col: str = "items") -> pd.DataFrame:
@@ -101,7 +101,7 @@ def count_pair_frequency(df: pd.DataFrame, items_col: str = "items") -> pd.DataF
 def all_pair_metrics(
     tx: pd.DataFrame,
     items_col: str = "items",
-    label_col: str = "tx_label",
+    label_col: str = "group_label",
     min_total_count: int = 1,
 ) -> pd.DataFrame:
     attack_df = tx[tx[label_col] == "attack"]
@@ -190,39 +190,39 @@ def run_scenario(
             f.write(f"Min timestamp: {df['time'].min()}\n")
             f.write(f"Max timestamp: {df['time'].max()}\n\n")
 
-        transactions = build_labeled_window_transactions(df, window_size_s=2)
+        alert_groups = build_labeled_window_alert_groups(df, window_size_s=2)
         tx_cache_dir = _tx_dir(balanced, tx_balanced)
         tx_cache_dir.mkdir(parents=True, exist_ok=True)
-        transactions.to_csv(tx_cache_dir / f"{scenario}_transactions.csv", index=False)
+        alert_groups.to_csv(tx_cache_dir / f"{scenario}_alert_groups.csv", index=False)
 
-        benign_tx = transactions[transactions["tx_label"] == "benign"].copy()
-        attack_tx = transactions[transactions["tx_label"] == "attack"].copy()
+        benign_tx = alert_groups[alert_groups["group_label"] == "benign"].copy()
+        attack_tx = alert_groups[alert_groups["group_label"] == "attack"].copy()
 
-        f.write("Transaction label distribution:\n")
-        f.write(transactions["tx_label"].value_counts().to_string() + "\n\n")
+        f.write("AlertGroup label distribution:\n")
+        f.write(alert_groups["group_label"].value_counts().to_string() + "\n\n")
 
-        tx = transactions.copy()
+        tx = alert_groups.copy()
         tx["tx_size"] = tx["items"].apply(len)
 
-        size_summary = tx.groupby("tx_label")["tx_size"].describe()
+        size_summary = tx.groupby("group_label")["tx_size"].describe()
         size_counts = (
-            tx.groupby(["tx_label", "tx_size"])
+            tx.groupby(["group_label", "tx_size"])
             .size()
             .reset_index(name="count")
-            .sort_values(["tx_label", "tx_size"])
+            .sort_values(["group_label", "tx_size"])
         )
 
-        f.write("Transaction Size Summary:\n")
+        f.write("AlertGroup Size Summary:\n")
         f.write(size_summary.to_string() + "\n\n")
-        f.write("Transaction Size Counts:\n")
+        f.write("AlertGroup Size Counts:\n")
         f.write(size_counts.to_string(index=False) + "\n\n")
 
         plt.figure(figsize=(10, 6))
         for label, color in [("benign", "blue"), ("attack", "red")]:
-            subset = tx.loc[tx["tx_label"] == label, "tx_size"]
+            subset = tx.loc[tx["group_label"] == label, "tx_size"]
             plt.hist(subset, bins=20, alpha=0.7, color=color, label=label)
-        plt.title(f"Distribution of transaction size (scenario={scenario})")
-        plt.xlabel("Number of items in transaction")
+        plt.title(f"Distribution of alert_group size (scenario={scenario})")
+        plt.xlabel("Number of items in alert_group")
         plt.ylabel("Count")
         plt.yscale("log")
         plt.legend()
@@ -236,19 +236,19 @@ def run_scenario(
             color="gray",
             transform=plt.gcf().transFigure,
         )
-        plt.savefig(out_path / f"{scenario}_transaction_size_distribution.png")
+        plt.savefig(out_path / f"{scenario}_alert_group_size_distribution.png")
         plt.close()
 
         pair_freq_all = count_pair_frequency(tx)
-        f.write("Top 20 most common item pairs across all transactions:\n")
+        f.write("Top 20 most common item pairs across all alert_groups:\n")
         f.write(pair_freq_all.head(20).to_string(index=False) + "\n\n")
 
         pair_freq_benign = count_pair_frequency(benign_tx)
-        f.write("Top 20 most common item pairs in BENIGN transactions:\n")
+        f.write("Top 20 most common item pairs in BENIGN alert_groups:\n")
         f.write(pair_freq_benign.head(20).to_string(index=False) + "\n\n")
 
         pair_freq_attack = count_pair_frequency(attack_tx)
-        f.write("Top 20 most common item pairs in ATTACK transactions:\n")
+        f.write("Top 20 most common item pairs in ATTACK alert_groups:\n")
         f.write(pair_freq_attack.head(20).to_string(index=False) + "\n\n")
 
         intersection = pd.merge(
@@ -266,7 +266,7 @@ def run_scenario(
             f"Percentage of pairs in both classes: {intersection_pairs / total_pairs:.2%}\n\n"
         )
         f.write(
-            "Top 20 most common item pairs in both BENIGN and ATTACK transactions:\n"
+            "Top 20 most common item pairs in both BENIGN and ATTACK alert_groups:\n"
         )
         f.write(intersection.head(20).to_string(index=False) + "\n\n")
 
@@ -429,10 +429,10 @@ def _data_label(balanced: str | None, tx_balanced: str | None = None) -> str:
 
 def _tx_dir(balanced: str | None, tx_balanced: str | None = None) -> Path:
     if tx_balanced is not None:
-        return TRANSACTIONS_BASE_DIR / "balanced" / tx_balanced
+        return ALERT_GROUPS_BASE_DIR / "balanced" / tx_balanced
     if balanced is None:
-        return TRANSACTIONS_BASE_DIR / "raw"
-    return TRANSACTIONS_BASE_DIR / "from_balanced_alerts" / balanced
+        return ALERT_GROUPS_BASE_DIR / "raw"
+    return ALERT_GROUPS_BASE_DIR / "from_balanced_alerts" / balanced
 
 
 def save_label_distribution_table(
@@ -573,13 +573,13 @@ def _run_plots_phase(
     tx_df = None
     if tx_dir.exists():
         try:
-            tx_df = load_transactions(str(tx_dir), scenarios=scenarios)
-            print(f"  {len(tx_df):,} transactions loaded from {tx_dir}.")
+            tx_df = load_alert_groups(str(tx_dir), scenarios=scenarios)
+            print(f"  {len(tx_df):,} alert_groups loaded from {tx_dir}.")
         except FileNotFoundError as e:
-            print(f"  Warning: {e}. Transaction plots will be skipped.")
+            print(f"  Warning: {e}. AlertGroup plots will be skipped.")
     else:
         print(
-            f"  No transactions found at {tx_dir}. "
+            f"  No alert_groups found at {tx_dir}. "
             "Run without --plots-only first to generate them."
         )
 
@@ -630,16 +630,16 @@ def _run_plots_phase(
     if tx_df is not None:
         plots += [
             (
-                "transaction volume (concatenated timeline)",
+                "alert_group volume (concatenated timeline)",
                 "tx_volume_concatenated",
-                lambda: plot_transaction_volume_concatenated(
+                lambda: plot_alert_group_volume_concatenated(
                     tx_df, bin_hours=bin_hours
                 ),
             ),
             (
-                "transaction volume (attack phase zoom)",
+                "alert_group volume (attack phase zoom)",
                 "tx_volume_attack_zoom",
-                lambda: plot_transaction_volume_attack_zoom(tx_df),
+                lambda: plot_alert_group_volume_attack_zoom(tx_df),
             ),
         ]
 
@@ -686,7 +686,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=(
             "Load balanced alerts instead of raw. "
             "For Phase 1, loads artifacts/alerts/balanced/<METHOD>/<scenario>_alerts.csv. "
-            "For Phase 2, loads artifacts/transactions/from_balanced_alerts/<METHOD>/. "
+            "For Phase 2, loads artifacts/alert_groups/from_balanced_alerts/<METHOD>/. "
             "Example: --balanced naive50"
         ),
     )
@@ -695,8 +695,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         metavar="METHOD",
         help=(
-            "Load transactions balanced in transaction space from "
-            "artifacts/transactions/balanced/<METHOD>/. "
+            "Load alert_groups balanced in alert_group space from "
+            "artifacts/alert_groups/balanced/<METHOD>/. "
             "Alert plots use raw alert data. "
             "Example: --tx-balanced naive50 --plots-only"
         ),
@@ -789,7 +789,7 @@ def main(argv: list[str] | None = None) -> None:
     else:
         if tx_balanced_method is not None:
             print(
-                "  Source: raw alerts (transactions will be loaded from balanced tx dir)"
+                "  Source: raw alerts (alert_groups will be loaded from balanced tx dir)"
             )
         all_df = load_alerts(str(DATA_DIR), scenarios=scenarios)
     print(f"  {len(all_df):,} alerts loaded.\n")

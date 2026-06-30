@@ -5,14 +5,14 @@ from thesis.schemas.inference import PredictionResult
 from thesis.inference.runtime_models import SklearnTabularModel
 
 
-def predict_transaction_row(
+def predict_alert_group_row(
     row: dict[str, Any],
     encoder,
     model: SklearnTabularModel,
     threshold: float = 0.5,
 ) -> PredictionResult:
     """
-    Predict a single incoming transaction row.
+    Predict a single incoming alert_group row.
     """
     X = encoder.transform_row(row)
 

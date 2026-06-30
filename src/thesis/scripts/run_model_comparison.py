@@ -18,7 +18,7 @@ Usage:
   python src/thesis/scripts/run_model_comparison.py fox --models logreg mlp
 
 Mining scope (--mine-frac / --no-overlap):
-  Transactions are sorted chronologically before any split is applied.
+  AlertGroups are sorted chronologically before any split is applied.
 
   --mine-frac 1.0  (default)
     Mine: [0%, 100%)   Train: [0%, 70%)   Test: [70%, 100%)
@@ -42,9 +42,9 @@ Mining scope (--mine-frac / --no-overlap):
   --no-overlap without --mine-frac is a no-op (mine_frac=1.0).
 
 Random split (--random-split / --random-seed):
-  By default transactions are sorted chronologically before any split is
+  By default alert_groups are sorted chronologically before any split is
   applied (temporal holdout).  Pass --random-split to shuffle the full
-  transaction list with a fixed random seed before mining, training, and
+  alert_group list with a fixed random seed before mining, training, and
   testing are performed.  This distributes attack traffic more evenly across
   all splits, which is useful for checking whether the temporal ordering is
   the main driver of model performance.
@@ -303,7 +303,7 @@ def _run_for_model(
             "schema_version": baseline.schema_version,
             "auc": _nan(baseline.auc),
             "n_features": baseline.n_features,
-            "n_transactions": baseline.n_transactions,
+            "n_alert_groups": baseline.n_alert_groups,
             "metrics": baseline.metrics,
             "results_file": str(baseline.results_file),
         },
@@ -312,7 +312,7 @@ def _run_for_model(
             "schema_version": symbolic.schema_version,
             "auc": _nan(symbolic.auc),
             "n_features": symbolic.n_features,
-            "n_transactions": symbolic.n_transactions,
+            "n_alert_groups": symbolic.n_alert_groups,
             "metrics": symbolic.metrics,
             "results_file": str(symbolic.results_file),
         },
@@ -328,12 +328,12 @@ def _run_for_model(
         "baseline": {
             **baseline.metrics,
             "n_features": baseline.n_features,
-            "n_transactions": baseline.n_transactions,
+            "n_alert_groups": baseline.n_alert_groups,
         },
         "symbolic": {
             **symbolic.metrics,
             "n_features": symbolic.n_features,
-            "n_transactions": symbolic.n_transactions,
+            "n_alert_groups": symbolic.n_alert_groups,
         },
     }
 
@@ -428,15 +428,15 @@ def _load_all_results(
                     "baseline": {
                         **cmp.get("baseline", {}).get("metrics", {}),
                         "n_features": cmp.get("baseline", {}).get("n_features", 0),
-                        "n_transactions": cmp.get("baseline", {}).get(
-                            "n_transactions", 0
+                        "n_alert_groups": cmp.get("baseline", {}).get(
+                            "n_alert_groups", 0
                         ),
                     },
                     "symbolic": {
                         **cmp.get("symbolic", {}).get("metrics", {}),
                         "n_features": cmp.get("symbolic", {}).get("n_features", 0),
-                        "n_transactions": cmp.get("symbolic", {}).get(
-                            "n_transactions", 0
+                        "n_alert_groups": cmp.get("symbolic", {}).get(
+                            "n_alert_groups", 0
                         ),
                     },
                     "filtered": cmp.get("filtered", False),
@@ -1385,7 +1385,7 @@ examples:
         type=float,
         default=1.0,
         dest="mine_frac",
-        help="Fraction of transactions (sorted by time) to use for mining (default: 1.0 = all).",
+        help="Fraction of alert_groups (sorted by time) to use for mining (default: 1.0 = all).",
     )
     parser.add_argument(
         "--no-overlap",
@@ -1397,7 +1397,7 @@ examples:
         "--random-split",
         action="store_true",
         dest="random_split",
-        help="Shuffle transactions randomly before any split (mining, train, test) instead of using temporal order.",
+        help="Shuffle alert_groups randomly before any split (mining, train, test) instead of using temporal order.",
     )
     parser.add_argument(
         "--random-seed",

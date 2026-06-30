@@ -250,24 +250,24 @@ def run_baseline(dataset_name: str, scenario: str, model_name: str):
 
     input_path = (
         root.parent / "out" / "eda" / dataset_name / scenario
-    )  # contains the processed transactions from the original dataset
+    )  # contains the processed alert_groups from the original dataset
     out_path = root.parent / "out" / "bert" / dataset_name / scenario
 
     os.makedirs(out_path, exist_ok=True)
 
     print("Running BERT baseline for scenario:", scenario)
 
-    # Load the processed transactions CSV
+    # Load the processed alert_groups CSV
     df = pd.read_csv(
-        os.path.join(input_path, f"{scenario}_transactions.csv"), low_memory=False
+        os.path.join(input_path, f"{scenario}_alert_groups.csv"), low_memory=False
     )
-    df = df.dropna(subset=["items", "tx_label"]).copy()
+    df = df.dropna(subset=["items", "group_label"]).copy()
 
     # Convert the 'items' column to text format for BERT
     df["text"] = df.apply(row_to_text, axis=1)
 
     # Encode labels
-    df["label"] = df["tx_label"].map({"benign": 0, "attack": 1})
+    df["label"] = df["group_label"].map({"benign": 0, "attack": 1})
 
     # Split data
     print(

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from thesis.mining.load_mining_transactions import build_tidsets
+from thesis.mining.load_mining_alert_groups import build_tidsets
 
 
 def eclat_recursive(
@@ -54,24 +54,24 @@ def eclat_recursive(
 
 
 def run_eclat(
-    transactions: list[frozenset[str]],
+    alert_groups: list[frozenset[str]],
     min_support: float = 0.05,
     max_len: int | None = 3,
     run_dir: Path | None = None,
 ) -> pd.DataFrame:
     """
-    Run Eclat on a list of transactions.
+    Run Eclat on a list of alert_groups.
 
     Returns one row per frequent itemset.
     """
-    n_tx = len(transactions)
+    n_tx = len(alert_groups)
     if n_tx == 0:
         return pd.DataFrame(
             columns=["itemset", "itemset_str", "k", "support_count", "support"]
         )
 
     min_count = max(1, int(min_support * n_tx))
-    tidsets = build_tidsets(transactions, run_dir=run_dir)
+    tidsets = build_tidsets(alert_groups, run_dir=run_dir)
 
     items_with_tidsets = sorted(tidsets.items(), key=lambda x: (x[0], len(x[1])))
 
@@ -106,7 +106,7 @@ def run_eclat(
     out = pd.DataFrame(results).drop_duplicates(subset=["itemset"]).copy()
     out["itemset_str"] = out["itemset"].apply(lambda x: " | ".join(x))
     out["support"] = out["support_count"] / n_tx
-    out["n_transactions"] = n_tx
+    out["n_alert_groups"] = n_tx
     out["min_support"] = min_support
     out["min_count"] = min_count
 

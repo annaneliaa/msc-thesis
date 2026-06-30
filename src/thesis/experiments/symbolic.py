@@ -5,10 +5,10 @@ Steps:
   1. Convert raw alerts CSV to JSON
   2. Process alert batch (tokenise + ingest into cache)
   3. Ensure feature manifest (creates base schemas if missing)
-  4. Build transactions from closed groups and save raw JSON
+  4. Build alert_groups from closed groups and save raw JSON
   5. Mine frequent itemsets and sequences, apply quality filters,
      and register the resulting symbolic feature schema
-  6. Encode transactions under the base+symbolic schema
+  6. Encode alert_groups under the base+symbolic schema
   7. Train logistic regression on the encoded features
   8. Write full metrics to artifacts/experiments/<scenario>/
 
@@ -18,10 +18,10 @@ all mined patterns as features.
 
 Mining scope (mine_frac) and train/test overlap
 ------------------------------------------------
-Transactions are sorted chronologically before any split is applied.
+AlertGroups are sorted chronologically before any split is applied.
 The mine_frac and no_overlap fields on SymbolicExperimentConfig (exposed
 as --mine-frac and --no-overlap in the run scripts) control which
-transactions feed the miner and which feed training:
+alert_groups feed the miner and which feed training:
 
   mine_frac=1.0 (default)
     Mine: [0%, 100%)   Train: [0%, 70%)   Test: [70%, 100%)
@@ -48,7 +48,7 @@ transactions feed the miner and which feed training:
     Same disjoint setup with a larger mining window.
 
 In all cases test_frac (default 0.3) controls the size of the test set
-and the encoding/training always operates on the full transaction list.
+and the encoding/training always operates on the full alert_group list.
 """
 
 from __future__ import annotations
@@ -66,15 +66,15 @@ from thesis.experiments.baseline import (
     _EXPERIMENTS_DIR,
     _ROOT,
     _convert_alerts_to_json,
-    _encode_transactions,
+    _encode_alert_groups,
     _ensure_feature_manifest,
     _is_single_class_split,
-    _load_transactions,
+    _load_alert_groups,
     _process_alert_batch,
 )
 from thesis.features.service import build_persist_and_register_symbolic_schema
-from thesis.mining.itemset_mining_job import run_transaction_eclat_job
-from thesis.mining.sequence_mining_job import run_transaction_prefixspan_job
+from thesis.mining.itemset_mining_job import run_alert_group_eclat_job
+from thesis.mining.sequence_mining_job import run_alert_group_prefixspan_job
 from thesis.mining.token_abstraction import (
     abstract_mined_df,
     abstract_or_clauses_df,
@@ -99,7 +99,7 @@ from thesis.utils.runs import create_run_dir
 
 def _mine_and_register_symbolic_schema(
     scenario: str,
-    transactions_path: Path,
+    alert_groups_path: Path,
     run_name: str,
     min_support: float,
     max_itemset_size: int,
@@ -120,8 +120,8 @@ def _mine_and_register_symbolic_schema(
         _top_k_per_pass = load_mining_filter_config(_fc).item_sequences.top_k_per_pass
 
     print("--- Running Eclat itemset mining on benign (AND + AND/OR) ---")
-    eclat_result = run_transaction_eclat_job(
-        transactions_path=transactions_path,
+    eclat_result = run_alert_group_eclat_job(
+        alert_groups_path=alert_groups_path,
         scenario_name=scenario,
         run_name=run_name,
         min_support=min_support,
@@ -132,8 +132,8 @@ def _mine_and_register_symbolic_schema(
     )
 
     print("--- Running PrefixSpan sequence mining ---")
-    item_seq_result = run_transaction_prefixspan_job(
-        transactions_path=transactions_path,
+    item_seq_result = run_alert_group_prefixspan_job(
+        alert_groups_path=alert_groups_path,
         scenario_name=scenario,
         run_name=run_name,
         min_support=min_support,
@@ -227,8 +227,8 @@ def _mine_and_register_symbolic_schema(
 
     if run_attack_pass:
         print("--- Running Eclat itemset mining on attack (AND + AND/OR) ---")
-        attack_eclat_result = run_transaction_eclat_job(
-            transactions_path=transactions_path,
+        attack_eclat_result = run_alert_group_eclat_job(
+            alert_groups_path=alert_groups_path,
             scenario_name=scenario,
             run_name=run_name,
             min_support=min_support,
@@ -239,8 +239,8 @@ def _mine_and_register_symbolic_schema(
         )
 
         print("--- Running PrefixSpan sequence mining on attack ---")
-        attack_seq_result = run_transaction_prefixspan_job(
-            transactions_path=transactions_path,
+        attack_seq_result = run_alert_group_prefixspan_job(
+            alert_groups_path=alert_groups_path,
             scenario_name=scenario,
             run_name=run_name,
             min_support=min_support,
@@ -539,26 +539,26 @@ def run_symbolic_experiment(
     print("[3/8] Checking feature manifest...")
     _ensure_feature_manifest(config.scenario)
 
-    # 4. Build transactions from closed groups
-    print("[4/8] Building transactions from cache...")
-    transactions = _load_transactions(config.scenario, config.cache_dir)
-    transactions_path = config.cache_dir / "transactions" / "transactions_raw.json"
+    # 4. Build alert_groups from closed groups
+    print("[4/8] Building alert_groups from cache...")
+    alert_groups = _load_alert_groups(config.scenario, config.cache_dir)
+    alert_groups_path = config.cache_dir / "alert_groups" / "alert_groups_raw.json"
 
     # Sort chronologically so that positional train/test split = temporal split.
     # This also ensures the mining subset and training set are drawn from the
     # same ordering regardless of how the cache stored the groups.
-    transactions.sort(key=lambda t: t.start_ts or "")
+    alert_groups.sort(key=lambda t: t.start_ts or "")
 
     if config.random_split:
         import random as _random
 
         rng = _random.Random(config.random_seed)
-        rng.shuffle(transactions)
+        rng.shuffle(alert_groups)
         print(
-            f"  [random-split] Shuffled {len(transactions)} transactions (seed={config.random_seed})"
+            f"  [random-split] Shuffled {len(alert_groups)} alert_groups (seed={config.random_seed})"
         )
 
-    n_total = len(transactions)
+    n_total = len(alert_groups)
     n_mine = int(config.mine_frac * n_total) if config.mine_frac < 1.0 else n_total
 
     # When --no-overlap is set, training starts after the mine window so mining
@@ -567,7 +567,7 @@ def run_symbolic_experiment(
     train_start = n_mine if (config.no_overlap and config.mine_frac < 1.0) else 0
 
     if _is_single_class_split(
-        transactions,
+        alert_groups,
         config.test_frac,
         train_start,
         random_split=config.random_split,
@@ -610,27 +610,27 @@ def run_symbolic_experiment(
             schema_name=config.schema_name,
             schema_version="skipped",
             auc=float("nan"),
-            n_transactions=n_total,
+            n_alert_groups=n_total,
             n_features=0,
             metrics={"single_class_split": True},
             results_file=results_file,
             grouping_mode=config.grouping.mode,
         )
 
-    mining_transactions_path = transactions_path
+    mining_alert_groups_path = alert_groups_path
     if config.mine_frac < 1.0:
         # Serialize the already-ordered (temporal or shuffled) in-memory list so the
         # mining job reads the same ordering that train/test will use.
 
         mine_path = (
-            transactions_path.parent
-            / f"transactions_mine_{config.mine_frac}{'_rs' + str(config.random_seed) if config.random_split else ''}.json"
+            alert_groups_path.parent
+            / f"alert_groups_mine_{config.mine_frac}{'_rs' + str(config.random_seed) if config.random_split else ''}.json"
         )
         mine_path.write_text(
             json.dumps(
                 [
                     {
-                        "transaction_id": t.transaction_id,
+                        "alert_group_id": t.alert_group_id,
                         "group_id": t.group_id,
                         "method": t.method,
                         "start_ts": t.start_ts,
@@ -643,39 +643,39 @@ def run_symbolic_experiment(
                         else None,
                         "sorted_items": [sorted(s) for s in t.sorted_items],
                         "alert_ips": sorted(list(t.alert_ips)),
-                        "tx_label": t.tx_label,
+                        "group_label": t.group_label,
                         "alert_labels": sorted(list(t.alert_labels))
                         if t.alert_labels is not None
                         else None,
                         "weight": t.weight,
                     }
-                    for t in transactions[:n_mine]
+                    for t in alert_groups[:n_mine]
                 ]
             )
         )
-        mining_transactions_path = mine_path
+        mining_alert_groups_path = mine_path
         split_label = "random" if config.random_split else "first"
         print(
-            f"  Mining on {split_label} {n_mine}/{n_total} transactions (mine_frac={config.mine_frac:.2f})"
+            f"  Mining on {split_label} {n_mine}/{n_total} alert_groups (mine_frac={config.mine_frac:.2f})"
         )
         if train_start > 0:
             print(
-                f"  Training on transactions [{train_start}, {int((1.0 - config.test_frac) * n_total)}) — no overlap with mining window"
+                f"  Training on alert_groups [{train_start}, {int((1.0 - config.test_frac) * n_total)}) — no overlap with mining window"
             )
 
     # Invalidate the cached parquet: the symbolic schema is re-mined every run
-    # and transactions are now in sorted order, so any existing parquet is stale.
+    # and alert_groups are now in sorted order, so any existing parquet is stale.
     stale_parquet = (
         config.cache_dir
-        / "transactions"
-        / f"transactions_{config.schema_name.replace('+', '_')}.parquet"
+        / "alert_groups"
+        / f"alert_groups_{config.schema_name.replace('+', '_')}.parquet"
     )
     if stale_parquet.exists():
         stale_parquet.unlink()
         print(f"  Removed stale encoded parquet: {stale_parquet.name}")
 
     # 5. Mine and register symbolic schema
-    print("[5/8] Mining transactions for symbolic schema...")
+    print("[5/8] Mining alert_groups for symbolic schema...")
     mining_run_dir: Path | None = None
     if config.prebuilt_symbolic_schema_path is not None:
         print(
@@ -686,16 +686,16 @@ def run_symbolic_experiment(
     else:
         run_name = f"symbolic_{config.scenario}"
         n_attack_in_mine = sum(
-            1 for t in transactions[:n_mine] if t.tx_label == "attack"
+            1 for t in alert_groups[:n_mine] if t.group_label == "attack"
         )
         if n_attack_in_mine == 0:
             print(
-                f"  [info] No attack transactions in mine window ({n_mine}/{n_total}) — skipping attack mining pass."
+                f"  [info] No attack alert_groups in mine window ({n_mine}/{n_total}) — skipping attack mining pass."
             )
         symbolic_schema_path, mining_run_dir, mining_stats = (
             _mine_and_register_symbolic_schema(
                 scenario=config.scenario,
-                transactions_path=mining_transactions_path,
+                alert_groups_path=mining_alert_groups_path,
                 run_name=run_name,
                 min_support=config.min_support,
                 max_itemset_size=config.max_itemset_size,
@@ -710,10 +710,10 @@ def run_symbolic_experiment(
         )
 
     # 6. Encode under base+symbolic schema
-    print(f"[6/8] Encoding transactions (schema='{config.schema_name}')...")
-    df, schema = _encode_transactions(
+    print(f"[6/8] Encoding alert_groups (schema='{config.schema_name}')...")
+    df, schema = _encode_alert_groups(
         config.scenario,
-        transactions,
+        alert_groups,
         config.schema_name,
         config.cache_dir,
         feature_selection=feature_selection,
@@ -725,13 +725,13 @@ def run_symbolic_experiment(
         f"{config.model_version}_{config.schema_name.replace('+', '_')}_{grouping_tag}"
     )
     print(f"[7/8] Training '{config.model_name}' v{effective_version}...")
-    y = df["tx_label"].map({"benign": 0, "attack": 1})
-    X = df.drop(columns=["tx_label"])
+    y = df["group_label"].map({"benign": 0, "attack": 1})
+    X = df.drop(columns=["group_label"])
     mask = y.notna()
     n_mixed = int((~mask).sum())
     if n_mixed:
         print(
-            f"  [warn] Dropping {n_mixed} transactions with unlabelled/mixed tx_label"
+            f"  [warn] Dropping {n_mixed} alert_groups with unlabelled/mixed group_label"
         )
         X, y = X[mask], y[mask]
     output_dir = get_model_path(config.scenario, config.model_name, effective_version)
@@ -827,7 +827,7 @@ def run_symbolic_experiment(
                     ),
                     **mining_stats,
                 },
-                "n_transactions": len(df),
+                "n_alert_groups": len(df),
                 "n_mixed_dropped": n_mixed,
                 "n_features": summary.n_features,
                 "test_frac": config.test_frac,
@@ -852,7 +852,7 @@ def run_symbolic_experiment(
         symbolic_schema_path=symbolic_schema_path,
         mining_run_dir=mining_run_dir,
         auc=summary.auc,
-        n_transactions=len(df),
+        n_alert_groups=len(df),
         n_mixed_dropped=n_mixed,
         n_features=summary.n_features,
         metrics=full_metrics,

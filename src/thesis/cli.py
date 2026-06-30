@@ -13,9 +13,9 @@ from thesis.config import (
     load_settings,
     load_mining_filter_config,
 )
-from thesis.mining.itemset_mining_job import run_transaction_eclat_job
+from thesis.mining.itemset_mining_job import run_alert_group_eclat_job
 from thesis.mining.sequence_mining_job import (
-    run_transaction_prefixspan_job,
+    run_alert_group_prefixspan_job,
 )
 from thesis.mining.util import filter_mined_itemsets, filter_mined_sequences
 from thesis.utils.runs import create_run_dir
@@ -30,9 +30,9 @@ from thesis.preprocessing.service import (
     process_alert_batch,
     select_groups_from_cache,
 )
-from thesis.preprocessing.mining_prep import build_transactions
+from thesis.preprocessing.mining_prep import build_alert_groups
 from thesis.training.service import train_model_for_schema
-from thesis.encoders.service import encode_transactions_for_schema
+from thesis.encoders.service import encode_alert_groups_for_schema
 from thesis.features.service import build_persist_and_register_symbolic_schema
 from thesis.features.manifest import initialize_feature_manifest
 
@@ -61,7 +61,7 @@ def init_scenario(
 
     Creates artifacts/features/<scenario>/manifest.json with the base and
     base+dynamic composite schemas. Run this once per scenario before
-    encoding transactions or training a model.
+    encoding alert_groups or training a model.
     """
     try:
         path = initialize_feature_manifest(scenario_name=scenario, overwrite=overwrite)
@@ -265,7 +265,7 @@ def select_groups(
         None, help="How many most recent windows to keep."
     ),
     decay_factor: float = typer.Option(
-        1.0, help="Decay factor for transaction weights."
+        1.0, help="Decay factor for alert_group weights."
     ),
 ) -> None:
     """
@@ -284,7 +284,7 @@ def select_groups(
         )
 
         typer.echo(f"Selected {len(snapshots)} groups.")
-        for s in snapshots[:5]:  # print first 5 transactions as sample
+        for s in snapshots[:5]:  # print first 5 alert_groups as sample
             typer.echo(
                 f"n_alerts={s.n_alerts} "
                 f"statis={s.status} "
@@ -295,12 +295,12 @@ def select_groups(
         out_dir.mkdir(parents=True, exist_ok=True)
         out_path = (
             out_dir / "groupsnapshots.json"
-        )  # TODO: check if this means there is always one transactions file in cache per scenario
+        )  # TODO: check if this means there is always one alert_groups file in cache per scenario
 
         # convert to serializable format
         serialized = [
             {
-                "group_id": s.group_id,  # transaction_id is just window_id for now
+                "group_id": s.group_id,  # alert_group_id is just window_id for now
                 "method": s.method,
                 "version": s.version,
                 "start_ts": s.start_ts,
@@ -310,7 +310,7 @@ def select_groups(
                 "items": sorted(list(s.items)),
                 "sorted_items": [sorted(itemset) for itemset in s.sorted_items],
                 "alert_ips": sorted(list(s.alert_ips)),
-                "tx_label": s.tx_label,
+                "group_label": s.group_label,
                 "alert_labels": (
                     sorted(list(s.alert_labels)) if s.alert_labels is not None else None
                 ),
@@ -330,14 +330,14 @@ def select_groups(
 
 
 @app.command()
-def load_transactions(
+def load_alert_groups(
     scenario: str = typer.Option(..., "--scenario", "-s", help="Scenario name"),
     cache_dir: str = typer.Option(
         "artifacts/cache", help="Directory where cache files are stored."
     ),
 ) -> None:
     """
-    Load group snapshots from cache, convert to transactions and save back to cache.
+    Load group snapshots from cache, convert to alert_groups and save back to cache.
     """
     try:
         cache = TokenCache(cache_dir=Path(cache_dir) / scenario)
@@ -351,17 +351,17 @@ def load_transactions(
             require_closed=True,
         )
 
-        transactions = build_transactions(snapshots)
+        alert_groups = build_alert_groups(snapshots)
 
-        out_dir = Path(f"artifacts/cache/{scenario}/transactions")
+        out_dir = Path(f"artifacts/cache/{scenario}/alert_groups")
         out_dir.mkdir(parents=True, exist_ok=True)
-        out_path = out_dir / "transactions_raw.json"
+        out_path = out_dir / "alert_groups_raw.json"
 
         # convert to serializable format
         # TODO: put in format ready for training + inference
         serialized = [
             {
-                "transaction_id": t.transaction_id,
+                "alert_group_id": t.alert_group_id,
                 "group_id": t.group_id,
                 "method": t.method,
                 "start_ts": t.start_ts,
@@ -372,27 +372,27 @@ def load_transactions(
                 "raw_items": sorted(list(t.raw_items)),
                 "sorted_items": [sorted(itemset) for itemset in t.sorted_items],
                 "alert_ips": sorted(list(t.alert_ips)),
-                "tx_label": t.tx_label,
+                "group_label": t.group_label,
                 "alert_labels": (
                     sorted(list(t.alert_labels)) if t.alert_labels is not None else None
                 ),
                 "weight": t.weight,
             }
-            for t in transactions
+            for t in alert_groups
         ]
 
         with open(out_path, "w") as f:
             json.dump(serialized, f, indent=2)
 
-        typer.echo(f"Saved {len(transactions)} transactions to {out_path}")
+        typer.echo(f"Saved {len(alert_groups)} alert_groups to {out_path}")
 
     except Exception as e:
-        typer.echo(f"Transaction preparation failed: {e}")
+        typer.echo(f"AlertGroup preparation failed: {e}")
         raise typer.Exit(code=1)
 
 
 @app.command()
-def encode_transactions(
+def encode_alert_groups(
     scenario_name: str = typer.Option(..., "--scenario", "-s"),
     schema_name: str = typer.Option("base", "--schema-name"),
     schema_version: str | None = typer.Option(None, "--schema-version"),
@@ -400,8 +400,8 @@ def encode_transactions(
     top_k: int | None = typer.Option(None, "--top-k"),
 ) -> None:
     """
-    Load group snapshots from cache, convert to transactions,
-    load a FeatureSchema, encode transactions, and save row-based features.
+    Load group snapshots from cache, convert to alert_groups,
+    load a FeatureSchema, encode alert_groups, and save row-based features.
     """
     try:
         cache = TokenCache(cache_dir=Path(cache_dir) / scenario_name)
@@ -415,7 +415,7 @@ def encode_transactions(
             require_closed=True,
         )
 
-        transactions = list(build_transactions(snapshots))
+        alert_groups = list(build_alert_groups(snapshots))
 
         schema = FEATURE_SCHEMAS.load(
             scenario_name=scenario_name,
@@ -425,8 +425,8 @@ def encode_transactions(
 
         print(f"Loaded schema {schema_name} for scenario {scenario_name}.")
 
-        feature_df = encode_transactions_for_schema(
-            transactions=transactions,
+        feature_df = encode_alert_groups_for_schema(
+            alert_groups=alert_groups,
             schema=schema,
             top_k=top_k,
         )
@@ -434,16 +434,16 @@ def encode_transactions(
         meta_df = pd.DataFrame(
             [
                 {
-                    "transaction_id": t.transaction_id,
+                    "alert_group_id": t.alert_group_id,
                     "group_id": t.group_id,
                     "method": t.method,
                     "start_ts": t.start_ts,
                     "end_ts": t.end_ts,
                     "n_alerts": t.n_alerts,
-                    "tx_label": t.tx_label,
+                    "group_label": t.group_label,
                     "weight": t.weight,
                 }
-                for t in transactions
+                for t in alert_groups
             ]
         )
 
@@ -457,28 +457,28 @@ def encode_transactions(
 
         safe_schema_name = schema_name.replace("+", "_").replace("/", "_")
 
-        out_dir = Path(f"artifacts/cache/{scenario_name}/transactions")
+        out_dir = Path(f"artifacts/cache/{scenario_name}/alert_groups")
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        parquet_path = out_dir / f"transactions_{safe_schema_name}.parquet"
-        csv_path = out_dir / f"transactions_{safe_schema_name}.csv"
+        parquet_path = out_dir / f"alert_groups_{safe_schema_name}.parquet"
+        csv_path = out_dir / f"alert_groups_{safe_schema_name}.csv"
 
         df.to_parquet(parquet_path, index=False)
         df.to_csv(csv_path, index=False)
 
         typer.echo(
-            f"Saved {len(transactions)} encoded transactions under schema "
+            f"Saved {len(alert_groups)} encoded alert_groups under schema "
             f"'{schema_name}' version '{schema.schema_version}' to "
             f"{parquet_path} and {csv_path}"
         )
 
     except Exception as e:
-        typer.echo(f"Transaction encoding failed: {e}")
+        typer.echo(f"AlertGroup encoding failed: {e}")
         raise typer.Exit(code=1)
 
 
 @app.command("mine")
-def mine_transactions(
+def mine_alert_groups(
     scenario: str = typer.Option(
         "debug_scenario",
         help="Dataset scenario name for logging and artifacts.",
@@ -510,10 +510,10 @@ def mine_transactions(
     ),
 ) -> None:
     """
-    Load cached Transactions and run transaction-level Eclat and PrefixSpan mining.
+    Load cached AlertGroups and run alert_group-level Eclat and PrefixSpan mining.
     """
-    transactions_path = Path(
-        f"artifacts/cache/{scenario}/transactions/transactions_raw.json"
+    alert_groups_path = Path(
+        f"artifacts/cache/{scenario}/alert_groups/alert_groups_raw.json"
     )
 
     mining_filters = None
@@ -525,12 +525,12 @@ def mine_transactions(
         typer.echo(f"Loaded filter config from {filter_config}.")
 
     try:
-        typer.echo(f"Loading transactions from {transactions_path}...")
-        tx_path = Path(transactions_path)
+        typer.echo(f"Loading alert_groups from {alert_groups_path}...")
+        tx_path = Path(alert_groups_path)
         run_dir = create_run_dir(run_name)
 
-        eclat_result = run_transaction_eclat_job(
-            transactions_path=tx_path,
+        eclat_result = run_alert_group_eclat_job(
+            alert_groups_path=tx_path,
             scenario_name=scenario,
             run_name=run_name,
             min_support=min_support,
@@ -541,13 +541,13 @@ def mine_transactions(
         typer.echo(f"Eclat mining complete. Artifacts saved to: {eclat_result.run_dir}")
 
     except Exception as e:
-        typer.echo(f"Transaction mining failed: {e}")
+        typer.echo(f"AlertGroup mining failed: {e}")
         raise typer.Exit(code=1)
 
     try:
         typer.echo("Running PrefixSpan item sequence mining...")
-        item_seq_result = run_transaction_prefixspan_job(
-            transactions_path=tx_path,
+        item_seq_result = run_alert_group_prefixspan_job(
+            alert_groups_path=tx_path,
             scenario_name=scenario,
             run_name=run_name,
             min_support=min_support,

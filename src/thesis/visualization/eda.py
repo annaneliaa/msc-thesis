@@ -614,7 +614,7 @@ def plot_group_size_distribution(
 
     Groups alerts that fall within the same `window_seconds` bucket
     (ts // window_seconds) per scenario, then plots the count distribution.
-    Gives the reader an intuition for how many alerts end up in one transaction.
+    Gives the reader an intuition for how many alerts end up in one alert_group.
     """
     scenarios = [s for s in SCENARIOS if s in df["scenario"].unique()]
 
@@ -649,14 +649,14 @@ def plot_group_size_distribution(
     return fig, ax
 
 
-def load_transactions(
-    transactions_dir: str, scenarios: list[str] | None = None, suffix: str = ""
+def load_alert_groups(
+    alert_groups_dir: str, scenarios: list[str] | None = None, suffix: str = ""
 ) -> pd.DataFrame:
     """
-    Load pre-computed transaction CSVs produced by run_eda.py.
+    Load pre-computed alert_group CSVs produced by run_eda.py.
 
-    Expects one file per scenario: <transactions_dir>/<scenario>_transactions<suffix>.csv
-    with at least columns: window_start, window_end, n_alerts, tx_label.
+    Expects one file per scenario: <alert_groups_dir>/<scenario>_alert_groups<suffix>.csv
+    with at least columns: window_start, window_end, n_alerts, group_label.
 
     Returns a combined DataFrame with an added 'scenario' column.
     """
@@ -665,12 +665,12 @@ def load_transactions(
 
     frames = []
     for sc in scenarios:
-        path = os.path.join(transactions_dir, f"{sc}_transactions{suffix}.csv")
+        path = os.path.join(alert_groups_dir, f"{sc}_alert_groups{suffix}.csv")
         if not os.path.exists(path):
-            raise FileNotFoundError(f"Transactions CSV not found: {path}")
+            raise FileNotFoundError(f"AlertGroups CSV not found: {path}")
         df = pd.read_csv(
             path,
-            usecols=["window_start", "window_end", "n_alerts", "tx_label"],
+            usecols=["window_start", "window_end", "n_alerts", "group_label"],
         )
         df["scenario"] = sc
         frames.append(df)
@@ -678,7 +678,7 @@ def load_transactions(
     return pd.concat(frames, ignore_index=True)
 
 
-def plot_transaction_volume_concatenated(
+def plot_alert_group_volume_concatenated(
     tx_df: pd.DataFrame,
     bin_hours: float = 1.0,
     ncols: int = 4,
@@ -686,11 +686,11 @@ def plot_transaction_volume_concatenated(
     out_path: str | None = None,
 ) -> tuple:
     """
-    Transaction volume over time — one subplot per scenario (2 × 4 grid).
+    AlertGroup volume over time — one subplot per scenario (2 × 4 grid).
 
-    Mirrors plot_alert_volume_concatenated but counts 2-second transaction
-    windows rather than individual alerts. Benign transactions are blue,
-    attack + mixed transactions are red. Y-axis is log scale.
+    Mirrors plot_alert_volume_concatenated but counts 2-second alert_group
+    windows rather than individual alerts. Benign alert_groups are blue,
+    attack + mixed alert_groups are red. Y-axis is log scale.
     """
     scenarios = [s for s in SCENARIOS if s in tx_df["scenario"].unique()]
     nrows = (len(scenarios) + ncols - 1) // ncols
@@ -705,8 +705,8 @@ def plot_transaction_volume_concatenated(
         elapsed = (sc_tx["window_start"].astype(float) - t0) / 3600.0
         duration = float(elapsed.max())
 
-        is_attack = sc_tx["tx_label"].isin(["attack", "mixed"]).values
-        is_benign = (sc_tx["tx_label"] == "benign").values
+        is_attack = sc_tx["group_label"].isin(["attack", "mixed"]).values
+        is_benign = (sc_tx["group_label"] == "benign").values
 
         bin_edges = np.arange(0, duration + bin_hours, bin_hours)
         benign_h, _ = np.histogram(elapsed[is_benign], bins=bin_edges)
@@ -752,13 +752,13 @@ def plot_transaction_volume_concatenated(
         fontsize=9,
         framealpha=0.9,
     )
-    fig.suptitle("Transaction volume timeline (all scenarios)", fontsize=12, y=1.01)
+    fig.suptitle("AlertGroup volume timeline (all scenarios)", fontsize=12, y=1.01)
     plt.tight_layout()
     _save(fig, out_path)
     return fig, axes
 
 
-def plot_transaction_volume_attack_zoom(
+def plot_alert_group_volume_attack_zoom(
     tx_df: pd.DataFrame,
     context_hours: float = 0.5,
     phase_gap_hours: float = 3.0,
@@ -766,10 +766,10 @@ def plot_transaction_volume_attack_zoom(
     out_path: str | None = None,
 ) -> tuple:
     """
-    Transaction volume zoomed into each attack phase — one row per scenario.
+    AlertGroup volume zoomed into each attack phase — one row per scenario.
 
-    Attack phases are derived from transactions labelled 'attack' or 'mixed'.
-    Mirrors plot_attack_phase_zoom but operates on transaction windows rather
+    Attack phases are derived from alert_groups labelled 'attack' or 'mixed'.
+    Mirrors plot_attack_phase_zoom but operates on alert_group windows rather
     than individual alerts.
     """
     scenarios = [s for s in SCENARIOS if s in tx_df["scenario"].unique()]
@@ -781,7 +781,7 @@ def plot_transaction_volume_attack_zoom(
         duration_h = (float(sc_tx["window_start"].max()) - t0) / 3600.0
 
         elapsed_all = (sc_tx["window_start"].values.astype(float) - t0) / 3600.0
-        attack_mask = sc_tx["tx_label"].isin(["attack", "mixed"]).values
+        attack_mask = sc_tx["group_label"].isin(["attack", "mixed"]).values
         attack_elapsed = elapsed_all[attack_mask]
 
         phases = _get_attack_phases(attack_elapsed, phase_gap_hours)
@@ -899,7 +899,7 @@ def plot_transaction_volume_attack_zoom(
         framealpha=0.9,
     )
     fig.suptitle(
-        f"Transaction volume timeline — attack phase zoom"
+        f"AlertGroup volume timeline — attack phase zoom"
         f"  (context={context_hours}h, phase_gap={phase_gap_hours}h, bin={bin_hours}h)",
         fontsize=11,
     )
@@ -918,7 +918,7 @@ def plot_scenario_overview(
 
     Alert columns: start/end date, duration, total/benign/attack counts, attack %,
     unique alert signatures, attack types present.
-    When tx_df is provided, four transaction columns are appended:
+    When tx_df is provided, four alert_group columns are appended:
     Tx Total, Tx Benign, Tx Attack (+mixed), Tx Att %.
     """
     scenarios = [s for s in SCENARIOS if s in df["scenario"].unique()]
@@ -950,8 +950,8 @@ def plot_scenario_overview(
         if has_tx:
             sc_tx = tx_df[tx_df["scenario"] == sc]
             tx_total = len(sc_tx)
-            tx_benign = (sc_tx["tx_label"] == "benign").sum()
-            tx_attack = sc_tx["tx_label"].isin(["attack", "mixed"]).sum()
+            tx_benign = (sc_tx["group_label"] == "benign").sum()
+            tx_attack = sc_tx["group_label"].isin(["attack", "mixed"]).sum()
             row += [
                 f"{tx_total:,}",
                 f"{tx_benign:,}",

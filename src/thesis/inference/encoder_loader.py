@@ -11,7 +11,7 @@ class BaselineEncoder:
 
     def transform_row(self, row: dict) -> pd.DataFrame:
         """
-        Convert one incoming transaction row into a 1-row DataFrame.
+        Convert one incoming alert_group row into a 1-row DataFrame.
         For now this is identity-style encoding for baseline features.
         """
         return pd.DataFrame([row])

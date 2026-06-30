@@ -117,7 +117,7 @@ def test_group_ingestion_writes_expected_group_json(tmp_path):
     assert payload["n_alerts"] == 1
     assert set(payload["items"]) == alert.tokens
     assert set(payload["alert_labels"]) == {"false_positive"}
-    assert payload["tx_label"] == "benign"
+    assert payload["group_label"] == "benign"
     assert payload["version"] == 1
 
 
@@ -172,7 +172,7 @@ def test_read_group_entry_reconstructs_group_cache_entry(tmp_path):
     assert entry.n_alerts == 1
     assert entry.items == alert.tokens
     assert entry.alert_labels == {"false_positive"}
-    assert entry.tx_label == "benign"
+    assert entry.group_label == "benign"
     assert entry.version == 1
 
 

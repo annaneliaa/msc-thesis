@@ -64,7 +64,9 @@ def select_group_snapshots_from_response(
                 alert_labels=(
                     set(group.alert_labels) if group.alert_labels is not None else None
                 ),
-                tx_label=group.tx_label if group.tx_label is not None else None,
+                group_label=group.group_label
+                if group.group_label is not None
+                else None,
                 status=group.status,
             )
         )

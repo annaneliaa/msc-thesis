@@ -1,7 +1,7 @@
 """
 Mining window stability sweep.
 
-Mines features in consecutive temporal windows of a scenario's transactions
+Mines features in consecutive temporal windows of a scenario's alert_groups
 (at multiple granularity levels) and analyses:
 
   1. Within-scenario stability  — does the mined feature set change over time?
@@ -69,18 +69,18 @@ _EXPERIMENTS_DIR = _REPO / "artifacts" / "experiments" / "mining_window_sweep"
 # ---------------------------------------------------------------------------
 
 
-def _load_raw_transactions(scenario: str) -> list[dict]:
+def _load_raw_alert_groups(scenario: str) -> list[dict]:
     path = (
         _CACHE_DIR
         / scenario
         / "groups"
         / "fixed_window"
-        / "transactions"
-        / "transactions_raw.json"
+        / "alert_groups"
+        / "alert_groups_raw.json"
     )
     if not path.exists():
         raise FileNotFoundError(
-            f"No transactions found for '{scenario}' at {path}\n"
+            f"No alert_groups found for '{scenario}' at {path}\n"
             "Run the baseline experiment for this scenario first."
         )
     with path.open() as f:
@@ -90,22 +90,22 @@ def _load_raw_transactions(scenario: str) -> list[dict]:
 
 
 def _strip_attacks(rows: list[dict]) -> list[dict]:
-    return [r for r in rows if r.get("tx_label") == "benign"]
+    return [r for r in rows if r.get("group_label") == "benign"]
 
 
 def _rows_to_mining_format(rows: list[dict]) -> list[dict]:
-    """Re-serialise Transaction rows into the MiningTransaction format the mining jobs expect."""
+    """Re-serialise AlertGroup rows into the MiningAlertGroup format the mining jobs expect."""
     out = []
     for r in rows:
         out.append(
             {
-                "transaction_id": r["transaction_id"],
+                "alert_group_id": r["alert_group_id"],
                 "window_start": r.get("start_ts"),
                 "window_end": r.get("end_ts"),
                 "n_alerts": r.get("n_alerts"),
                 "abs_items": r.get("abs_items", []),
                 "sorted_items": r.get("sorted_items", []),
-                "tx_label": r.get("tx_label"),
+                "group_label": r.get("group_label"),
                 "alert_labels": r.get("alert_labels"),
                 "weight": r.get("weight", 1.0),
             }
@@ -113,7 +113,7 @@ def _rows_to_mining_format(rows: list[dict]) -> list[dict]:
     return out
 
 
-def _save_temp_transactions(rows: list[dict], path: Path) -> None:
+def _save_temp_alert_groups(rows: list[dict], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w") as f:
         json.dump(rows, f)
@@ -275,12 +275,12 @@ def _run_mining_for_window(
     Mine one window. Returns (eclat_raw, eclat_filtered, seq_raw, seq_filtered).
     Results are cached in cache_dir to avoid redundant runs.
 
-    mode="smart" uses the same full (mixed) transactions as mode="mixed" but
+    mode="smart" uses the same full (mixed) alert_groups as mode="mixed" but
     applies a ratio-based rescue to features that fail the support_diff filter
     only because attack traffic appears at background-noise rate.
 
     f_attack_scenario must be the scenario-level attack fraction (n_attack /
-    n_total across ALL transactions, not just this window). Using a per-window
+    n_total across ALL alert_groups, not just this window). Using a per-window
     f_attack is circular: in a heavily attack-laden window the expected
     background support inflates, rescuing almost everything incorrectly.
     """
@@ -319,7 +319,7 @@ def _run_mining_for_window(
 
     win_cache.mkdir(parents=True, exist_ok=True)
 
-    # For smart mode, mining runs on full mixed transactions (same as "mixed")
+    # For smart mode, mining runs on full mixed alert_groups (same as "mixed")
     # but filtering uses the ratio-based rescue instead of hard support_diff.
     # We reuse the mixed mode's cached raw parquets if available to avoid
     # re-running the expensive mining step.
@@ -341,21 +341,21 @@ def _run_mining_for_window(
         eclat_raw, seq_raw = None, None
 
     if eclat_raw is None:
-        # Persist window transactions so consecutive runs skip re-slicing
-        tx_path = win_cache / "transactions.json"
+        # Persist window alert_groups so consecutive runs skip re-slicing
+        tx_path = win_cache / "alert_groups.json"
         if not tx_path.exists():
             with tx_path.open("w") as f:
                 json.dump(_rows_to_mining_format(rows), f)
 
-        from thesis.mining.itemset_mining_job import run_transaction_eclat_job
-        from thesis.mining.sequence_mining_job import run_transaction_prefixspan_job
+        from thesis.mining.itemset_mining_job import run_alert_group_eclat_job
+        from thesis.mining.sequence_mining_job import run_alert_group_prefixspan_job
 
         run_name = f"window_sweep_{key}"
         job_dir = win_cache / "mining"
         job_dir.mkdir(exist_ok=True)
 
-        eclat_result = run_transaction_eclat_job(
-            transactions_path=tx_path,
+        eclat_result = run_alert_group_eclat_job(
+            alert_groups_path=tx_path,
             scenario_name=scenario,
             run_name=run_name,
             min_support=min_support,
@@ -365,8 +365,8 @@ def _run_mining_for_window(
         )
         eclat_raw = eclat_result.mined_df.copy()
 
-        seq_result = run_transaction_prefixspan_job(
-            transactions_path=tx_path,
+        seq_result = run_alert_group_prefixspan_job(
+            alert_groups_path=tx_path,
             scenario_name=scenario,
             run_name=run_name,
             min_support=min_support,
@@ -469,8 +469,8 @@ class WindowResult(NamedTuple):
     win_idx: int
     win_start_frac: float
     win_end_frac: float
-    n_transactions: int
-    n_attack_transactions: int
+    n_alert_groups: int
+    n_attack_alert_groups: int
     features_raw: set[str]
     features_filtered: set[str]
     eclat_raw: pd.DataFrame
@@ -485,11 +485,11 @@ class WindowResult(NamedTuple):
 
 
 def _compute_f_attack(rows: list[dict]) -> float:
-    """Fraction of transactions labelled attack."""
+    """Fraction of alert_groups labelled attack."""
     n = len(rows)
     if n == 0:
         return 0.0
-    n_attack = sum(1 for r in rows if r.get("tx_label") == "attack")
+    n_attack = sum(1 for r in rows if r.get("group_label") == "attack")
     return n_attack / n
 
 
@@ -515,9 +515,9 @@ def table1_stability(results: list[WindowResult]) -> pd.DataFrame:
                     "gran": gran,
                     "window": w.win_idx,
                     "win_range": f"{w.win_start_frac:.0%}–{w.win_end_frac:.0%}",
-                    "n_tx": w.n_transactions,
-                    "n_benign_tx": w.n_transactions - w.n_attack_transactions,
-                    "n_attack_tx": w.n_attack_transactions,
+                    "n_tx": w.n_alert_groups,
+                    "n_benign_tx": w.n_alert_groups - w.n_attack_alert_groups,
+                    "n_attack_tx": w.n_attack_alert_groups,
                     "n_features": len(cur),
                     "n_added": None,
                     "n_removed": None,
@@ -536,9 +536,9 @@ def table1_stability(results: list[WindowResult]) -> pd.DataFrame:
                     "gran": gran,
                     "window": w.win_idx,
                     "win_range": f"{w.win_start_frac:.0%}–{w.win_end_frac:.0%}",
-                    "n_tx": w.n_transactions,
-                    "n_benign_tx": w.n_transactions - w.n_attack_transactions,
-                    "n_attack_tx": w.n_attack_transactions,
+                    "n_tx": w.n_alert_groups,
+                    "n_benign_tx": w.n_alert_groups - w.n_attack_alert_groups,
+                    "n_attack_tx": w.n_attack_alert_groups,
                     "n_features": len(cur),
                     "n_added": len(added),
                     "n_removed": len(removed),
@@ -637,7 +637,7 @@ def table4_dropped_diagnosis(
     for r in results:
         # Skip benign-only windows — support_attack is trivially 0 there so the
         # ratio formula produces misleading verdicts.
-        if r.n_attack_transactions == 0:
+        if r.n_attack_alert_groups == 0:
             continue
 
         dropped_ids = r.features_raw - r.features_filtered
@@ -914,7 +914,7 @@ def main() -> None:
     parser.add_argument(
         "scenarios",
         nargs="*",
-        help="Scenario names (must have transaction cache under artifacts/cache/<scenario>/).",
+        help="Scenario names (must have alert_group cache under artifacts/cache/<scenario>/).",
     )
     parser.add_argument(
         "--all",
@@ -927,7 +927,7 @@ def main() -> None:
         type=float,
         default=[0.1, 0.2, 0.33],
         metavar="FRAC",
-        help="Window size as fraction of total transactions. Default: 0.1 0.2 0.33",
+        help="Window size as fraction of total alert_groups. Default: 0.1 0.2 0.33",
     )
     parser.add_argument(
         "--modes",
@@ -935,10 +935,10 @@ def main() -> None:
         choices=["benign", "mixed", "smart"],
         default=["benign", "mixed"],
         help=(
-            "Transaction selection and filter strategy. "
+            "AlertGroup selection and filter strategy. "
             "'benign': strip attacks before mining. "
-            "'mixed': keep all transactions, standard support_diff filter. "
-            "'smart': keep all transactions, rescue features whose attack support "
+            "'mixed': keep all alert_groups, standard support_diff filter. "
+            "'smart': keep all alert_groups, rescue features whose attack support "
             "is explained by background noise (ratio ≤ --smart-ratio). "
             "Default: benign mixed"
         ),
@@ -994,7 +994,7 @@ def main() -> None:
             if d.is_dir()
             and not d.name.startswith("_")
             and (
-                d / "groups" / "fixed_window" / "transactions" / "transactions_raw.json"
+                d / "groups" / "fixed_window" / "alert_groups" / "alert_groups_raw.json"
             ).exists()
         )
         if args.scenarios:
@@ -1023,17 +1023,17 @@ def main() -> None:
     all_rows_by_scenario: dict[str, list[dict]] = {}
 
     for scenario in args.scenarios:
-        print(f"\n[scenario={scenario}] Loading transactions...")
-        raw_rows = _load_raw_transactions(scenario)
+        print(f"\n[scenario={scenario}] Loading alert_groups...")
+        raw_rows = _load_raw_alert_groups(scenario)
         all_rows_by_scenario[scenario] = raw_rows
         f_attack_scenario = _compute_f_attack(raw_rows)
-        print(f"  {len(raw_rows)} transactions total, f_attack={f_attack_scenario:.4f}")
+        print(f"  {len(raw_rows)} alert_groups total, f_attack={f_attack_scenario:.4f}")
 
         for mode in args.modes:
-            # smart uses the full mixed transaction set but a smarter filter
+            # smart uses the full mixed alert_group set but a smarter filter
             rows = _strip_attacks(raw_rows) if mode == "benign" else raw_rows
             n_label = len(rows)
-            print(f"\n  [mode={mode}] {n_label} transactions")
+            print(f"\n  [mode={mode}] {n_label} alert_groups")
 
             for gran in args.granularities:
                 n_total = len(rows)
@@ -1041,7 +1041,7 @@ def main() -> None:
                 n_windows = max(1, n_total // win_size)
 
                 print(
-                    f"  [gran={gran:.0%}] {n_windows} windows of ~{win_size} transactions each"
+                    f"  [gran={gran:.0%}] {n_windows} windows of ~{win_size} alert_groups each"
                 )
 
                 for win_idx in range(n_windows):
@@ -1054,7 +1054,9 @@ def main() -> None:
                     win_start_frac = start / n_total
                     win_end_frac = end / n_total
 
-                    n_attack = sum(1 for r in win_rows if r.get("tx_label") == "attack")
+                    n_attack = sum(
+                        1 for r in win_rows if r.get("group_label") == "attack"
+                    )
 
                     print(
                         f"    window {win_idx}: [{win_start_frac:.0%}, {win_end_frac:.0%})"
@@ -1091,8 +1093,8 @@ def main() -> None:
                             win_idx=win_idx,
                             win_start_frac=win_start_frac,
                             win_end_frac=win_end_frac,
-                            n_transactions=len(win_rows),
-                            n_attack_transactions=n_attack,
+                            n_alert_groups=len(win_rows),
+                            n_attack_alert_groups=n_attack,
                             features_raw=features_raw,
                             features_filtered=features_filtered,
                             eclat_raw=eclat_raw,

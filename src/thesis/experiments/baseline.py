@@ -4,8 +4,8 @@ Baseline experiment: full pipeline for a given scenario.
 Steps:
   1. Convert raw alerts CSV to JSON
   2. Process alert batch (tokenise + ingest into cache)
-  3. Build transactions from closed groups and save raw JSON
-  4. Encode transactions under the baseline feature schema
+  3. Build alert_groups from closed groups and save raw JSON
+  4. Encode alert_groups under the baseline feature schema
   5. Train logistic regression on the encoded features
   6. Write full metrics to artifacts/experiments/<scenario>/
 
@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from thesis.encoders.service import encode_transactions_for_schema
+from thesis.encoders.service import encode_alert_groups_for_schema
 from thesis.features.manifest import initialize_feature_manifest
 from thesis.features.schema_registry import FeatureSchemaRegistry
 from thesis.features.util import select_symbolic_features
@@ -31,9 +31,9 @@ from thesis.paths import ensure_artifact_dirs
 from thesis.schemas.mining import FeatureSelectionConfig
 from thesis.preprocessing.cache import TokenCache
 from thesis.preprocessing.cache_ingestor import CacheIngestor
-from thesis.preprocessing.mining_prep import build_transactions
+from thesis.preprocessing.mining_prep import build_alert_groups
 from thesis.preprocessing.group_alerts import ALERTBERT_METHOD, FIXED_WINDOW_METHOD
-from thesis.schemas.preprocessing import Transaction
+from thesis.schemas.preprocessing import AlertGroup
 from thesis.schemas.experiments import BaselineExperimentConfig, ExperimentResult
 from thesis.preprocessing.service import (
     build_grouper,
@@ -140,21 +140,21 @@ def _process_alert_batch(
     print(f"  Processed {count} alerts into cache.")
 
 
-def _load_transactions(
+def _load_alert_groups(
     scenario: str,
     cache_dir: Path,
 ) -> list:
-    out_dir = cache_dir / "transactions"
-    out_path = out_dir / "transactions_raw.json"
+    out_dir = cache_dir / "alert_groups"
+    out_path = out_dir / "alert_groups_raw.json"
 
     if out_path.exists():
         with out_path.open("r", encoding="utf-8") as f:
             serialized = json.load(f)
         if serialized:
-            print(f"  [skip] Loading transactions from existing {out_path}")
-            transactions = [
-                Transaction(
-                    transaction_id=t["transaction_id"],
+            print(f"  [skip] Loading alert_groups from existing {out_path}")
+            alert_groups = [
+                AlertGroup(
+                    alert_group_id=t["alert_group_id"],
                     group_id=t["group_id"],
                     method=t["method"],
                     start_ts=t["start_ts"],
@@ -167,7 +167,7 @@ def _load_transactions(
                     else None,
                     sorted_items=[set(s) for s in t["sorted_items"]],
                     alert_ips=set(t["alert_ips"]),
-                    tx_label=t["tx_label"],
+                    group_label=t["group_label"],
                     alert_labels=set(t["alert_labels"])
                     if t["alert_labels"] is not None
                     else None,
@@ -175,9 +175,9 @@ def _load_transactions(
                 )
                 for t in serialized
             ]
-            print(f"  Loaded {len(transactions)} transactions from cache.")
-            return transactions
-        print(f"  [warn] {out_path} is empty, rebuilding transactions...")
+            print(f"  Loaded {len(alert_groups)} alert_groups from cache.")
+            return alert_groups
+        print(f"  [warn] {out_path} is empty, rebuilding alert_groups...")
 
     cache = TokenCache(cache_dir=cache_dir)
     snapshots = select_groups_from_cache(
@@ -188,12 +188,12 @@ def _load_transactions(
         max_end_ts=None,
         require_closed=True,
     )
-    transactions = build_transactions(snapshots)
+    alert_groups = build_alert_groups(snapshots)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     serialized = [
         {
-            "transaction_id": t.transaction_id,
+            "alert_group_id": t.alert_group_id,
             "group_id": t.group_id,
             "method": t.method,
             "start_ts": t.start_ts,
@@ -204,23 +204,23 @@ def _load_transactions(
             "raw_items": sorted(list(t.raw_items)) if t.raw_items is not None else None,
             "sorted_items": [sorted(s) for s in t.sorted_items],
             "alert_ips": sorted(list(t.alert_ips)),
-            "tx_label": t.tx_label,
+            "group_label": t.group_label,
             "alert_labels": (
                 sorted(list(t.alert_labels)) if t.alert_labels is not None else None
             ),
             "weight": t.weight,
         }
-        for t in transactions
+        for t in alert_groups
     ]
     with out_path.open("w", encoding="utf-8") as f:
         json.dump(serialized, f, indent=2)
 
-    print(f"  Built {len(transactions)} transactions → {out_path}")
-    return transactions
+    print(f"  Built {len(alert_groups)} alert_groups → {out_path}")
+    return alert_groups
 
 
 def _is_single_class_split(
-    transactions: list,
+    alert_groups: list,
     test_frac: float = 0.3,
     train_start: int = 0,
     random_split: bool = False,
@@ -234,7 +234,9 @@ def _is_single_class_split(
     import random as _random
 
     label_map = {"benign": 0, "attack": 1}
-    labels = [label_map[t.tx_label] for t in transactions if t.tx_label in label_map]
+    labels = [
+        label_map[t.group_label] for t in alert_groups if t.group_label in label_map
+    ]
     n = len(labels)
     if n == 0:
         return True
@@ -247,16 +249,16 @@ def _is_single_class_split(
     return len(set(labels[train_start:split])) < 2 or len(set(labels[split:])) < 2
 
 
-def _encode_transactions(
+def _encode_alert_groups(
     scenario: str,
-    transactions: list,
+    alert_groups: list,
     schema_name: str,
     cache_dir: Path,
     feature_selection: FeatureSelectionConfig | None = None,
 ) -> tuple[pd.DataFrame, object]:
     safe_name = schema_name.replace("+", "_").replace("/", "_")
-    _tx_dir = cache_dir / "transactions"
-    out_path = _tx_dir / f"transactions_{safe_name}.parquet"
+    _tx_dir = cache_dir / "alert_groups"
+    out_path = _tx_dir / f"alert_groups_{safe_name}.parquet"
 
     registry = FeatureSchemaRegistry(root_dir=_ROOT / "artifacts" / "features")
     schema = registry.load(
@@ -266,9 +268,9 @@ def _encode_transactions(
     )
 
     if out_path.exists() and feature_selection is None:
-        print(f"  [skip] Loading encoded transactions from existing {out_path}")
+        print(f"  [skip] Loading encoded alert_groups from existing {out_path}")
         df = pd.read_parquet(out_path)
-        print(f"  Loaded {len(df)} transactions from parquet.")
+        print(f"  Loaded {len(df)} alert_groups from parquet.")
         return df, schema
 
     if feature_selection is not None and (
@@ -281,21 +283,21 @@ def _encode_transactions(
         after = len(schema.symbolic.features) if schema.symbolic else 0
         print(f"  Feature selection: {before} → {after} symbolic features")
 
-    print("Loaded schema. Encoding transaction data under schema...")
-    feature_df = encode_transactions_for_schema(
-        transactions=transactions,
+    print("Loaded schema. Encoding alert_group data under schema...")
+    feature_df = encode_alert_groups_for_schema(
+        alert_groups=alert_groups,
         schema=schema,
         top_k=None,
     )
     meta_df = pd.DataFrame(
         [
             {
-                "transaction_id": t.transaction_id,
-                "tx_label": t.tx_label,
+                "alert_group_id": t.alert_group_id,
+                "group_label": t.group_label,
                 "n_alerts": t.n_alerts,
                 "weight": t.weight,
             }
-            for t in transactions
+            for t in alert_groups
         ]
     )
     df = pd.concat(
@@ -305,7 +307,7 @@ def _encode_transactions(
 
     _tx_dir.mkdir(parents=True, exist_ok=True)
     df.to_parquet(out_path, index=False)
-    print(f"  Encoded {len(df)} transactions under schema '{schema_name}' → {out_path}")
+    print(f"  Encoded {len(df)} alert_groups under schema '{schema_name}' → {out_path}")
     return df, schema
 
 
@@ -340,9 +342,9 @@ def run_baseline_experiment(
     print("[3/7] Checking feature manifest...")
     _ensure_feature_manifest(config.scenario)
 
-    # 4. Build transactions from closed groups
-    print("[4/7] Building transactions from cache...")
-    transactions = _load_transactions(config.scenario, config.cache_dir)
+    # 4. Build alert_groups from closed groups
+    print("[4/7] Building alert_groups from cache...")
+    alert_groups = _load_alert_groups(config.scenario, config.cache_dir)
 
     # Sort chronologically first, then shuffle if requested.
     # The encoding will preserve this order; prepare_training_frame skips the
@@ -350,31 +352,31 @@ def run_baseline_experiment(
     if config.random_split:
         import random as _random
 
-        transactions.sort(key=lambda t: t.start_ts or "")
-        _random.Random(config.random_seed).shuffle(transactions)
+        alert_groups.sort(key=lambda t: t.start_ts or "")
+        _random.Random(config.random_seed).shuffle(alert_groups)
         print(
-            f"  [random-split] Shuffled {len(transactions)} transactions (seed={config.random_seed})"
+            f"  [random-split] Shuffled {len(alert_groups)} alert_groups (seed={config.random_seed})"
         )
         # Invalidate the cached parquet so it is re-encoded in shuffled order.
         stale = (
             config.cache_dir
-            / "transactions"
-            / f"transactions_{config.schema_name.replace('+', '_')}.parquet"
+            / "alert_groups"
+            / f"alert_groups_{config.schema_name.replace('+', '_')}.parquet"
         )
         if stale.exists():
             stale.unlink()
             print(f"  Removed stale parquet for random-split encoding: {stale.name}")
 
     if _is_single_class_split(
-        transactions,
+        alert_groups,
         config.test_frac,
         random_split=config.random_split,
         random_seed=config.random_seed,
     ):
         print(
             f"  [skip] Single-class split detected for '{config.scenario}' "
-            f"({int((1-config.test_frac)*len(transactions))} train / "
-            f"{len(transactions)-int((1-config.test_frac)*len(transactions))} test) — skipping baseline."
+            f"({int((1-config.test_frac)*len(alert_groups))} train / "
+            f"{len(alert_groups)-int((1-config.test_frac)*len(alert_groups))} test) — skipping baseline."
         )
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         results_dir = (
@@ -405,7 +407,7 @@ def run_baseline_experiment(
             schema_name=config.schema_name,
             schema_version="skipped",
             auc=float("nan"),
-            n_transactions=len(transactions),
+            n_alert_groups=len(alert_groups),
             n_features=0,
             metrics={"single_class_split": True},
             results_file=results_file,
@@ -413,10 +415,10 @@ def run_baseline_experiment(
         )
 
     # 5. Encode under baseline schema
-    print(f"[5/7] Encoding transactions (schema='{config.schema_name}')...")
-    df, schema = _encode_transactions(
+    print(f"[5/7] Encoding alert_groups (schema='{config.schema_name}')...")
+    df, schema = _encode_alert_groups(
         config.scenario,
-        transactions,
+        alert_groups,
         config.schema_name,
         config.cache_dir,
     )
@@ -427,13 +429,13 @@ def run_baseline_experiment(
         f"{config.model_version}_{config.schema_name.replace('+', '_')}_{grouping_tag}"
     )
     print(f"[6/7] Training '{config.model_name}' v{effective_version}...")
-    y = df["tx_label"].map({"benign": 0, "attack": 1})
-    X = df.drop(columns=["tx_label"])
+    y = df["group_label"].map({"benign": 0, "attack": 1})
+    X = df.drop(columns=["group_label"])
     mask = y.notna()
     n_mixed = int((~mask).sum())
     if n_mixed:
         print(
-            f"  [warn] Dropping {n_mixed} transactions with unlabelled/mixed tx_label"
+            f"  [warn] Dropping {n_mixed} alert_groups with unlabelled/mixed group_label"
         )
         X, y = X[mask], y[mask]
     output_dir = get_model_path(config.scenario, config.model_name, effective_version)
@@ -489,7 +491,7 @@ def run_baseline_experiment(
                 "schema_name": summary.schema_name,
                 "schema_version": summary.schema_version,
                 "grouping": {"mode": config.grouping.mode, "params": grouping_params},
-                "n_transactions": len(df),
+                "n_alert_groups": len(df),
                 "n_mixed_dropped": n_mixed,
                 "n_features": summary.n_features,
                 "test_frac": config.test_frac,
@@ -512,7 +514,7 @@ def run_baseline_experiment(
         schema_name=summary.schema_name,
         schema_version=summary.schema_version,
         auc=summary.auc,
-        n_transactions=len(df),
+        n_alert_groups=len(df),
         n_mixed_dropped=n_mixed,
         n_features=summary.n_features,
         metrics=full_metrics,

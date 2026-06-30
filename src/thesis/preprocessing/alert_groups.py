@@ -28,7 +28,7 @@ def time_of_day_bucket(ts) -> str:
         return "night"
 
 
-def build_labeled_window_transactions(
+def build_labeled_window_alert_groups(
     df: pd.DataFrame,
     time_col: str = "time",
     detector_col: str = "short",
@@ -90,7 +90,7 @@ def build_labeled_window_transactions(
                     "n_alerts": len(g),
                     "items": _build_items(g),
                     "alert_labels": set(g[label_col].astype(str)),
-                    "tx_label": _label_window(g[label_col]),
+                    "group_label": _label_window(g[label_col]),
                 }
             ),
             include_groups=False,

@@ -238,7 +238,7 @@ def load_compare_results_for_tau(tau: float, run_dir_pattern: str) -> list[dict]
                     "fp": fp,
                     "tn": tn,
                     "n_features": data[model_type]["n_features"],
-                    "n_transactions": data[model_type]["n_transactions"],
+                    "n_alert_groups": data[model_type]["n_alert_groups"],
                 }
             )
 

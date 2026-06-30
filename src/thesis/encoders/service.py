@@ -2,23 +2,23 @@ from collections.abc import Iterable
 
 import pandas as pd
 
-from thesis.schemas.preprocessing import Transaction
+from thesis.schemas.preprocessing import AlertGroup
 from thesis.schemas.features import FeatureSchema
 from thesis.encoders.baseline import BaselineFeatureEncoder
 from thesis.encoders.symbolic import SymbolicFeatureEncoder
 
 
-def encode_transactions_for_schema(
-    transactions: Iterable[Transaction],
+def encode_alert_groups_for_schema(
+    alert_groups: Iterable[AlertGroup],
     schema: FeatureSchema,
     top_k: int | None = None,
 ) -> pd.DataFrame:
-    transactions_list = list(transactions)
+    alert_groups_list = list(alert_groups)
 
     frames: list[pd.DataFrame] = []
 
     if schema.base is not None:
-        baseline_frame = BaselineFeatureEncoder().transform(transactions_list)
+        baseline_frame = BaselineFeatureEncoder().transform(alert_groups_list)
 
         baseline_frame = baseline_frame.reindex(
             columns=schema.base.features,
@@ -36,7 +36,7 @@ def encode_transactions_for_schema(
             top_k=top_k,
         )
 
-        symbolic_frame = symbolic_encoder.transform(transactions_list)
+        symbolic_frame = symbolic_encoder.transform(alert_groups_list)
 
         symbolic_feature_names = [
             feature.feature_name

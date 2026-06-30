@@ -53,7 +53,7 @@ def run_baseline(scenario: str) -> None:
         f"\n[{scenario}] baseline done — "
         f"AUC={result.auc:.4f}  "
         f"features={result.n_features}  "
-        f"transactions={result.n_transactions}"
+        f"alert_groups={result.n_alert_groups}"
     )
 
 
@@ -68,7 +68,7 @@ def run_symbolic(scenario: str, filter_config: Path | None = None) -> None:
         f"\n[{scenario}] symbolic done — "
         f"AUC={result.auc:.4f}  "
         f"features={result.n_features}  "
-        f"transactions={result.n_transactions}"
+        f"alert_groups={result.n_alert_groups}"
     )
 
 
@@ -87,7 +87,7 @@ def run_transfer(
     print(
         f"\n[{train_scenario}→{test_scenario}] transfer done — "
         f"AUC={auc:.4f}  "
-        f"transactions={result.n_test_transactions}"
+        f"alert_groups={result.n_test_alert_groups}"
     )
 
 
@@ -121,7 +121,7 @@ def run_compare(
         f"  {'features':20s}  {baseline.n_features:>10d}  {symbolic.n_features:>10d}  {feat_delta:>+8d}"
     )
     print(
-        f"  {'transactions':20s}  {baseline.n_transactions:>10d}  {symbolic.n_transactions:>10d}"
+        f"  {'alert_groups':20s}  {baseline.n_alert_groups:>10d}  {symbolic.n_alert_groups:>10d}"
     )
     print(f"{'─' * 50}")
 
@@ -143,7 +143,7 @@ def run_compare(
                     "schema_version": baseline.schema_version,
                     "auc": baseline.auc,
                     "n_features": baseline.n_features,
-                    "n_transactions": baseline.n_transactions,
+                    "n_alert_groups": baseline.n_alert_groups,
                     "metrics": baseline.metrics,
                     "results_file": str(baseline.results_file),
                 },
@@ -153,7 +153,7 @@ def run_compare(
                     "symbolic_schema_path": str(symbolic.symbolic_schema_path),
                     "auc": symbolic.auc,
                     "n_features": symbolic.n_features,
-                    "n_transactions": symbolic.n_transactions,
+                    "n_alert_groups": symbolic.n_alert_groups,
                     "metrics": symbolic.metrics,
                     "results_file": str(symbolic.results_file),
                 },

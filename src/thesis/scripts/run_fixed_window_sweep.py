@@ -2,11 +2,11 @@
 Sweep over fixed-window sizes for fixed_window and fixed_window_host grouping.
 
 For each (method, window_size) combination reports:
-  - Transaction counts: total, benign, attack, mixed, purity
+  - AlertGroup counts: total, benign, attack, mixed, purity
   - Alert-size distribution: mean, p50, p95, max, % single-alert
-  - Token diversity: mean/max unique tokens, unique alert types per transaction
-  - Recurring alerts: % transactions with repeated alert IDs, mean repetition ratio
-  - Window duration: mean and max seconds spanned by a transaction
+  - Token diversity: mean/max unique tokens, unique alert types per alert_group
+  - Recurring alerts: % alert_groups with repeated alert IDs, mean repetition ratio
+  - Window duration: mean and max seconds spanned by a alert_group
   - Train/test split quality: label distribution for a temporal split (default 70/30),
     flagging window sizes that produce a single-class train or test set.
 
@@ -189,7 +189,7 @@ def load_and_tokenize(
 # ---------------------------------------------------------------------------
 
 
-def _tx_label_from_labels(alert_labels: set[str]) -> str:
+def _group_label_from_labels(alert_labels: set[str]) -> str:
     has_benign = _BENIGN_LABEL in alert_labels
     has_attack = any(lbl != _BENIGN_LABEL for lbl in alert_labels if lbl)
     if has_attack and has_benign:
@@ -240,8 +240,10 @@ def build_snapshots_in_memory(
 
     snapshots = []
     for g in raw.values():
-        tx_label = (
-            _tx_label_from_labels(g["alert_labels"]) if g["alert_labels"] else "benign"
+        group_label = (
+            _group_label_from_labels(g["alert_labels"])
+            if g["alert_labels"]
+            else "benign"
         )
         snapshots.append(
             GroupSnapshot(
@@ -256,7 +258,7 @@ def build_snapshots_in_memory(
                 sorted_items=g["sorted_items"],
                 alert_ips=g["alert_ips"],
                 alert_labels=g["alert_labels"],
-                tx_label=tx_label,
+                group_label=group_label,
                 status="closed",
             )
         )
@@ -301,7 +303,7 @@ def compute_stats(snapshots: list[GroupSnapshot]) -> dict[str, Any]:
         }
 
     n_tx = len(snapshots)
-    labels = [s.tx_label for s in snapshots]
+    labels = [s.group_label for s in snapshots]
     n_benign = labels.count("benign")
     n_attack = labels.count("attack")
     n_mixed = labels.count("mixed")
@@ -309,7 +311,7 @@ def compute_stats(snapshots: list[GroupSnapshot]) -> dict[str, Any]:
     n_alerts_arr = np.array([s.n_alerts for s in snapshots], dtype=float)
 
     # Distinct alert profiles: how many unique (token-set) combinations appear in a
-    # transaction. Unlike alert_id (which ties to a specific second), this captures
+    # alert_group. Unlike alert_id (which ties to a specific second), this captures
     # whether the same alert TYPE recurs across different seconds in the window.
     profile_counts = np.array(
         [len({frozenset(item_set) for item_set in s.sorted_items}) for s in snapshots],
@@ -320,7 +322,7 @@ def compute_stats(snapshots: list[GroupSnapshot]) -> dict[str, Any]:
 
     token_counts = np.array([len(s.items) for s in snapshots], dtype=float)
 
-    # Alert-type diversity: distinct "short:<name>" tokens per transaction.
+    # Alert-type diversity: distinct "short:<name>" tokens per alert_group.
     # Each unique short: token represents a distinct detector signature type.
     short_counts = np.array(
         [len([t for t in s.items if t.startswith("short:")]) for s in snapshots],
@@ -332,8 +334,8 @@ def compute_stats(snapshots: list[GroupSnapshot]) -> dict[str, Any]:
     n_single = int(np.sum(n_alerts_arr == 1))
 
     # Per-label size stats
-    attack_sizes = [s.n_alerts for s in snapshots if s.tx_label == "attack"]
-    benign_sizes = [s.n_alerts for s in snapshots if s.tx_label == "benign"]
+    attack_sizes = [s.n_alerts for s in snapshots if s.group_label == "attack"]
+    benign_sizes = [s.n_alerts for s in snapshots if s.group_label == "benign"]
 
     return {
         "n_tx": n_tx,
@@ -368,7 +370,7 @@ def compute_stats(snapshots: list[GroupSnapshot]) -> dict[str, Any]:
         # Alert-type diversity (distinct detector signatures)
         "mean_alert_types": float(short_counts.mean()),
         "max_alert_types": int(short_counts.max()),
-        # Temporal span of transactions
+        # Temporal span of alert_groups
         "mean_duration_s": float(durations.mean()),
         "max_duration_s": float(durations.max()),
     }
@@ -404,7 +406,7 @@ def compute_split_stats(
     test = sorted_snaps[split_idx:]
 
     def _counts(snaps: list[GroupSnapshot]) -> dict[str, Any]:
-        labels = [s.tx_label for s in snaps]
+        labels = [s.group_label for s in snaps]
         n_b = labels.count("benign")
         n_a = labels.count("attack")
         n_m = labels.count("mixed")
@@ -487,7 +489,7 @@ def print_split_table(results: list[dict], train_frac: float) -> None:
 
 def print_all_tables(results: list[dict], train_frac: float = 0.7) -> None:
     print_table(
-        "Transaction counts and purity",
+        "AlertGroup counts and purity",
         results,
         [
             ("method_label", "Method", 22),
@@ -502,7 +504,7 @@ def print_all_tables(results: list[dict], train_frac: float = 0.7) -> None:
     )
 
     print_table(
-        "Alert-size distribution — all transactions (alerts per transaction)",
+        "Alert-size distribution — all alert_groups (alerts per alert_group)",
         results,
         [
             ("method_label", "Method", 22),
@@ -528,7 +530,7 @@ def print_all_tables(results: list[dict], train_frac: float = 0.7) -> None:
     )
 
     print_table(
-        "Token diversity (unique tokens and alert signature types per transaction)",
+        "Token diversity (unique tokens and alert signature types per alert_group)",
         results,
         [
             ("method_label", "Method", 22),
@@ -615,7 +617,7 @@ def plot_sweep(
     fig, axes = plt.subplots(2, 2, figsize=(12, 8))
     fig.suptitle(f"Fixed-window sweep — {scenario}", fontsize=12)
 
-    # ── (0,0) Transaction count vs window size ─────────────────────────────
+    # ── (0,0) AlertGroup count vs window size ─────────────────────────────
     ax = axes[0, 0]
     for m in methods:
         ws, rows = _method_data(results, m)
@@ -631,12 +633,12 @@ def plot_sweep(
         )
     _set_window_xticks(ax, windows)
     ax.set_xlabel("Window size (s)")
-    ax.set_ylabel("Number of transactions")
-    ax.set_title("(A) Total transaction count")
+    ax.set_ylabel("Number of alert_groups")
+    ax.set_title("(A) Total alert_group count")
     ax.legend(fontsize=8)
     ax.grid(alpha=0.3, linewidth=0.5)
 
-    # ── (0,1) Mean transaction size by label ───────────────────────────────
+    # ── (0,1) Mean alert_group size by label ───────────────────────────────
     ax = axes[0, 1]
     for m in methods:
         ws, rows = _method_data(results, m)
@@ -667,8 +669,8 @@ def plot_sweep(
     _set_window_xticks(ax, windows)
     ax.set_yscale("log")
     ax.set_xlabel("Window size (s)")
-    ax.set_ylabel("Mean alerts per transaction  (log scale)")
-    ax.set_title("(B) Mean transaction size by label")
+    ax.set_ylabel("Mean alerts per alert_group  (log scale)")
+    ax.set_title("(B) Mean alert_group size by label")
     ax.legend(fontsize=7, ncol=2)
     ax.grid(alpha=0.3, linewidth=0.5, which="both")
 
@@ -702,7 +704,7 @@ def plot_sweep(
         )
     _set_window_xticks(ax, windows)
     ax.set_xlabel("Window size (s)")
-    ax.set_ylabel("Mean count per transaction")
+    ax.set_ylabel("Mean count per alert_group")
     ax.set_title("(C) Token diversity (larger window ≠ more unique types)")
     ax.legend(fontsize=7, ncol=2)
     ax.grid(alpha=0.3, linewidth=0.5)
@@ -740,7 +742,7 @@ def plot_sweep(
         legend_handles += [l1, l2]
     _set_window_xticks(ax, windows)
     ax.set_xlabel("Window size (s)")
-    ax.set_ylabel("% transactions with recurring alert profiles", color="k")
+    ax.set_ylabel("% alert_groups with recurring alert profiles", color="k")
     ax2.set_ylabel("Mean ratio (alerts / distinct profiles)", color="grey")
     ax2.tick_params(labelcolor="grey")
     ax.set_title("(D) Alert profile recurrence within window")
@@ -825,7 +827,7 @@ def plot_split_quality(
 
         _set_window_xticks(ax, windows)
         ax.set_xlabel("Window size (s)")
-        ax.set_ylabel("Attack-class transactions (%)")
+        ax.set_ylabel("Attack-class alert_groups (%)")
         ax.set_title(f"{split_label} — attack %")
         ax.set_ylim(-2, 102)
         ax.axhline(0, color="grey", linewidth=0.5, linestyle=":")
@@ -859,7 +861,7 @@ def plot_cross_scenario(
     """
     Four-panel cross-scenario summary that supports window-size and method selection.
 
-      A/B  Heatmaps: attack transactions available in the train set for each
+      A/B  Heatmaps: attack alert_groups available in the train set for each
            (scenario × window) cell, one panel per method. Red border = split_ok=False
            (single-class split). Green = healthy, red/yellow = too few attack examples.
 
@@ -867,7 +869,7 @@ def plot_cross_scenario(
            Flat low lines reveal structurally late-campaign scenarios where window
            size cannot improve the class balance.
 
-      D    Line plot: mean attack / mean benign transaction size ratio (log scale,
+      D    Line plot: mean attack / mean benign alert_group size ratio (log scale,
            fixed_window). A high ratio means the classifier can trivially use size
            rather than alert-type patterns. Higher window → higher ratio.
     """
@@ -1020,7 +1022,7 @@ def plot_scenario_window_overview(
     Matplotlib table — one row per (scenario, window), grouped by scenario.
 
     Columns: Scenario | Window | [per method: Total, Benign, Attack, Att%]
-    Attack count = n_attack + n_mixed (all non-benign transactions).
+    Attack count = n_attack + n_mixed (all non-benign alert_groups).
     """
     scenarios = sorted(scenario_results.keys())
     methods = ["fixed_window", "fixed_window_host"]
@@ -1083,7 +1085,7 @@ def plot_scenario_window_overview(
         tbl[0, j].set_facecolor("#2D2D2D")
         tbl[0, j].set_text_props(fontweight="bold", color="white")
 
-    ax.set_title("Transaction counts by scenario and window size", fontsize=12, pad=10)
+    ax.set_title("AlertGroup counts by scenario and window size", fontsize=12, pad=10)
     plt.tight_layout()
     fig.text(
         0.99,
@@ -1113,8 +1115,8 @@ def plot_metrics_heatmap(
 
       A  Attack %             (attack+mixed)/n_tx — class imbalance
       B  Purity %             (benign+attack)/n_tx — no mixed-label tx
-      C  Mean alerts/tx       transaction richness
-      D  Single-alert tx %    degenerate transactions (window too small?)
+      C  Mean alerts/tx       alert_group richness
+      D  Single-alert tx %    degenerate alert_groups (window too small?)
       E  Recurring profiles % same alert type fires multiple times (window too large?)
       F  Split viable         temporal 70/30 split has both classes in train+test
     """
@@ -1160,7 +1162,7 @@ def plot_metrics_heatmap(
         ),
         (
             "purity_pct",
-            "(B) Purity %\npure-label transactions",
+            "(B) Purity %\npure-label alert_groups",
             "RdYlGn",
             0,
             100,
@@ -1168,7 +1170,7 @@ def plot_metrics_heatmap(
         ),
         (
             "mean_alerts",
-            "(C) Mean alerts / tx\ntransaction richness",
+            "(C) Mean alerts / tx\nalert_group richness",
             "Blues",
             None,
             None,
@@ -1428,7 +1430,7 @@ def main() -> None:
         type=float,
         default=0.7,
         metavar="F",
-        help="Fraction of transactions (sorted by time) used as the train split (default: 0.7).",
+        help="Fraction of alert_groups (sorted by time) used as the train split (default: 0.7).",
     )
     args = parser.parse_args()
 

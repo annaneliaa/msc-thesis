@@ -141,15 +141,15 @@ class GroupSnapshot:  # stable snapshot
     alert_ips: set[str] = field(default_factory=set)
     # labels (for evaluation)
     alert_labels: Optional[set[str]] = None
-    tx_label: Optional[str] = None
+    group_label: Optional[str] = None
 
     # lifecycle
     status: str = "closed"  # expected: "closed" when emitted
 
 
 @dataclass(slots=True)
-class Transaction:  # mining input (with weight)
-    transaction_id: str
+class AlertGroup:  # mining input (with weight)
+    alert_group_id: str
     group_id: str
     method: str  # "fixed_window" | "alertbert"
 
@@ -165,7 +165,7 @@ class Transaction:  # mining input (with weight)
     )  # ordered list of per-alert itemsets, for sequence mining
     alert_ips: set[str] = field(default_factory=set)
 
-    tx_label: Optional[str] = None
+    group_label: Optional[str] = None
     alert_labels: Optional[set[str]] = None
 
     weight: float = 1.0

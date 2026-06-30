@@ -140,7 +140,7 @@ def run_prefixspan(
     out = pd.DataFrame(results).drop_duplicates(subset=["sequence"]).copy()
     out["sequence_str"] = out["sequence"].apply(lambda x: " -> ".join(x))
     out["support"] = out["support_count"] / n_tx
-    out["n_transactions"] = n_tx
+    out["n_alert_groups"] = n_tx
     out["min_support"] = min_support
     out["min_count"] = min_count
 
@@ -301,7 +301,7 @@ def run_itemset_prefixspan(
         )
     )
     out["support"] = out["support_count"] / n_tx
-    out["n_transactions"] = n_tx
+    out["n_alert_groups"] = n_tx
     out["min_support"] = min_support
     out["min_count"] = min_count
 

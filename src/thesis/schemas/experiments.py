@@ -20,7 +20,7 @@ class SymbolicExperimentConfig:
     feature_selection: FeatureSelectionConfig = field(
         default_factory=FeatureSelectionConfig
     )
-    # mining scope: 1.0 = full timeline, <1.0 = first mine_frac of transactions (sorted by time)
+    # mining scope: 1.0 = full timeline, <1.0 = first mine_frac of alert_groups (sorted by time)
     mine_frac: float = 1.0
     # if True, training starts after the mine window ([mine_frac, 1-test_frac));
     # if False (default), training always starts from 0 regardless of mine_frac
@@ -86,7 +86,7 @@ class ExperimentResult:
     schema_name: str
     schema_version: str
     auc: float
-    n_transactions: int
+    n_alert_groups: int
     n_features: int
     metrics: dict
     results_file: Path

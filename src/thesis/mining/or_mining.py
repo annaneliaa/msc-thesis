@@ -55,23 +55,23 @@ def _remove_near_duplicate_patterns(
 
 
 def _build_class_tidsets(
-    transactions: list[frozenset[str]],
+    alert_groups: list[frozenset[str]],
     itemsets: list[tuple[str, ...]],
 ) -> dict[tuple[str, ...], frozenset[int]]:
-    """TID-set for each AND-itemset: indices of transactions where all items appear."""
+    """TID-set for each AND-itemset: indices of alert_groups where all items appear."""
     result: dict[tuple[str, ...], frozenset[int]] = {}
     for itemset in itemsets:
         s = frozenset(itemset)
         result[itemset] = frozenset(
-            i for i, tx in enumerate(transactions) if s.issubset(tx)
+            i for i, tx in enumerate(alert_groups) if s.issubset(tx)
         )
     return result
 
 
 def mine_or_disjunctions(
     base_df: pd.DataFrame,
-    target_transactions: list[frozenset[str]],
-    other_transactions: list[frozenset[str]],
+    target_alert_groups: list[frozenset[str]],
+    other_alert_groups: list[frozenset[str]],
     target_label: str,
     other_label: str,
     *,
@@ -94,8 +94,8 @@ def mine_or_disjunctions(
     base_df:
         Filtered frequent itemsets (output of select_top_itemsets_per_class or
         filter_mined_itemsets).  Must have an 'itemset' column.
-    target_transactions / other_transactions:
-        Class-partitioned transaction lists (frozensets of items).
+    target_alert_groups / other_alert_groups:
+        Class-partitioned alert_group lists (frozensets of items).
     min_coverage_gain:
         The OR must cover at least this much more of the target class than its
         best single component.  Set to 0.0 to disable.
@@ -125,14 +125,14 @@ def mine_or_disjunctions(
         return pd.DataFrame()
 
     itemsets = [_parse_itemset(v) for v in base_df["itemset"]]
-    n_target = len(target_transactions)
-    n_other = len(other_transactions)
+    n_target = len(target_alert_groups)
+    n_other = len(other_alert_groups)
 
     if n_target == 0 or n_other == 0:
         return pd.DataFrame()
 
-    target_tidsets = _build_class_tidsets(target_transactions, itemsets)
-    other_tidsets = _build_class_tidsets(other_transactions, itemsets)
+    target_tidsets = _build_class_tidsets(target_alert_groups, itemsets)
+    other_tidsets = _build_class_tidsets(other_alert_groups, itemsets)
 
     # Pre-compute per-clause support_diff for dominance check
     clause_support_diff: dict[tuple[str, ...], float] = {}

@@ -12,8 +12,8 @@ class BernoulliOneClass(BaseEstimator):
     One-class anomaly detector for binary features using Bernoulli likelihood.
 
     Fits P(feature_i=1) from benign-only training data with Laplace smoothing,
-    then scores each transaction by its log-likelihood under the benign model.
-    A transaction with low log-likelihood (unusual binary pattern) is flagged anomalous.
+    then scores each alert_group by its log-likelihood under the benign model.
+    A alert_group with low log-likelihood (unusual binary pattern) is flagged anomalous.
 
     sklearn interface: fit / decision_function / predict (-1 = anomaly, +1 = normal).
     Provides analytic shap_values() — no approximation overhead.
@@ -92,7 +92,7 @@ class BinaryAutoencoder(BaseEstimator):
     """
     Reconstruction-error anomaly detector for binary features.
 
-    Trains an MLP autoencoder (X → X) on benign-only data. Scores each transaction
+    Trains an MLP autoencoder (X → X) on benign-only data. Scores each alert_group
     by its per-sample mean squared reconstruction error — high error means the
     binary pattern is unusual relative to what the autoencoder learned from benign traffic.
 

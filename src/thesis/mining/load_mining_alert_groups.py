@@ -6,14 +6,14 @@ from typing import Iterable, Sequence
 
 import pandas as pd
 
-from thesis.schemas.mining import MiningTransaction
+from thesis.schemas.mining import MiningAlertGroup
 
 
-def load_mining_transactions_from_cache(
-    path: str | Path = "artifacts/cache/transactions/transactions.json",
-) -> list[MiningTransaction]:
+def load_mining_alert_groups_from_cache(
+    path: str | Path = "artifacts/cache/alert_groups/alert_groups.json",
+) -> list[MiningAlertGroup]:
     """
-    Load MiningTransaction objects from cached JSON file.
+    Load MiningAlertGroup objects from cached JSON file.
 
     Expected format:
     - list of dicts
@@ -23,22 +23,22 @@ def load_mining_transactions_from_cache(
     path = Path(path)
 
     if not path.exists():
-        raise FileNotFoundError(f"Transactions file not found: {path}")
+        raise FileNotFoundError(f"AlertGroups file not found: {path}")
 
     with open(path, "r") as f:
         raw = json.load(f)
 
-    transactions: list[MiningTransaction] = []
+    alert_groups: list[MiningAlertGroup] = []
 
     for row in raw:
-        tx = MiningTransaction(
-            transaction_id=row["transaction_id"],
+        tx = MiningAlertGroup(
+            alert_group_id=row["alert_group_id"],
             window_start=row.get("window_start"),
             window_end=row.get("window_end"),
             n_alerts=row.get("n_alerts"),
             items=set(row.get("abs_items", [])),
             sorted_items=[set(itemset) for itemset in (row.get("sorted_items") or [])],
-            tx_label=row.get("tx_label"),
+            group_label=row.get("group_label"),
             alert_labels=(
                 set(row["alert_labels"])
                 if row.get("alert_labels") is not None
@@ -46,40 +46,40 @@ def load_mining_transactions_from_cache(
             ),
             weight=row.get("weight", 1.0),
         )
-        transactions.append(tx)
+        alert_groups.append(tx)
 
-    return transactions
+    return alert_groups
 
 
-def prepare_transactions(
-    transactions: Sequence[MiningTransaction],
+def prepare_alert_groups(
+    alert_groups: Sequence[MiningAlertGroup],
     run_dir: Path | None = None,
-) -> list[MiningTransaction]:
+) -> list[MiningAlertGroup]:
     """
-    Clean mining transactions before itemset mining.
+    Clean mining alert_groups before itemset mining.
 
-    Keeps only transactions that:
+    Keeps only alert_groups that:
     - have a non-empty items set
-    - have a non-null tx_label
+    - have a non-null group_label
     """
-    prepared: list[MiningTransaction] = []
+    prepared: list[MiningAlertGroup] = []
 
-    for tx in transactions:
+    for tx in alert_groups:
         items = {str(x).strip() for x in tx.items if str(x).strip()}
         if not items:
             continue
-        if tx.tx_label is None:
+        if tx.group_label is None:
             continue
 
         prepared.append(
-            MiningTransaction(
-                transaction_id=tx.transaction_id,
+            MiningAlertGroup(
+                alert_group_id=tx.alert_group_id,
                 window_start=tx.window_start,
                 window_end=tx.window_end,
                 n_alerts=tx.n_alerts,
                 items=items,
                 sorted_items=tx.sorted_items,
-                tx_label=tx.tx_label,
+                group_label=tx.group_label,
                 alert_labels=(
                     set(tx.alert_labels) if tx.alert_labels is not None else None
                 ),
@@ -91,13 +91,13 @@ def prepare_transactions(
         prepared_df = pd.DataFrame(
             [
                 {
-                    "transaction_id": tx.transaction_id,
+                    "alert_group_id": tx.alert_group_id,
                     "window_start": tx.window_start,
                     "window_end": tx.window_end,
                     "n_alerts": tx.n_alerts,
                     "items": sorted(tx.items),
                     "basket_size": len(tx.items),
-                    "tx_label": tx.tx_label,
+                    "group_label": tx.group_label,
                     "alert_labels": (
                         sorted(tx.alert_labels) if tx.alert_labels is not None else None
                     ),
@@ -106,28 +106,28 @@ def prepare_transactions(
                 for tx in prepared
             ]
         )
-        prepared_df.to_csv(run_dir / "prepared_transactions.csv", index=False)
+        prepared_df.to_csv(run_dir / "prepared_alert_groups.csv", index=False)
 
     return prepared
 
 
-def load_and_prepare_mining_transactions(
-    path: str | Path = "artifacts/cache/transactions/transactions.json",
+def load_and_prepare_mining_alert_groups(
+    path: str | Path = "artifacts/cache/alert_groups/alert_groups.json",
     run_dir: Path | None = None,
-) -> list[MiningTransaction]:
+) -> list[MiningAlertGroup]:
     """
-    Load cached MiningTransaction records and prepare them for mining.
+    Load cached MiningAlertGroup records and prepare them for mining.
     """
-    transactions = load_mining_transactions_from_cache(path)
-    prepared_transactions = prepare_transactions(transactions, run_dir=run_dir)
+    alert_groups = load_mining_alert_groups_from_cache(path)
+    prepared_alert_groups = prepare_alert_groups(alert_groups, run_dir=run_dir)
     print(
-        f"Loaded {len(transactions)} transactions, prepared {len(prepared_transactions)} for mining."
+        f"Loaded {len(alert_groups)} alert_groups, prepared {len(prepared_alert_groups)} for mining."
     )
-    return prepared_transactions
+    return prepared_alert_groups
 
 
 def build_tidsets(
-    transactions: Iterable[frozenset[str]],
+    alert_groups: Iterable[frozenset[str]],
     run_dir: Path,
 ) -> dict[str, set[int]]:
     """
@@ -135,7 +135,7 @@ def build_tidsets(
     """
     tidsets: dict[str, set[int]] = {}
 
-    for tid, basket in enumerate(transactions):
+    for tid, basket in enumerate(alert_groups):
         for item in basket:
             tidsets.setdefault(item, set()).add(tid)
 
