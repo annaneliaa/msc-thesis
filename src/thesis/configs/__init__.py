@@ -18,3 +18,16 @@ def load_scenarios(dataset: str) -> list[str]:
 def all_datasets() -> list[str]:
     with (_CONFIGS_DIR / "scenarios.json").open() as f:
         return list(json.load(f).keys())
+
+
+def dataset_for_scenario(scenario: str) -> str | None:
+    """Reverse lookup: which dataset (e.g. 'ait-ads', 'cscas') a scenario belongs to.
+
+    Returns None if the scenario isn't listed under any dataset in scenarios.json.
+    """
+    with (_CONFIGS_DIR / "scenarios.json").open() as f:
+        mapping = json.load(f)
+    for dataset, scenarios in mapping.items():
+        if scenario in scenarios:
+            return dataset
+    return None

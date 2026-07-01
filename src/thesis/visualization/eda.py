@@ -566,7 +566,7 @@ def plot_attack_type_heatmap(
     return fig, ax
 
 
-def plot_top_alert_names(
+def plot_top_alert_signatures(
     df: pd.DataFrame,
     top_k: int = 20,
     figsize: tuple = (10, 6),
@@ -724,7 +724,7 @@ def load_alert_groups(
 
 
 def plot_alert_group_volume_concatenated(
-    tx_df: pd.DataFrame,
+    groups_df: pd.DataFrame,
     bin_hours: float = 1.0,
     ncols: int = 4,
     figsize: tuple = (16, 6),
@@ -737,15 +737,16 @@ def plot_alert_group_volume_concatenated(
     windows rather than individual alerts. Benign alert_groups are blue,
     attack + mixed alert_groups are red. Y-axis is log scale.
     """
-    scenarios = _ordered_scenarios(tx_df)
+    scenarios = _ordered_scenarios(groups_df)
+    ncols = min(ncols, len(scenarios))
     nrows = (len(scenarios) + ncols - 1) // ncols
 
     fig, axes = plt.subplots(nrows, ncols, figsize=figsize, sharey=False)
-    axes_flat = axes.flat
+    axes_flat = np.array(axes).flat
 
     for i, sc in enumerate(scenarios):
         ax = axes_flat[i]
-        sc_tx = tx_df[tx_df["scenario"] == sc].copy()
+        sc_tx = groups_df[groups_df["scenario"] == sc].copy()
         t0 = float(sc_tx["window_start"].min())
         elapsed = (sc_tx["window_start"].astype(float) - t0) / 3600.0
         duration = float(elapsed.max())
@@ -804,7 +805,7 @@ def plot_alert_group_volume_concatenated(
 
 
 def plot_alert_group_volume_attack_zoom(
-    tx_df: pd.DataFrame,
+    groups_df: pd.DataFrame,
     context_hours: float = 0.5,
     phase_gap_hours: float = 3.0,
     bin_hours: float = (1 / 60),  # 2sec bins
@@ -817,11 +818,11 @@ def plot_alert_group_volume_attack_zoom(
     Mirrors plot_attack_phase_zoom but operates on alert_group windows rather
     than individual alerts.
     """
-    scenarios = _ordered_scenarios(tx_df)
+    scenarios = _ordered_scenarios(groups_df)
 
     scenario_info: list[tuple] = []
     for sc in scenarios:
-        sc_tx = tx_df[tx_df["scenario"] == sc].copy()
+        sc_tx = groups_df[groups_df["scenario"] == sc].copy()
         t0 = float(sc_tx["window_start"].min())
         duration_h = (float(sc_tx["window_start"].max()) - t0) / 3600.0
 
@@ -952,9 +953,206 @@ def plot_alert_group_volume_attack_zoom(
     return fig, all_axes
 
 
+def plot_temporal_attack_overview(
+    df: pd.DataFrame,
+    bin_hours: float = 1.0,
+    out_path: str | None = None,
+) -> tuple:
+    """
+    Three-panel temporal overview for datasets with sparse attacks.
+
+    One column per scenario, three rows (share x-axis within each column):
+      Row 1 — Benign volume per bin
+      Row 2 — Attack volume per bin (independent y-scale from row 1)
+      Row 3 — Attack ratio per bin (0–1)
+    """
+    scenarios = _ordered_scenarios(df)
+    n_sc = len(scenarios)
+
+    fig, axes = plt.subplots(
+        3,
+        n_sc,
+        figsize=(max(14, 7 * n_sc), 9),
+        sharex="col",
+    )
+    if n_sc == 1:
+        axes = np.array(axes).reshape(3, 1)
+
+    for col, sc in enumerate(scenarios):
+        sc_df = df[df["scenario"] == sc].copy()
+        t0 = float(sc_df["time"].min())
+        elapsed = (sc_df["time"].values.astype(float) - t0) / 3600.0
+        duration = float(elapsed.max())
+
+        is_attack = sc_df["is_attack"].values
+        bin_edges = np.arange(0, duration + bin_hours, bin_hours)
+        benign_h, _ = np.histogram(elapsed[~is_attack], bins=bin_edges)
+        attack_h, _ = np.histogram(elapsed[is_attack], bins=bin_edges)
+        total_h = benign_h + attack_h
+        ratio_h = np.where(total_h > 0, attack_h / total_h.clip(1), np.nan)
+        centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+
+        ax0, ax1, ax2 = axes[0, col], axes[1, col], axes[2, col]
+
+        ax0.fill_between(centers, 0, benign_h, color=_C_BENIGN, alpha=0.75, linewidth=0)
+        ax0.set_title(sc, fontsize=10, fontweight="bold", pad=4)
+        ax0.set_ylabel(f"Benign / {bin_hours:.0f}h", fontsize=8)
+
+        ax1.fill_between(centers, 0, attack_h, color=_C_ATTACK, alpha=0.80, linewidth=0)
+        ax1.set_ylabel(f"Attack / {bin_hours:.0f}h", fontsize=8)
+
+        ax2.plot(centers, ratio_h, color=_C_ATTACK, linewidth=0.8, alpha=0.9)
+        ax2.set_ylim(0, None)
+        ax2.set_ylabel("Attack ratio", fontsize=8)
+        ax2.set_xlabel("Elapsed time (h)", fontsize=8)
+        ax2.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.1%}"))
+
+        for ax in axes[:, col]:
+            ax.tick_params(labelsize=7)
+            ax.grid(axis="x", alpha=0.2, linewidth=0.5)
+            ax.set_xlim(0, duration)
+
+    fig.suptitle(
+        f"Temporal attack overview  (bin={bin_hours:.0f}h)", fontsize=12, y=1.01
+    )
+    plt.tight_layout()
+    _save(fig, out_path)
+    return fig, axes
+
+
+def plot_signature_event_raster(
+    df: pd.DataFrame,
+    time_unit: str = "days",
+    marker_size: float = 3.0,
+    alpha: float = 0.5,
+    figsize: tuple | None = None,
+    out_path: str | None = None,
+) -> tuple:
+    """
+    Event raster of every alert signature's occurrences over time.
+
+    One row per unique signature (all signatures shown, not just top-K); each
+    occurrence is drawn as a dot at its elapsed time, coloured by whether that
+    specific hit was benign or attack. Rows are grouped into a majority-attack
+    block and a majority-benign block (split by which class each signature
+    fires in more often), each block ordered by descending occurrence count.
+    This makes it possible to see, at a glance, which signatures are mostly
+    benign noise, and whether their hits are spread at a constant rate or
+    arrive in recurring bursts.
+
+    Assumes df represents a single continuous timeline (as with CSCAS);
+    elapsed time is measured from the global minimum timestamp in df.
+
+    Parameters
+    ----------
+    df          : DataFrame returned by load_alerts()
+    time_unit   : "hours" or "days" — unit for the x-axis
+    marker_size : scatter marker size (points^2)
+    alpha       : marker transparency (lower helps reveal density in bursts)
+    figsize     : optional override; default scales height with signature count
+    out_path    : optional save path
+    """
+    divisor = 3600.0 if time_unit == "hours" else 86400.0
+    t0 = float(df["time"].min())
+    elapsed = (df["time"].astype(float) - t0) / divisor
+
+    stats = (
+        df.groupby("signature")["is_attack"]
+        .agg(["sum", "count"])
+        .rename(columns={"sum": "n_attack", "count": "n_total"})
+    )
+    stats["majority_attack"] = 2 * stats["n_attack"] >= stats["n_total"]
+
+    attack_block = stats[stats["majority_attack"]].sort_values(
+        "n_total", ascending=False
+    )
+    benign_block = stats[~stats["majority_attack"]].sort_values(
+        "n_total", ascending=False
+    )
+    ordered_sigs = attack_block.index.tolist() + benign_block.index.tolist()
+    sig_to_row = {sig: i for i, sig in enumerate(ordered_sigs)}
+    n_sig = len(ordered_sigs)
+
+    if figsize is None:
+        figsize = (16, max(8, 0.11 * n_sig))
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    y = df["signature"].map(sig_to_row).values
+    colors = np.where(df["is_attack"].values, _C_ATTACK, _C_BENIGN)
+
+    ax.scatter(
+        elapsed, y, s=marker_size, c=colors, alpha=alpha, linewidths=0, rasterized=True
+    )
+
+    if len(attack_block) and len(benign_block):
+        ax.axhline(len(attack_block) - 0.5, color="0.3", linewidth=0.8, linestyle="--")
+
+    ax.set_yticks(range(n_sig))
+    ax.set_yticklabels(ordered_sigs, fontsize=4)
+    ax.set_ylim(n_sig - 0.5, -0.5)
+    ax.set_xlim(0, float(elapsed.max()))
+    ax.set_xlabel(f"Elapsed time ({time_unit})", fontsize=11)
+    ax.set_title(f"Signature occurrence raster ({n_sig} signatures)", fontsize=12)
+    ax.legend(
+        handles=[
+            mpatches.Patch(color=_C_BENIGN, alpha=0.9, label="Benign hit"),
+            mpatches.Patch(color=_C_ATTACK, alpha=0.9, label="Attack hit"),
+        ],
+        loc="upper right",
+        fontsize=9,
+    )
+    ax.grid(axis="x", alpha=0.2, linewidth=0.5)
+    plt.tight_layout()
+    _save(fig, out_path)
+    return fig, ax
+
+
+def plot_signature_purity_pie(
+    df: pd.DataFrame,
+    figsize: tuple = (7, 7),
+    out_path: str | None = None,
+) -> tuple:
+    """
+    Pie chart classifying each unique signature as always-benign,
+    always-attack, or mixed (fires in both classes at least once).
+
+    Slice size = number of distinct signatures in each category, so this
+    answers "how much of the signature space is each type", as opposed to
+    "how much alert volume" (which plot_top_alert_signatures covers).
+    """
+    stats = df.groupby("signature")["is_attack"].agg(["sum", "count"])
+    stats.columns = ["n_attack", "n_total"]
+    n_benign = stats["n_total"] - stats["n_attack"]
+
+    always_benign = int((stats["n_attack"] == 0).sum())
+    always_attack = int((n_benign == 0).sum())
+    mixed = len(stats) - always_benign - always_attack
+
+    labels = ["Always benign", "Always attack", "Mixed"]
+    counts = [always_benign, always_attack, mixed]
+    colors = [_C_BENIGN, _C_ATTACK, "#CCBB44"]
+
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.pie(
+        counts,
+        labels=[f"{lbl}\n(n={c})" for lbl, c in zip(labels, counts)],
+        colors=colors,
+        autopct="%1.1f%%",
+        startangle=90,
+        wedgeprops=dict(alpha=0.85, linewidth=0.5, edgecolor="white"),
+        textprops=dict(fontsize=10),
+    )
+    ax.set_title(f"Signature purity ({len(stats)} unique signatures)", fontsize=12)
+    ax.axis("equal")
+    plt.tight_layout()
+    _save(fig, out_path)
+    return fig, ax
+
+
 def plot_scenario_overview(
     df: pd.DataFrame,
-    tx_df: pd.DataFrame | None = None,
+    groups_df: pd.DataFrame | None = None,
     figsize: tuple | None = None,
     out_path: str | None = None,
 ) -> tuple:
@@ -962,12 +1160,12 @@ def plot_scenario_overview(
     Summary table rendered as a figure — one row per scenario.
 
     Alert columns: start/end date, duration, total/benign/attack counts, attack %,
-    unique alert signatures, attack types present.
-    When tx_df is provided, four alert_group columns are appended:
+    unique alert  , attack types present.
+    When groups_df is provided, four alert_group columns are appended:
     Tx Total, Tx Benign, Tx Attack (+mixed), Tx Att %.
     """
     scenarios = _ordered_scenarios(df)
-    has_tx = tx_df is not None
+    has_tx = groups_df is not None
 
     rows = []
     for sc in scenarios:
@@ -993,7 +1191,7 @@ def plot_scenario_overview(
             str(n_attack_types),
         ]
         if has_tx:
-            sc_tx = tx_df[tx_df["scenario"] == sc]
+            sc_tx = groups_df[groups_df["scenario"] == sc]
             tx_total = len(sc_tx)
             tx_benign = (sc_tx["group_label"] == "benign").sum()
             tx_attack = sc_tx["group_label"].isin(["attack", "mixed"]).sum()

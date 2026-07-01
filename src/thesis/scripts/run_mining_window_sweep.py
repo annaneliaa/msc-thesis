@@ -30,7 +30,24 @@ Usage:
         --granularities 0.25 \\
         --modes benign
 
-Output (under artifacts/experiments/mining_window_sweep/<run_ts>/):
+    # CSCAS (pre-grouped Suricata scenario) — run once first:
+    #   python src/thesis/scripts/run_ingest_cscas.py
+    # then use --grouping-method since CSCAS alert_groups live under
+    # groups/suricata_grouped/ rather than groups/fixed_window/. Sequence
+    # mining is skipped automatically for these groups (sorted_items is
+    # always empty — see _run_mining_for_window).
+    python src/thesis/scripts/run_mining_window_sweep.py cscas \
+        --grouping-method suricata_grouped \
+        --granularities 0.1 0.2 0.33 \
+        --modes benign mixed
+
+Output (under artifacts/experiments/mining_window_sweep/<dataset>/<run_tag>/,
+        where <dataset> is looked up per scenario via scenarios.json, e.g.
+        'ait-ads' or 'cscas'; falls back to 'unknown'/'mixed' if scenarios
+        aren't listed there or span multiple datasets; <run_tag> is
+        <timestamp>_<filter_config_stem>_<modes>_gran-<granularities>, e.g.
+        20260701_120000_mining_filters_simple_benign-mixed_gran-0.1-0.2-0.33;
+        --output-dir overrides this entirely):
     window_features_<scenario>_<mode>_<gran>.csv  — mined features per window
     table1_stability_<scenario>_<mode>.csv         — within-scenario stability
     table2_sharing.csv                             — cross-scenario feature sharing
@@ -51,17 +68,19 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
+from thesis.configs import dataset_for_scenario
 from thesis.mining.util import (
     filter_mined_sequences,
     remove_prefix_subsumed,
 )
+from thesis.mining.util import filter_mined_itemsets, remove_subset_subsumed
 
 import pandas as pd
 
 _HERE = Path(__file__).resolve()
 _REPO = next(p for p in _HERE.parents if (p / "pyproject.toml").exists())
 _CACHE_DIR = _REPO / "artifacts" / "cache"
-_EXPERIMENTS_DIR = _REPO / "artifacts" / "experiments" / "mining_window_sweep"
+_EXPERIMENTS_DIR = _REPO / "artifacts" / "experiments" / "run_mining_window_sweep"
 
 
 # ---------------------------------------------------------------------------
@@ -69,19 +88,29 @@ _EXPERIMENTS_DIR = _REPO / "artifacts" / "experiments" / "mining_window_sweep"
 # ---------------------------------------------------------------------------
 
 
-def _load_raw_alert_groups(scenario: str) -> list[dict]:
+def _load_raw_alert_groups(
+    scenario: str, grouping_method: str = "fixed_window"
+) -> list[dict]:
     path = (
         _CACHE_DIR
         / scenario
         / "groups"
-        / "fixed_window"
+        / grouping_method
         / "alert_groups"
         / "alert_groups_raw.json"
     )
     if not path.exists():
+        if grouping_method == "suricata_grouped":
+            hint = "Run `python src/thesis/scripts/run_ingest_cscas.py` first."
+        else:
+            hint = (
+                "Run `python -m thesis.experiments.runner baseline "
+                f"{scenario}` first (or any experiment that ingests this "
+                "scenario) to populate alert_groups."
+            )
         raise FileNotFoundError(
-            f"No alert_groups found for '{scenario}' at {path}\n"
-            "Run the baseline experiment for this scenario first."
+            f"No alert_groups found for '{scenario}' (grouping_method="
+            f"'{grouping_method}') at {path}\n{hint}"
         )
     with path.open() as f:
         rows = json.load(f)
@@ -142,7 +171,6 @@ def _smart_filter_itemsets(
     All other criteria (min_k, min_support_count, confidence, overlap,
     non-redundancy) apply unchanged.
     """
-    from thesis.mining.util import filter_mined_itemsets, remove_subset_subsumed
 
     if raw_df.empty:
         return raw_df.copy()
@@ -365,16 +393,29 @@ def _run_mining_for_window(
         )
         eclat_raw = eclat_result.mined_df.copy()
 
-        seq_result = run_alert_group_prefixspan_job(
-            alert_groups_path=tx_path,
-            scenario_name=scenario,
-            run_name=run_name,
-            min_support=min_support,
-            max_len=max_seq_len,
-            target_label="benign",
-            run_dir=job_dir,
-        )
-        seq_raw = seq_result.mined_df.copy()
+        # Pre-grouped scenarios (e.g. CSCAS/suricata_grouped) have no
+        # intra-group alert order — sorted_items is always empty — so
+        # PrefixSpan would mine zero sequences and the downstream confidence
+        # scoring/sort step chokes on the resulting columnless DataFrame.
+        # Skip sequence mining entirely in that case.
+        has_sequence_data = any(r.get("sorted_items") for r in rows)
+        if has_sequence_data:
+            seq_result = run_alert_group_prefixspan_job(
+                alert_groups_path=tx_path,
+                scenario_name=scenario,
+                run_name=run_name,
+                min_support=min_support,
+                max_len=max_seq_len,
+                target_label="benign",
+                run_dir=job_dir,
+            )
+            seq_raw = seq_result.mined_df.copy()
+        else:
+            print(
+                "  [skip] All alert_groups have empty sorted_items — "
+                "skipping sequence mining."
+            )
+            seq_raw = pd.DataFrame()
 
         eclat_raw.to_parquet(eclat_raw_path, index=False)
         seq_raw.to_parquet(seq_raw_path, index=False)
@@ -985,6 +1026,17 @@ def main() -> None:
         default=None,
         help="Output directory override. Default: artifacts/experiments/mining_window_sweep/<ts>/",
     )
+    parser.add_argument(
+        "--grouping-method",
+        type=str,
+        default="fixed_window",
+        metavar="METHOD",
+        help=(
+            "Grouping method subdir to read alert_groups from, i.e. "
+            "artifacts/cache/<scenario>/groups/<METHOD>/alert_groups/alert_groups_raw.json. "
+            "Default: fixed_window"
+        ),
+    )
     args = parser.parse_args()
 
     if args.all:
@@ -994,7 +1046,11 @@ def main() -> None:
             if d.is_dir()
             and not d.name.startswith("_")
             and (
-                d / "groups" / "fixed_window" / "alert_groups" / "alert_groups_raw.json"
+                d
+                / "groups"
+                / args.grouping_method
+                / "alert_groups"
+                / "alert_groups_raw.json"
             ).exists()
         )
         if args.scenarios:
@@ -1006,7 +1062,25 @@ def main() -> None:
     args.scenarios = scenarios
 
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    out_dir: Path = args.output_dir or (_EXPERIMENTS_DIR / ts)
+    filter_tag = (
+        args.filter_config.stem if args.filter_config is not None else "nofilter"
+    )
+    modes_tag = "-".join(args.modes)
+    gran_tag = "-".join(f"{g:g}" for g in args.granularities)
+    run_tag = f"{ts}_{filter_tag}_{modes_tag}_gran-{gran_tag}"
+    if args.output_dir is not None:
+        out_dir: Path = args.output_dir
+    else:
+        datasets = {dataset_for_scenario(s) or "unknown" for s in scenarios}
+        if len(datasets) > 1:
+            print(
+                f"[warn] scenarios span multiple datasets {sorted(datasets)} — "
+                "grouping this run's output under 'mixed'"
+            )
+            dataset_tag = "mixed"
+        else:
+            dataset_tag = datasets.pop()
+        out_dir = _EXPERIMENTS_DIR / dataset_tag / run_tag
     out_dir.mkdir(parents=True, exist_ok=True)
 
     win_mining_cache = _REPO / "artifacts" / "cache" / "_window_mining"
@@ -1024,7 +1098,9 @@ def main() -> None:
 
     for scenario in args.scenarios:
         print(f"\n[scenario={scenario}] Loading alert_groups...")
-        raw_rows = _load_raw_alert_groups(scenario)
+        raw_rows = _load_raw_alert_groups(
+            scenario, grouping_method=args.grouping_method
+        )
         all_rows_by_scenario[scenario] = raw_rows
         f_attack_scenario = _compute_f_attack(raw_rows)
         print(f"  {len(raw_rows)} alert_groups total, f_attack={f_attack_scenario:.4f}")
@@ -1112,7 +1188,7 @@ def main() -> None:
                     ]
                     wf_df = pd.DataFrame(wf_rows).drop_duplicates()
                     wf_dir = out_dir / "window_features"
-                    wf_dir.mkdir(exist_ok=True)
+                    wf_dir.mkdir(parents=True, exist_ok=True)
                     wf_name = (
                         f"window_features_{scenario}_{mode}_{gran:.2f}_{win_idx}.csv"
                     )

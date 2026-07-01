@@ -15,215 +15,27 @@ Prerequisite: the baseline feature schema must already be registered in
 
 from __future__ import annotations
 
-import csv
 import json
+import random as _random
 from datetime import datetime, timezone
 from pathlib import Path
 
-import pandas as pd
-
-from thesis.encoders.service import encode_alert_groups_for_schema
-from thesis.features.manifest import initialize_feature_manifest
-from thesis.features.schema_registry import FeatureSchemaRegistry
-from thesis.features.util import select_symbolic_features
-from thesis.config import GroupingConfig
 from thesis.paths import ensure_artifact_dirs
-from thesis.schemas.mining import FeatureSelectionConfig
-from thesis.caching.cache import TokenCache
-from thesis.grouping.group_alerts import ALERTBERT_METHOD, FIXED_WINDOW_METHOD
+from thesis.grouping.group_alerts import ALERTBERT_METHOD
 from thesis.schemas.experiments import BaselineExperimentConfig, ExperimentResult
 from thesis.pipeline.pipeline import (
-    alert_group_from_dict,
-    build_grouper,
-    ingest_to_cache,
+    convert_ait_alerts_to_json,
+    encode_and_cache_alert_groups,
+    ensure_feature_manifest,
+    ingest_ait_alert_batch,
     is_single_class_split,
-    save_alert_groups_json,
-    select_alert_groups,
+    load_or_build_alert_groups,
 )
 from thesis.registry.models import get_model_path, resolve_model_paths
 from thesis.training.service import train_model_for_schema
 
 _ROOT = Path(__file__).resolve().parents[3]
 _EXPERIMENTS_DIR = _ROOT / "artifacts" / "experiments"
-
-
-# ---------------------------------------------------------------------------
-# Private step helpers
-# ---------------------------------------------------------------------------
-
-
-def _ensure_feature_manifest(scenario: str) -> None:
-    manifest_path = _ROOT / "artifacts" / "features" / scenario / "manifest.json"
-    if manifest_path.exists():
-        print(f"  [skip] Feature manifest already exists at {manifest_path}")
-        return
-    print(f"  Feature manifest not found for '{scenario}', initialising...")
-    initialize_feature_manifest(
-        scenario_name=scenario,
-        root_dir=_ROOT / "artifacts" / "features",
-    )
-    print(f"  Created feature manifest at {manifest_path}")
-
-
-def _convert_alerts_to_json(
-    scenario: str, alerts_json_path: Path | None = None
-) -> Path:
-    if alerts_json_path is not None:
-        if not alerts_json_path.exists():
-            raise FileNotFoundError(f"Filtered alerts not found: {alerts_json_path}")
-        print(f"  [filtered] Using {alerts_json_path}")
-        return alerts_json_path
-
-    input_path = _ROOT / "data" / "alerts_csv" / f"{scenario}_alerts.txt"
-    output_dir = _ROOT / "artifacts" / "processed-data" / scenario
-    output_path = output_dir / "alerts.json"
-
-    if output_path.exists():
-        print(f"  [skip] alerts.json already exists at {output_path}")
-        return output_path
-
-    if not input_path.exists():
-        raise FileNotFoundError(
-            f"Raw alerts file not found: {input_path}\n"
-            "Place the alerts CSV in data/alerts_csv/ before running."
-        )
-
-    output_dir.mkdir(parents=True, exist_ok=True)
-    alerts: list[dict] = []
-    with input_path.open("r", encoding="utf-8") as f:
-        for row in csv.DictReader(f):
-            alerts.append(
-                {
-                    "time": int(row["time"]),
-                    "signature": row["name"],
-                    "ip": row["ip"],
-                    "host": row["host"],
-                    "short": row["short"],
-                    "label": row["time_label"],
-                    "event_label": row["event_label"],
-                }
-            )
-
-    with output_path.open("w", encoding="utf-8") as f:
-        json.dump(alerts, f, indent=2)
-
-    print(f"  Wrote {len(alerts)} alerts → {output_path}")
-    return output_path
-
-
-def _process_alert_batch(
-    scenario: str,
-    alerts_path: Path,
-    cache_dir: Path,
-    grouping_mode: str = FIXED_WINDOW_METHOD,
-    grouping: GroupingConfig | None = None,
-) -> None:
-    alert_store_dir = cache_dir / "alerts"
-    if alert_store_dir.exists() and any(alert_store_dir.glob("*.json")):
-        print(f"  [skip] Alert cache already populated at {alert_store_dir}")
-        return
-
-    with alerts_path.open("r", encoding="utf-8") as f:
-        payload = json.load(f)
-
-    grouper = build_grouper(grouping) if grouping is not None else None
-    cache = TokenCache(cache_dir=cache_dir)
-    count = ingest_to_cache(
-        scenario=scenario,
-        rows=payload,
-        cache=cache,
-        grouping_mode=grouping_mode,
-        grouper=grouper,
-        window_size=grouping.window_size if grouping is not None else 2,
-    )
-    print(f"  Processed {count} alerts into cache.")
-
-
-def _load_alert_groups(
-    scenario: str,
-    cache_dir: Path,
-) -> list:
-    out_dir = cache_dir / "alert_groups"
-    out_path = out_dir / "alert_groups_raw.json"
-
-    if out_path.exists():
-        with out_path.open("r", encoding="utf-8") as f:
-            serialized = json.load(f)
-        if serialized:
-            print(f"  [skip] Loading alert_groups from existing {out_path}")
-            alert_groups = [alert_group_from_dict(t) for t in serialized]
-            print(f"  Loaded {len(alert_groups)} alert_groups from cache.")
-            return alert_groups
-        print(f"  [warn] {out_path} is empty, rebuilding alert_groups...")
-
-    cache = TokenCache(cache_dir=cache_dir)
-    alert_groups = select_alert_groups(cache=cache, require_closed=True)
-
-    save_alert_groups_json(alert_groups, out_path)
-    print(f"  Built {len(alert_groups)} alert_groups → {out_path}")
-    return alert_groups
-
-
-def _encode_alert_groups(
-    scenario: str,
-    alert_groups: list,
-    schema_name: str,
-    cache_dir: Path,
-    feature_selection: FeatureSelectionConfig | None = None,
-) -> tuple[pd.DataFrame, object]:
-    safe_name = schema_name.replace("+", "_").replace("/", "_")
-    _tx_dir = cache_dir / "alert_groups"
-    out_path = _tx_dir / f"alert_groups_{safe_name}.parquet"
-
-    registry = FeatureSchemaRegistry(root_dir=_ROOT / "artifacts" / "features")
-    schema = registry.load(
-        scenario_name=scenario,
-        schema_name=schema_name,
-        schema_version=None,
-    )
-
-    if out_path.exists() and feature_selection is None:
-        print(f"  [skip] Loading encoded alert_groups from existing {out_path}")
-        df = pd.read_parquet(out_path)
-        print(f"  Loaded {len(df)} alert_groups from parquet.")
-        return df, schema
-
-    if feature_selection is not None and (
-        feature_selection.top_k is not None
-        or feature_selection.min_utility_score is not None
-        or feature_selection.filter_cross_host_or
-    ):
-        before = len(schema.symbolic.features) if schema.symbolic else 0
-        schema = select_symbolic_features(schema, feature_selection)
-        after = len(schema.symbolic.features) if schema.symbolic else 0
-        print(f"  Feature selection: {before} → {after} symbolic features")
-
-    print("Loaded schema. Encoding alert_group data under schema...")
-    feature_df = encode_alert_groups_for_schema(
-        alert_groups=alert_groups,
-        schema=schema,
-        top_k=None,
-    )
-    meta_df = pd.DataFrame(
-        [
-            {
-                "alert_group_id": t.alert_group_id,
-                "group_label": t.group_label,
-                "n_alerts": t.n_alerts,
-                "weight": t.weight,
-            }
-            for t in alert_groups
-        ]
-    )
-    df = pd.concat(
-        [meta_df.reset_index(drop=True), feature_df.reset_index(drop=True)],
-        axis=1,
-    )
-
-    _tx_dir.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(out_path, index=False)
-    print(f"  Encoded {len(df)} alert_groups under schema '{schema_name}' → {out_path}")
-    return df, schema
 
 
 # ---------------------------------------------------------------------------
@@ -241,11 +53,11 @@ def run_baseline_experiment(
 
     # 1. Convert alerts CSV → JSON
     print("[1/6] Converting alerts to JSON...")
-    alerts_path = _convert_alerts_to_json(config.scenario, config.alerts_json_path)
+    alerts_path = convert_ait_alerts_to_json(config.scenario, config.alerts_json_path)
 
     # 2. Tokenise + ingest into cache
     print("[2/7] Processing alert batch...")
-    _process_alert_batch(
+    ingest_ait_alert_batch(
         config.scenario,
         alerts_path,
         config.cache_dir,
@@ -255,18 +67,16 @@ def run_baseline_experiment(
 
     # 3. Ensure feature manifest exists (creates base + base+dynamic schemas if missing)
     print("[3/7] Checking feature manifest...")
-    _ensure_feature_manifest(config.scenario)
+    ensure_feature_manifest(config.scenario)
 
     # 4. Build alert_groups from closed groups
     print("[4/7] Building alert_groups from cache...")
-    alert_groups = _load_alert_groups(config.scenario, config.cache_dir)
+    alert_groups = load_or_build_alert_groups(config.scenario, config.cache_dir)
 
     # Sort chronologically first, then shuffle if requested.
     # The encoding will preserve this order; prepare_training_frame skips the
     # timestamp sort when random_split=True so the shuffled order is kept intact.
     if config.random_split:
-        import random as _random
-
         alert_groups.sort(key=lambda t: t.start_ts or "")
         _random.Random(config.random_seed).shuffle(alert_groups)
         print(
@@ -331,7 +141,7 @@ def run_baseline_experiment(
 
     # 5. Encode under baseline schema
     print(f"[5/7] Encoding alert_groups (schema='{config.schema_name}')...")
-    df, schema = _encode_alert_groups(
+    df, schema = encode_and_cache_alert_groups(
         config.scenario,
         alert_groups,
         config.schema_name,

@@ -46,10 +46,12 @@ from thesis.experiments.baseline import (
     ALERTBERT_METHOD,
     _EXPERIMENTS_DIR,
     _ROOT,
-    _convert_alerts_to_json,
-    _ensure_feature_manifest,
-    _load_alert_groups,
-    _process_alert_batch,
+)
+from thesis.pipeline.pipeline import (
+    convert_ait_alerts_to_json,
+    ensure_feature_manifest,
+    ingest_ait_alert_batch,
+    load_or_build_alert_groups,
 )
 from thesis.experiments.symbolic import _mine_and_register_symbolic_schema
 from thesis.features.schema_registry import FeatureSchemaRegistry
@@ -221,11 +223,11 @@ def run_anomaly_experiment(config: AnomalyExperimentConfig) -> ExperimentResult:
 
     # 1. Alerts → JSON
     print("[1/6] Converting alerts to JSON...")
-    alerts_path = _convert_alerts_to_json(config.scenario, config.alerts_json_path)
+    alerts_path = convert_ait_alerts_to_json(config.scenario, config.alerts_json_path)
 
     # 2. Process alert batch
     print("[2/6] Processing alert batch...")
-    _process_alert_batch(
+    ingest_ait_alert_batch(
         config.scenario,
         alerts_path,
         config.cache_dir,
@@ -235,11 +237,11 @@ def run_anomaly_experiment(config: AnomalyExperimentConfig) -> ExperimentResult:
 
     # 3. Feature manifest
     print("[3/6] Checking feature manifest...")
-    _ensure_feature_manifest(config.scenario)
+    ensure_feature_manifest(config.scenario)
 
     # 4. AlertGroups (always temporal order)
     print("[4/6] Building alert_groups from cache...")
-    alert_groups = _load_alert_groups(config.scenario, config.cache_dir)
+    alert_groups = load_or_build_alert_groups(config.scenario, config.cache_dir)
     alert_groups.sort(key=lambda t: t.start_ts or "")
 
     n_total = len(alert_groups)

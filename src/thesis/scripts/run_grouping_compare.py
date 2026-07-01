@@ -44,9 +44,9 @@ from thesis.paths import ABSTRACTION_MAP_PATH, CACHE_DIR
 
 from thesis.config import AlertBERTConfig, GroupingConfig
 from thesis.experiments.baseline import (
-    _load_alert_groups,
     run_baseline_experiment,
 )
+from thesis.pipeline.pipeline import load_or_build_alert_groups
 from thesis.experiments.symbolic import (
     run_symbolic_experiment,
 )
@@ -191,7 +191,7 @@ def _run_pair(
             random_seed=random_seed,
         )
     )
-    txs = _load_alert_groups(scenario, cache_dir)
+    txs = load_or_build_alert_groups(scenario, cache_dir)
     return baseline, symbolic, txs
 
 

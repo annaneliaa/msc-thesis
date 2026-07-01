@@ -26,7 +26,7 @@ Usage:
 
     # balanced alert_group variants — loads artifacts/alert_groups/balanced/<METHOD>/ (plots only)
     # (raw alerts for alert plots; alert_groups balanced in alert_group space)
-    python src/thesis/scripts/run_eda.py --all --tx-balanced naive50 --plots-only
+    python src/thesis/scripts/run_eda.py --all --groups-balanced naive50 --plots-only
 
 Output (all under artifacts/experiments/run_eda/run_<ts>/):
     <scenario>/                               -- per-scenario CSVs and plots (Phase 1)
@@ -39,11 +39,11 @@ Output (all under artifacts/experiments/run_eda/run_<ts>/):
         volume_attack_zoom.png
         class_balance.png
         attack_type_heatmap.png
-        top_alert_names.png
+        top_alert_signatures.png
         inter_arrival_cdf.png
         group_size_dist.png
         scenario_overview.png
-        tx_volume_*.png                       -- only when alert_groups are available
+        groups_volume_*.png                   -- only when alert_groups are available
 """
 
 from __future__ import annotations
@@ -69,9 +69,12 @@ from thesis.visualization.eda import (
     plot_group_size_distribution,
     plot_inter_arrival_time_cdf,
     plot_scenario_overview,
-    plot_top_alert_names,
+    plot_signature_event_raster,
+    plot_signature_purity_pie,
+    plot_top_alert_signatures,
     plot_alert_group_volume_attack_zoom,
     plot_alert_group_volume_concatenated,
+    plot_temporal_attack_overview,
 )
 from thesis.data.alert_groups import build_labeled_window_alert_groups
 
@@ -170,9 +173,13 @@ def run_scenario(
     summary_path: Path,
     balanced: str | None = None,
     groups_balanced: str | None = None,
+    skip_grouping: bool = False,
 ) -> None:
+    print(f"  Running EDA for scenario '{scenario}' (n={len(df):,} rows)...")
     os.makedirs(out_path, exist_ok=True)
     os.makedirs(summary_path, exist_ok=True)
+
+    print("Output dirs: ", out_path, summary_path)
 
     with open(summary_path / f"{scenario}_eda_summary.txt", "w") as f:
         f.write(f"Exploratory Data Analysis for {scenario} scenario\n")
@@ -194,135 +201,138 @@ def run_scenario(
             f.write(f"Min timestamp: {df['time'].min()}\n")
             f.write(f"Max timestamp: {df['time'].max()}\n\n")
 
-        alert_groups = build_labeled_window_alert_groups(df, window_size_s=2)
-        group_cache_dir = _tx_dir(balanced, groups_balanced)
-        group_cache_dir.mkdir(parents=True, exist_ok=True)
-        alert_groups.to_csv(
-            group_cache_dir / f"{scenario}_alert_groups.csv", index=False
-        )
+        if not skip_grouping:
+            alert_groups = build_labeled_window_alert_groups(df, window_size_s=2)
+            group_cache_dir = _groups_dir(balanced, groups_balanced)
+            group_cache_dir.mkdir(parents=True, exist_ok=True)
+            alert_groups.to_csv(
+                group_cache_dir / f"{scenario}_alert_groups.csv", index=False
+            )
 
-        benign_groups = alert_groups[alert_groups["group_label"] == "benign"].copy()
-        attack_groups = alert_groups[alert_groups["group_label"] == "attack"].copy()
+            benign_groups = alert_groups[alert_groups["group_label"] == "benign"].copy()
+            attack_groups = alert_groups[alert_groups["group_label"] == "attack"].copy()
 
-        f.write("AlertGroup label distribution:\n")
-        f.write(alert_groups["group_label"].value_counts().to_string() + "\n\n")
+            f.write("AlertGroup label distribution:\n")
+            f.write(alert_groups["group_label"].value_counts().to_string() + "\n\n")
 
-        groups = alert_groups.copy()
-        groups["group_size"] = groups["items"].apply(len)
+            groups = alert_groups.copy()
+            groups["group_size"] = groups["items"].apply(len)
 
-        size_summary = groups.groupby("group_label")["group_size"].describe()
-        size_counts = (
-            groups.groupby(["group_label", "group_size"])
-            .size()
-            .reset_index(name="count")
-            .sort_values(["group_label", "group_size"])
-        )
+            size_summary = groups.groupby("group_label")["group_size"].describe()
+            size_counts = (
+                groups.groupby(["group_label", "group_size"])
+                .size()
+                .reset_index(name="count")
+                .sort_values(["group_label", "group_size"])
+            )
 
-        f.write("AlertGroup Size Summary:\n")
-        f.write(size_summary.to_string() + "\n\n")
-        f.write("AlertGroup Size Counts:\n")
-        f.write(size_counts.to_string(index=False) + "\n\n")
+            f.write("AlertGroup Size Summary:\n")
+            f.write(size_summary.to_string() + "\n\n")
+            f.write("AlertGroup Size Counts:\n")
+            f.write(size_counts.to_string(index=False) + "\n\n")
 
-        plt.figure(figsize=(10, 6))
-        for label, color in [("benign", "blue"), ("attack", "red")]:
-            subset = groups.loc[groups["group_label"] == label, "group_size"]
-            plt.hist(subset, bins=20, alpha=0.7, color=color, label=label)
-        plt.title(f"Distribution of alert_group size (scenario={scenario})")
-        plt.xlabel("Number of items in alert_group")
-        plt.ylabel("Count")
-        plt.yscale("log")
-        plt.legend()
-        plt.gcf().text(
-            0.99,
-            0.01,
-            _data_label(balanced, groups_balanced),
-            ha="right",
-            va="bottom",
-            fontsize=7,
-            color="gray",
-            transform=plt.gcf().transFigure,
-        )
-        plt.savefig(out_path / f"{scenario}_alert_group_size_distribution.png")
-        plt.close()
+            plt.figure(figsize=(10, 6))
+            for label, color in [("benign", "blue"), ("attack", "red")]:
+                subset = groups.loc[groups["group_label"] == label, "group_size"]
+                plt.hist(subset, bins=20, alpha=0.7, color=color, label=label)
+            plt.title(f"Distribution of alert_group size (scenario={scenario})")
+            plt.xlabel("Number of items in alert_group")
+            plt.ylabel("Count")
+            plt.yscale("log")
+            plt.legend()
+            plt.gcf().text(
+                0.99,
+                0.01,
+                _data_label(balanced, groups_balanced),
+                ha="right",
+                va="bottom",
+                fontsize=7,
+                color="gray",
+                transform=plt.gcf().transFigure,
+            )
+            plt.savefig(out_path / f"{scenario}_alert_group_size_distribution.png")
+            plt.close()
 
-        pair_freq_all = count_pair_frequency(groups)
-        f.write("Top 20 most common item pairs across all alert_groups:\n")
-        f.write(pair_freq_all.head(20).to_string(index=False) + "\n\n")
+            pair_freq_all = count_pair_frequency(groups)
+            f.write("Top 20 most common item pairs across all alert_groups:\n")
+            f.write(pair_freq_all.head(20).to_string(index=False) + "\n\n")
 
-        pair_freq_benign = count_pair_frequency(benign_groups)
-        f.write("Top 20 most common item pairs in BENIGN alert_groups:\n")
-        f.write(pair_freq_benign.head(20).to_string(index=False) + "\n\n")
+            pair_freq_benign = count_pair_frequency(benign_groups)
+            f.write("Top 20 most common item pairs in BENIGN alert_groups:\n")
+            f.write(pair_freq_benign.head(20).to_string(index=False) + "\n\n")
 
-        pair_freq_attack = count_pair_frequency(attack_groups)
-        f.write("Top 20 most common item pairs in ATTACK alert_groups:\n")
-        f.write(pair_freq_attack.head(20).to_string(index=False) + "\n\n")
+            pair_freq_attack = count_pair_frequency(attack_groups)
+            f.write("Top 20 most common item pairs in ATTACK alert_groups:\n")
+            f.write(pair_freq_attack.head(20).to_string(index=False) + "\n\n")
 
-        intersection = pd.merge(
-            pair_freq_benign.rename(columns={"pair_count": "benign_count"}),
-            pair_freq_attack.rename(columns={"pair_count": "attack_count"}),
-            on="pair",
-            how="inner",
-        ).fillna(0)
+            intersection = pd.merge(
+                pair_freq_benign.rename(columns={"pair_count": "benign_count"}),
+                pair_freq_attack.rename(columns={"pair_count": "attack_count"}),
+                on="pair",
+                how="inner",
+            ).fillna(0)
 
-        total_pairs = len(pair_freq_all)
-        intersection_pairs = len(intersection)
-        f.write(f"Total unique pairs: {total_pairs}\n")
-        f.write(f"Pairs in both classes: {intersection_pairs}\n")
-        f.write(
-            f"Percentage of pairs in both classes: {intersection_pairs / total_pairs:.2%}\n\n"
-        )
-        f.write(
-            "Top 20 most common item pairs in both BENIGN and ATTACK alert_groups:\n"
-        )
-        f.write(intersection.head(20).to_string(index=False) + "\n\n")
+            total_pairs = len(pair_freq_all)
+            intersection_pairs = len(intersection)
+            f.write(f"Total unique pairs: {total_pairs}\n")
+            f.write(f"Pairs in both classes: {intersection_pairs}\n")
+            f.write(
+                f"Percentage of pairs in both classes: {intersection_pairs / total_pairs:.2%}\n\n"
+            )
+            f.write(
+                "Top 20 most common item pairs in both BENIGN and ATTACK alert_groups:\n"
+            )
+            f.write(intersection.head(20).to_string(index=False) + "\n\n")
 
-        pair_metrics_df = all_pair_metrics(groups)
-        f.write("Top 20 item pairs by attack count + attack support:\n")
-        f.write(pair_metrics_df.head(20).to_string(index=False) + "\n\n")
+            pair_metrics_df = all_pair_metrics(groups)
+            f.write("Top 20 item pairs by attack count + attack support:\n")
+            f.write(pair_metrics_df.head(20).to_string(index=False) + "\n\n")
 
-        plt.figure()
-        plt.scatter(
-            pair_metrics_df["support_benign"],
-            pair_metrics_df["support_attack"],
-            alpha=0.5,
-        )
-        plt.yscale("log")
-        plt.xscale("log")
-        plt.xlabel("Support (benign)")
-        plt.ylabel("Support (attack)")
-        plt.title(f"Pair support: attack vs benign (scenario={scenario})")
-        plt.gcf().text(
-            0.99,
-            0.01,
-            _data_label(balanced, groups_balanced),
-            ha="right",
-            va="bottom",
-            fontsize=7,
-            color="gray",
-            transform=plt.gcf().transFigure,
-        )
-        plt.savefig(out_path / f"{scenario}_pair_support_scatter.png")
-        plt.close()
+            plt.figure()
+            plt.scatter(
+                pair_metrics_df["support_benign"],
+                pair_metrics_df["support_attack"],
+                alpha=0.5,
+            )
+            plt.yscale("log")
+            plt.xscale("log")
+            plt.xlabel("Support (benign)")
+            plt.ylabel("Support (attack)")
+            plt.title(f"Pair support: attack vs benign (scenario={scenario})")
+            plt.gcf().text(
+                0.99,
+                0.01,
+                _data_label(balanced, groups_balanced),
+                ha="right",
+                va="bottom",
+                fontsize=7,
+                color="gray",
+                transform=plt.gcf().transFigure,
+            )
+            plt.savefig(out_path / f"{scenario}_pair_support_scatter.png")
+            plt.close()
 
-        pair_tfidf = compute_pair_tfidf_by_class(
-            pair_df=pair_metrics_df[["pair", "attack_count", "benign_count"]].copy(),
-            n_attack_windows=len(attack_groups),
-            n_benign_windows=len(benign_groups),
-        )
-        f.write("Top 20 item pairs by attack TF-IDF score:\n")
-        f.write(
-            pair_tfidf.sort_values("tfidf_attack", ascending=False)
-            .head(20)
-            .to_string(index=False)
-            + "\n\n"
-        )
-        f.write("Top 20 item pairs by benign TF-IDF score:\n")
-        f.write(
-            pair_tfidf.sort_values("tfidf_benign", ascending=False)
-            .head(20)
-            .to_string(index=False)
-            + "\n\n"
-        )
+            pair_tfidf = compute_pair_tfidf_by_class(
+                pair_df=pair_metrics_df[
+                    ["pair", "attack_count", "benign_count"]
+                ].copy(),
+                n_attack_windows=len(attack_groups),
+                n_benign_windows=len(benign_groups),
+            )
+            f.write("Top 20 item pairs by attack TF-IDF score:\n")
+            f.write(
+                pair_tfidf.sort_values("tfidf_attack", ascending=False)
+                .head(20)
+                .to_string(index=False)
+                + "\n\n"
+            )
+            f.write("Top 20 item pairs by benign TF-IDF score:\n")
+            f.write(
+                pair_tfidf.sort_values("tfidf_benign", ascending=False)
+                .head(20)
+                .to_string(index=False)
+                + "\n\n"
+            )
 
         sig_counts = compute_uniq_signature_counts(df, sig_col="signature")
         f.write(f"Unique signature counts in data: {len(sig_counts)}\n")
@@ -336,7 +346,7 @@ def save_overview_table(
     all_df: pd.DataFrame,
     run_dir: Path,
     balanced: str | None = None,
-    tx_balanced: str | None = None,
+    groups_balanced: str | None = None,
 ) -> None:
     scenarios = sorted(all_df["scenario"].unique())
 
@@ -413,7 +423,7 @@ def save_overview_table(
     fig.text(
         0.99,
         0.01,
-        _data_label(balanced, tx_balanced),
+        _data_label(balanced, groups_balanced),
         ha="right",
         va="bottom",
         fontsize=7,
@@ -425,17 +435,17 @@ def save_overview_table(
     print(f"  overview_table.png → {run_dir / 'overview_table.png'}")
 
 
-def _data_label(balanced: str | None, tx_balanced: str | None = None) -> str:
-    if tx_balanced is not None:
-        return f"data: raw alerts, tx balanced ({tx_balanced})"
+def _data_label(balanced: str | None, groups_balanced: str | None = None) -> str:
+    if groups_balanced is not None:
+        return f"data: raw alerts, groups balanced ({groups_balanced})"
     if balanced is None:
         return "data: raw"
     return f"data: balanced ({balanced})"
 
 
-def _tx_dir(balanced: str | None, tx_balanced: str | None = None) -> Path:
-    if tx_balanced is not None:
-        return ALERT_GROUPS_BASE_DIR / "balanced" / tx_balanced
+def _groups_dir(balanced: str | None, groups_balanced: str | None = None) -> Path:
+    if groups_balanced is not None:
+        return ALERT_GROUPS_BASE_DIR / "balanced" / groups_balanced
     if balanced is None:
         return ALERT_GROUPS_BASE_DIR / "raw"
     return ALERT_GROUPS_BASE_DIR / "from_balanced_alerts" / balanced
@@ -445,7 +455,7 @@ def save_label_distribution_table(
     all_df: pd.DataFrame,
     run_dir: Path,
     balanced: str | None = None,
-    tx_balanced: str | None = None,
+    groups_balanced: str | None = None,
 ) -> None:
     """
     Plot a table showing per-scenario breakdown of each time_label:
@@ -549,7 +559,7 @@ def save_label_distribution_table(
     fig.text(
         0.99,
         0.01,
-        _data_label(balanced, tx_balanced),
+        _data_label(balanced, groups_balanced),
         ha="right",
         va="bottom",
         fontsize=7,
@@ -562,49 +572,85 @@ def save_label_distribution_table(
     print(f"  label_distribution_table.png → {out}")
 
 
+_ZOOM_PARAMS: dict[str, dict] = {
+    "ait-ads": dict(context_hours=0.5, phase_gap_hours=3.0, bin_hours=0.01),
+    "cscas": dict(context_hours=6.0, phase_gap_hours=48.0, bin_hours=1.0),
+}
+
+
 def _run_plots_phase(
     scenarios: list[str],
     all_df: pd.DataFrame,
     run_dir: Path,
     balanced: str | None,
-    tx_balanced: str | None = None,
+    groups_balanced: str | None = None,
     bin_hours: float = 1.0,
     fmt: str = "png",
     top_k: int = 20,
+    dataset: str = "ait-ads",
 ) -> None:
     plots_dir = run_dir / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
 
-    tx_dir = _tx_dir(balanced, tx_balanced)
-    tx_df = None
-    if tx_dir.exists():
+    groups_dir = _groups_dir(balanced, groups_balanced)
+    groups_df = None
+    if groups_dir.exists():
         try:
-            tx_df = load_alert_groups(str(tx_dir), scenarios=scenarios)
-            print(f"  {len(tx_df):,} alert_groups loaded from {tx_dir}.")
+            groups_df = load_alert_groups(str(groups_dir), scenarios=scenarios)
+            print(f"  {len(groups_df):,} alert_groups loaded from {groups_dir}.")
         except FileNotFoundError as e:
             print(f"  Warning: {e}. AlertGroup plots will be skipped.")
     else:
         print(
-            f"  No alert_groups found at {tx_dir}. "
+            f"  No alert_groups found at {groups_dir}. "
             "Run without --plots-only first to generate them."
         )
 
-    data_label = _data_label(balanced, tx_balanced)
+    data_label = _data_label(balanced, groups_balanced)
 
     def _out(name: str) -> str:
         return str(plots_dir / f"{name}.{fmt}")
 
-    plots = [
-        (
-            "alert volume (concatenated timeline)",
-            "volume_concatenated",
-            lambda: plot_alert_volume_concatenated(all_df, bin_hours=bin_hours),
-        ),
-        (
-            "alert volume (attack phase zoom)",
-            "volume_attack_zoom",
-            lambda: plot_attack_phase_zoom(all_df),
-        ),
+    zoom_params = _ZOOM_PARAMS.get(dataset, {})
+    plots = []
+    if dataset == "ait-ads":
+        plots += [
+            (
+                "alert volume (concatenated timeline)",
+                "volume_concatenated",
+                lambda: plot_alert_volume_concatenated(all_df, bin_hours=bin_hours),
+            ),
+            (
+                "alert volume (attack phase zoom)",
+                "volume_attack_zoom",
+                lambda: plot_attack_phase_zoom(all_df, **zoom_params),
+            ),
+        ]
+    if dataset == "cscas":
+        plots.append(
+            (
+                "temporal attack overview",
+                "temporal_attack_overview",
+                lambda: plot_temporal_attack_overview(
+                    all_df, bin_hours=zoom_params.get("bin_hours", bin_hours)
+                ),
+            )
+        )
+        plots.append(
+            (
+                "signature event raster",
+                "signature_event_raster",
+                lambda: plot_signature_event_raster(all_df, time_unit="days"),
+            )
+        )
+        plots.append(
+            (
+                "signature purity pie",
+                "signature_purity_pie",
+                lambda: plot_signature_purity_pie(all_df),
+            )
+        )
+    plots += [
         ("class balance", "class_balance", lambda: plot_class_balance(all_df)),
         (
             "attack type heatmap",
@@ -612,9 +658,9 @@ def _run_plots_phase(
             lambda: plot_attack_type_heatmap(all_df),
         ),
         (
-            "top alert names",
-            "top_alert_names",
-            lambda: plot_top_alert_names(all_df, top_k=top_k),
+            "top alert signatures",
+            "top_alert_signatures",
+            lambda: plot_top_alert_signatures(all_df, top_k=top_k),
         ),
         (
             "inter-arrival time CDF",
@@ -629,23 +675,24 @@ def _run_plots_phase(
         (
             "scenario overview table",
             "scenario_overview",
-            lambda: plot_scenario_overview(all_df, tx_df=tx_df),
+            lambda: plot_scenario_overview(all_df, groups_df=groups_df),
         ),
     ]
 
-    if tx_df is not None:
+    if groups_df is not None:
+        groups_bin = zoom_params.get("bin_hours", bin_hours)
         plots += [
             (
                 "alert_group volume (concatenated timeline)",
-                "tx_volume_concatenated",
+                "groups_volume_concatenated",
                 lambda: plot_alert_group_volume_concatenated(
-                    tx_df, bin_hours=bin_hours
+                    groups_df, bin_hours=groups_bin
                 ),
             ),
             (
                 "alert_group volume (attack phase zoom)",
-                "tx_volume_attack_zoom",
-                lambda: plot_alert_group_volume_attack_zoom(tx_df),
+                "groups_volume_attack_zoom",
+                lambda: plot_alert_group_volume_attack_zoom(groups_df, **zoom_params),
             ),
         ]
 
@@ -704,14 +751,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     p.add_argument(
-        "--tx-balanced",
+        "--groups-balanced",
         default=None,
         metavar="METHOD",
         help=(
             "Load alert_groups balanced in alert_group space from "
             "artifacts/alert_groups/balanced/<METHOD>/. "
             "Alert plots use raw alert data. "
-            "Example: --tx-balanced naive50 --plots-only"
+            "Example: --groups-balanced naive50 --plots-only"
         ),
     )
     p.add_argument(
@@ -770,18 +817,18 @@ def main(argv: list[str] | None = None) -> None:
 
     run_ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     balanced_method = args.balanced
-    tx_balanced_method = args.tx_balanced
-    if tx_balanced_method is not None:
-        data_tag = f"balanced_tx_{tx_balanced_method}"
+    groups_balanced_method = args.groups_balanced
+    if groups_balanced_method is not None:
+        data_tag = f"balanced_groups_{groups_balanced_method}"
     elif balanced_method is not None:
         data_tag = f"balanced_alerts_{balanced_method}"
     else:
         data_tag = "raw"
-    run_dir = EXPERIMENTS_DIR / f"run_{run_ts}_{data_tag}"
+    run_dir = EXPERIMENTS_DIR / args.dataset / f"run_{run_ts}_{data_tag}"
     summary_path = run_dir / "summary"
 
     print(f"Loading alerts for: {', '.join(scenarios)}")
-    if balanced_method is not None and tx_balanced_method is None:
+    if balanced_method is not None and groups_balanced_method is None:
         print(
             f"  Source: artifacts/alerts/balanced/{balanced_method}/<scenario>_alerts.csv"
         )
@@ -803,9 +850,9 @@ def main(argv: list[str] | None = None) -> None:
             frames.append(df)
         all_df = pd.concat(frames, ignore_index=True)
     else:
-        if tx_balanced_method is not None:
+        if groups_balanced_method is not None:
             print(
-                "  Source: raw alerts (alert_groups will be loaded from balanced tx dir)"
+                "  Source: raw alerts (alert_groups will be loaded from balanced groups dir)"
             )
         all_df = load_alerts(str(data_dir), scenarios=scenarios, dataset=args.dataset)
     print(f"  {len(all_df):,} alerts loaded.\n")
@@ -820,17 +867,24 @@ def main(argv: list[str] | None = None) -> None:
                 run_dir / scenario,
                 summary_path,
                 balanced=balanced_method,
-                groups_balanced=tx_balanced_method,
+                groups_balanced=groups_balanced_method,
+                skip_grouping=args.dataset != "ait-ads",
             )
 
         print("\nComputing dataset overview table...")
         save_overview_table(
-            all_df, run_dir, balanced=balanced_method, tx_balanced=tx_balanced_method
+            all_df,
+            run_dir,
+            balanced=balanced_method,
+            groups_balanced=groups_balanced_method,
         )
 
         print("\nComputing label distribution table...")
         save_label_distribution_table(
-            all_df, run_dir, balanced=balanced_method, tx_balanced=tx_balanced_method
+            all_df,
+            run_dir,
+            balanced=balanced_method,
+            groups_balanced=groups_balanced_method,
         )
 
     # Phase 2: overview plots
@@ -840,10 +894,11 @@ def main(argv: list[str] | None = None) -> None:
             all_df,
             run_dir,
             balanced_method,
-            tx_balanced=tx_balanced_method,
+            groups_balanced=groups_balanced_method,
             bin_hours=args.bin_hours,
             fmt=args.fmt,
             top_k=args.top_k,
+            dataset=args.dataset,
         )
 
     print(f"\nAll output saved to: {run_dir.resolve()}")

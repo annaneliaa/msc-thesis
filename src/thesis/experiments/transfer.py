@@ -26,12 +26,14 @@ from pathlib import Path
 from thesis.experiments.baseline import (
     _EXPERIMENTS_DIR,
     _ROOT,
-    _convert_alerts_to_json,
-    _ensure_feature_manifest,
-    _load_alert_groups,
-    _process_alert_batch,
     BaselineExperimentConfig,
     run_baseline_experiment,
+)
+from thesis.pipeline.pipeline import (
+    convert_ait_alerts_to_json,
+    ensure_feature_manifest,
+    ingest_ait_alert_batch,
+    load_or_build_alert_groups,
 )
 from thesis.features.schema_registry import FeatureSchemaRegistry
 from thesis.inference.service import (
@@ -146,7 +148,7 @@ def run_transfer_experiment(
 
     # 1. Ensure train schema exists
     print("[1/8] Checking train scenario feature manifest...")
-    _ensure_feature_manifest(config.train_scenario)
+    ensure_feature_manifest(config.train_scenario)
 
     # 2. Ensure model is trained
     print("[2/8] Checking trained model...")
@@ -154,11 +156,11 @@ def run_transfer_experiment(
 
     # 3. Convert test alerts CSV → JSON
     print("[3/8] Converting test alerts to JSON...")
-    alerts_path = _convert_alerts_to_json(config.test_scenario)
+    alerts_path = convert_ait_alerts_to_json(config.test_scenario)
 
     # 4. Tokenise + ingest test alerts into cache
     print("[4/8] Processing test alert batch...")
-    _process_alert_batch(
+    ingest_ait_alert_batch(
         config.test_scenario,
         alerts_path,
         config.cache_dir,
@@ -168,7 +170,7 @@ def run_transfer_experiment(
 
     # 5. Build test alert_groups
     print("[5/8] Building test alert_groups from cache...")
-    alert_groups = _load_alert_groups(config.test_scenario, config.cache_dir)
+    alert_groups = load_or_build_alert_groups(config.test_scenario, config.cache_dir)
 
     # 6. Load model and train schema
     print("[6/8] Loading model and train schema...")

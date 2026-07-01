@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -7,7 +8,9 @@ from typing import TYPE_CHECKING
 import pandas as pd
 
 from thesis.config import GroupingConfig
+from thesis.paths import FEATURE_DIR, ROOT
 from thesis.schemas.groups import AlertGroup, GroupSnapshot
+from thesis.schemas.mining import FeatureSelectionConfig
 from thesis.schemas.preprocessing import (
     IncomingAlert,
     IncomingSuricataGroup,
@@ -22,6 +25,7 @@ from thesis.grouping.group_alerts import (
     ALERTBERT_METHOD,
     FIXED_WINDOW_METHOD,
     FIXED_WINDOW_HOST_METHOD,
+    SURICATA_GROUPED_METHOD,
     group_alerts,
 )
 
@@ -106,6 +110,182 @@ def process_suricata_group_batch(
 
     ingestor.ingest_suricata_group_batch(entries)
     return len(entries)
+
+
+# ---------------------------------------------------------------------------
+# AIT-ADS ingestion (alert-by-alert stream, fixed_window/time_delta grouping)
+# ---------------------------------------------------------------------------
+
+
+def ensure_feature_manifest(scenario: str, root_dir: Path | None = None) -> None:
+    """Initialise the feature schema manifest for a scenario if it's missing."""
+    from thesis.features.manifest import initialize_feature_manifest
+
+    root_dir = root_dir or FEATURE_DIR
+    manifest_path = root_dir / scenario / "manifest.json"
+    if manifest_path.exists():
+        print(f"  [skip] Feature manifest already exists at {manifest_path}")
+        return
+    print(f"  Feature manifest not found for '{scenario}', initialising...")
+    initialize_feature_manifest(scenario_name=scenario, root_dir=root_dir)
+    print(f"  Created feature manifest at {manifest_path}")
+
+
+def convert_ait_alerts_to_json(
+    scenario: str, alerts_json_path: Path | None = None
+) -> Path:
+    """
+    Convert data/alerts_csv/<scenario>_alerts.txt into the canonical
+    alerts.json format IncomingAlert.from_row() expects. Cached: returns the
+    existing output path if alerts.json is already there.
+    """
+    if alerts_json_path is not None:
+        if not alerts_json_path.exists():
+            raise FileNotFoundError(f"Filtered alerts not found: {alerts_json_path}")
+        print(f"  [filtered] Using {alerts_json_path}")
+        return alerts_json_path
+
+    input_path = ROOT / "data" / "alerts_csv" / f"{scenario}_alerts.txt"
+    output_dir = ROOT / "artifacts" / "processed-data" / scenario
+    output_path = output_dir / "alerts.json"
+
+    if output_path.exists():
+        print(f"  [skip] alerts.json already exists at {output_path}")
+        return output_path
+
+    if not input_path.exists():
+        raise FileNotFoundError(
+            f"Raw alerts file not found: {input_path}\n"
+            "Place the alerts CSV in data/alerts_csv/ before running."
+        )
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    alerts: list[dict] = []
+    with input_path.open("r", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            alerts.append(
+                {
+                    "time": int(row["time"]),
+                    "signature": row["name"],
+                    "ip": row["ip"],
+                    "host": row["host"],
+                    "short": row["short"],
+                    "label": row["time_label"],
+                    "event_label": row["event_label"],
+                }
+            )
+
+    with output_path.open("w", encoding="utf-8") as f:
+        json.dump(alerts, f, indent=2)
+
+    print(f"  Wrote {len(alerts)} alerts → {output_path}")
+    return output_path
+
+
+def ingest_ait_alert_batch(
+    scenario: str,
+    alerts_path: Path,
+    cache_dir: Path,
+    grouping_mode: str = FIXED_WINDOW_METHOD,
+    grouping: GroupingConfig | None = None,
+) -> None:
+    """Tokenise alerts.json and ingest alerts + groups into the TokenCache at cache_dir."""
+    alert_store_dir = cache_dir / "alerts"
+    if alert_store_dir.exists() and any(alert_store_dir.glob("*.json")):
+        print(f"  [skip] Alert cache already populated at {alert_store_dir}")
+        return
+
+    with alerts_path.open("r", encoding="utf-8") as f:
+        payload = json.load(f)
+
+    grouper = build_grouper(grouping) if grouping is not None else None
+    cache = TokenCache(cache_dir=cache_dir)
+    count = ingest_to_cache(
+        scenario=scenario,
+        rows=payload,
+        cache=cache,
+        grouping_mode=grouping_mode,
+        grouper=grouper,
+        window_size=grouping.window_size if grouping is not None else 2,
+    )
+    print(f"  Processed {count} alerts into cache.")
+
+
+# ---------------------------------------------------------------------------
+# CSCAS ingestion (pre-grouped Suricata rows)
+# ---------------------------------------------------------------------------
+
+
+def ingest_cscas_scenario(
+    csv_path: Path | None = None,
+    cache_dir: Path | None = None,
+) -> Path:
+    """
+    Parse data/cscas/dataset-labeled-anon-ip.csv into alert_groups_raw.json,
+    the same artifact load_or_build_alert_groups() produces for AIT scenarios,
+    so downstream scripts (e.g. run_mining_window_sweep.py) can consume it via
+    --grouping-method suricata_grouped.
+
+    CSCAS rows are already closed, pre-aggregated groups (one signature x
+    external-IP cluster per row), unlike AIT's alert-by-alert stream. There is
+    no incremental grouping step, so this skips TokenCache/GroupCacheEntry
+    storage entirely — writing ~1.4M individual per-group cache files would be
+    impractically slow — and builds AlertGroup objects directly in memory.
+    """
+    scenario = "cscas"
+    csv_path = csv_path or (ROOT / "data" / "cscas" / "dataset-labeled-anon-ip.csv")
+    cache_dir = cache_dir or (
+        ROOT / "artifacts" / "cache" / scenario / "groups" / SURICATA_GROUPED_METHOD
+    )
+    out_path = cache_dir / "alert_groups" / "alert_groups_raw.json"
+
+    if out_path.exists():
+        print(f"  [skip] alert_groups already exist at {out_path}")
+        return out_path
+
+    if not csv_path.exists():
+        raise FileNotFoundError(f"CSCAS CSV not found: {csv_path}")
+
+    print(f"[1/2] Reading CSCAS CSV from {csv_path}...")
+    rows = pd.read_csv(csv_path).to_dict("records")
+    print(f"  {len(rows)} rows loaded.")
+
+    print("[2/2] Parsing rows into alert_groups...")
+    alert_groups: list[AlertGroup] = []
+    n_skipped = 0
+    for row in rows:
+        try:
+            suricata_row = IncomingSuricataGroup.from_row(row)
+            parsed = parse_suricata_group_row(suricata_row)
+        except Exception:
+            n_skipped += 1
+            continue
+
+        alert_groups.append(
+            AlertGroup(
+                alert_group_id=parsed.group_id,
+                group_id=parsed.group_id,
+                method=SURICATA_GROUPED_METHOD,
+                start_ts=parsed.ts,
+                end_ts=parsed.ts,
+                n_alerts=parsed.n_alerts,
+                abs_items=set(parsed.tokens),
+                raw_items=set(parsed.tokens),
+                sorted_items=[],
+                alert_ips={parsed.ext_ip},
+                group_label=parsed.label,
+                alert_labels=None,
+                weight=1.0,
+            )
+        )
+
+    if n_skipped:
+        print(f"  [warn] Skipped {n_skipped} rows due to parsing errors.")
+
+    alert_groups.sort(key=lambda g: g.start_ts)
+    save_alert_groups_json(alert_groups, out_path)
+    print(f"  Saved {len(alert_groups)} alert_groups → {out_path}")
+    return out_path
 
 
 # ---------------------------------------------------------------------------
@@ -231,6 +411,31 @@ def save_alert_groups_json(alert_groups: list[AlertGroup], out_path: Path) -> No
         json.dump([alert_group_to_dict(t) for t in alert_groups], f, indent=2)
 
 
+def load_or_build_alert_groups(scenario: str, cache_dir: Path) -> list[AlertGroup]:
+    """
+    Load alert_groups_raw.json if it already exists under cache_dir, otherwise
+    query the TokenCache at cache_dir for closed groups and build+save it.
+    """
+    out_path = cache_dir / "alert_groups" / "alert_groups_raw.json"
+
+    if out_path.exists():
+        with out_path.open("r", encoding="utf-8") as f:
+            serialized = json.load(f)
+        if serialized:
+            print(f"  [skip] Loading alert_groups from existing {out_path}")
+            alert_groups = [alert_group_from_dict(t) for t in serialized]
+            print(f"  Loaded {len(alert_groups)} alert_groups from cache.")
+            return alert_groups
+        print(f"  [warn] {out_path} is empty, rebuilding alert_groups...")
+
+    cache = TokenCache(cache_dir=cache_dir)
+    alert_groups = select_alert_groups(cache=cache, require_closed=True)
+
+    save_alert_groups_json(alert_groups, out_path)
+    print(f"  Built {len(alert_groups)} alert_groups → {out_path}")
+    return alert_groups
+
+
 def build_encoded_alert_groups_df(
     alert_groups: list[AlertGroup],
     schema,
@@ -276,6 +481,77 @@ def save_encoded_df(
     df.to_parquet(parquet_path, index=False)
     df.to_csv(csv_path, index=False)
     return parquet_path, csv_path
+
+
+def encode_and_cache_alert_groups(
+    scenario: str,
+    alert_groups: list[AlertGroup],
+    schema_name: str,
+    cache_dir: Path,
+    feature_selection: FeatureSelectionConfig | None = None,
+) -> tuple[pd.DataFrame, object]:
+    """
+    Load the registered feature schema for scenario, encode alert_groups under
+    it, and cache the result as parquet under cache_dir. Returns the cached
+    parquet if it already exists and no feature_selection override is given.
+    """
+    from thesis.encoders.service import encode_alert_groups_for_schema
+    from thesis.features.schema_registry import FeatureSchemaRegistry
+    from thesis.features.util import select_symbolic_features
+
+    safe_name = schema_name.replace("+", "_").replace("/", "_")
+    tx_dir = cache_dir / "alert_groups"
+    out_path = tx_dir / f"alert_groups_{safe_name}.parquet"
+
+    registry = FeatureSchemaRegistry(root_dir=FEATURE_DIR)
+    schema = registry.load(
+        scenario_name=scenario,
+        schema_name=schema_name,
+        schema_version=None,
+    )
+
+    if out_path.exists() and feature_selection is None:
+        print(f"  [skip] Loading encoded alert_groups from existing {out_path}")
+        df = pd.read_parquet(out_path)
+        print(f"  Loaded {len(df)} alert_groups from parquet.")
+        return df, schema
+
+    if feature_selection is not None and (
+        feature_selection.top_k is not None
+        or feature_selection.min_utility_score is not None
+        or feature_selection.filter_cross_host_or
+    ):
+        before = len(schema.symbolic.features) if schema.symbolic else 0
+        schema = select_symbolic_features(schema, feature_selection)
+        after = len(schema.symbolic.features) if schema.symbolic else 0
+        print(f"  Feature selection: {before} → {after} symbolic features")
+
+    print("Loaded schema. Encoding alert_group data under schema...")
+    feature_df = encode_alert_groups_for_schema(
+        alert_groups=alert_groups,
+        schema=schema,
+        top_k=None,
+    )
+    meta_df = pd.DataFrame(
+        [
+            {
+                "alert_group_id": t.alert_group_id,
+                "group_label": t.group_label,
+                "n_alerts": t.n_alerts,
+                "weight": t.weight,
+            }
+            for t in alert_groups
+        ]
+    )
+    df = pd.concat(
+        [meta_df.reset_index(drop=True), feature_df.reset_index(drop=True)],
+        axis=1,
+    )
+
+    tx_dir.mkdir(parents=True, exist_ok=True)
+    df.to_parquet(out_path, index=False)
+    print(f"  Encoded {len(df)} alert_groups under schema '{schema_name}' → {out_path}")
+    return df, schema
 
 
 def alert_group_from_dict(d: dict) -> AlertGroup:

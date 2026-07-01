@@ -5,12 +5,15 @@ Usage:
     python -m thesis.experiments.runner <experiment> <scenario> [scenario2 ...]
 
 Experiments:
-    baseline   Preprocess → encode (base features) → train → evaluate
-    symbolic   Preprocess → mine → build symbolic schema → encode → train → evaluate
-    compare    Run both baseline and symbolic for the same scenario and save
-               a side-by-side result to artifacts/experiments/<scenario>/
-    transfer   Train on scenario X, test on scenario Y (cross-scenario generalisation)
-               Pass exactly two scenario names: <train> <test>
+    baseline     Preprocess → encode (base features) → train → evaluate
+    symbolic     Preprocess → mine → build symbolic schema → encode → train → evaluate
+    compare      Run both baseline and symbolic for the same scenario and save
+                 a side-by-side result to artifacts/experiments/<scenario>/
+    transfer     Train on scenario X, test on scenario Y (cross-scenario generalisation)
+                 Pass exactly two scenario names: <train> <test>
+    ingest-cscas Ingestion-only: parse data/cscas/dataset-labeled-anon-ip.csv into
+                 alert_groups_raw.json (no encode/train). Scenario name is ignored
+                 (always "cscas"); pass any placeholder to satisfy the CLI shape.
 
 Examples:
     python -m thesis.experiments.runner baseline fox
@@ -21,6 +24,7 @@ Examples:
     python -m thesis.experiments.runner compare fox --filter-config src/thesis/configs/mining_filters_strict.yaml
     python -m thesis.experiments.runner transfer fox bear
     python -m thesis.experiments.runner transfer fox bear --filter-config src/thesis/configs/mining_filters_strict.yaml
+    python -m thesis.experiments.runner ingest-cscas cscas
 """
 
 from __future__ import annotations
@@ -35,6 +39,7 @@ from thesis.experiments.baseline import (
     _EXPERIMENTS_DIR,
     run_baseline_experiment,
 )
+from thesis.pipeline.pipeline import ingest_cscas_scenario
 from thesis.experiments.symbolic import (
     SymbolicExperimentConfig,
     run_symbolic_experiment,
@@ -175,7 +180,7 @@ def main() -> None:
     )
     parser.add_argument(
         "experiment",
-        choices=["baseline", "symbolic", "compare", "transfer"],
+        choices=["baseline", "symbolic", "compare", "transfer", "ingest-cscas"],
         help="Which experiment to run.",
     )
     parser.add_argument(
@@ -220,6 +225,10 @@ def main() -> None:
                 filter_config=args.filter_config,
             )
             break  # scenarios loop doesn't apply for transfer
+        elif args.experiment == "ingest-cscas":
+            out_path = ingest_cscas_scenario()
+            print(f"\n[cscas] ingest-only done — alert_groups → {out_path}")
+            break  # scenario is fixed to "cscas"; loop doesn't apply
 
 
 if __name__ == "__main__":

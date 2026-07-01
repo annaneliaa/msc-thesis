@@ -65,11 +65,13 @@ from thesis.experiments.baseline import (
     ALERTBERT_METHOD,
     _EXPERIMENTS_DIR,
     _ROOT,
-    _convert_alerts_to_json,
-    _encode_alert_groups,
-    _ensure_feature_manifest,
-    _load_alert_groups,
-    _process_alert_batch,
+)
+from thesis.pipeline.pipeline import (
+    convert_ait_alerts_to_json,
+    encode_and_cache_alert_groups,
+    ensure_feature_manifest,
+    ingest_ait_alert_batch,
+    load_or_build_alert_groups,
 )
 from thesis.pipeline.pipeline import is_single_class_split as _is_single_class_split
 from thesis.features.service import build_persist_and_register_symbolic_schema
@@ -523,11 +525,11 @@ def run_symbolic_experiment(
 
     # 1. Convert alerts CSV → JSON
     print("[1/8] Converting alerts to JSON...")
-    alerts_path = _convert_alerts_to_json(config.scenario, config.alerts_json_path)
+    alerts_path = convert_ait_alerts_to_json(config.scenario, config.alerts_json_path)
 
     # 2. Tokenise + ingest into cache
     print("[2/8] Processing alert batch...")
-    _process_alert_batch(
+    ingest_ait_alert_batch(
         config.scenario,
         alerts_path,
         config.cache_dir,
@@ -537,11 +539,11 @@ def run_symbolic_experiment(
 
     # 3. Ensure feature manifest
     print("[3/8] Checking feature manifest...")
-    _ensure_feature_manifest(config.scenario)
+    ensure_feature_manifest(config.scenario)
 
     # 4. Build alert_groups from closed groups
     print("[4/8] Building alert_groups from cache...")
-    alert_groups = _load_alert_groups(config.scenario, config.cache_dir)
+    alert_groups = load_or_build_alert_groups(config.scenario, config.cache_dir)
     alert_groups_path = config.cache_dir / "alert_groups" / "alert_groups_raw.json"
 
     # Sort chronologically so that positional train/test split = temporal split.
@@ -711,7 +713,7 @@ def run_symbolic_experiment(
 
     # 6. Encode under base+symbolic schema
     print(f"[6/8] Encoding alert_groups (schema='{config.schema_name}')...")
-    df, schema = _encode_alert_groups(
+    df, schema = encode_and_cache_alert_groups(
         config.scenario,
         alert_groups,
         config.schema_name,
