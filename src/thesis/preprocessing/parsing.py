@@ -55,7 +55,7 @@ def make_alert_id(
         [
             str(scenario),
             str(ts),
-            "" if alert.name is None else str(alert.name),
+            "" if alert.signature is None else str(alert.signature),
             "" if alert.ip is None else str(alert.ip),
             "" if alert.host is None else str(alert.host),
             "" if alert.short is None else str(alert.short),
@@ -117,11 +117,11 @@ def parse_incoming_alert(
     raw = (
         {
             "time": alert.time,
-            "name": alert.name,
+            "signature": alert.signature,
             "ip": alert.ip,
             "host": alert.host,
             "short": alert.short,
-            "time_label": alert.time_label,
+            "label": alert.label,
             "event_label": alert.event_label,
         }
         if keep_raw
@@ -132,11 +132,11 @@ def parse_incoming_alert(
         alert_id=alert_id,
         ts=ts,
         time_norm=time_norm,
-        name=normalize_missing_value(alert.name),
+        signature=normalize_missing_value(alert.signature),
         ip=normalize_missing_value(alert.ip),
         host=normalize_missing_value(alert.host),
         short=normalize_missing_value(alert.short),
-        time_label=normalize_missing_value(alert.time_label),
+        label=normalize_missing_value(alert.label),
         event_label=normalize_missing_value(alert.event_label),
         raw=raw,
     )

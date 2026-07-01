@@ -84,7 +84,7 @@ def load_scenario(scenario: str, filtered: bool = False) -> pd.DataFrame:
     df = df.dropna(subset=["time"]).copy()
     df["time"] = df["time"].astype("int64")
     df["timestamp"] = pd.to_datetime(df["time"], unit="s", utc=True)
-    df["is_attack"] = df["time_label"].ne(BENIGN_LABEL) & df["time_label"].notna()
+    df["is_attack"] = df["label"].ne(BENIGN_LABEL) & df["label"].notna()
     df = df.sort_values("time").reset_index(drop=True)
     return df
 
@@ -139,7 +139,7 @@ def summarise_host(host_df: pd.DataFrame, host: str, delta: float) -> dict:
     times = host_df["time"].values
 
     short_counts = host_df["short"].value_counts()
-    label_counts = host_df["time_label"].value_counts()
+    label_counts = host_df["label"].value_counts()
     n_attack = host_df["is_attack"].sum()
     n_benign = len(host_df) - n_attack
 

@@ -30,12 +30,16 @@ from thesis.config import GroupingConfig
 from thesis.paths import ensure_artifact_dirs
 from thesis.schemas.mining import FeatureSelectionConfig
 from thesis.caching.cache import TokenCache
-from thesis.caching.ingestor import CacheIngestor
-from thesis.caching.selector import select_group_snapshots
 from thesis.grouping.group_alerts import ALERTBERT_METHOD, FIXED_WINDOW_METHOD
-from thesis.schemas.groups import AlertGroup
 from thesis.schemas.experiments import BaselineExperimentConfig, ExperimentResult
-from thesis.pipeline.pipeline import build_grouper, process_alert_batch
+from thesis.pipeline.pipeline import (
+    alert_group_from_dict,
+    build_grouper,
+    ingest_to_cache,
+    is_single_class_split,
+    save_alert_groups_json,
+    select_alert_groups,
+)
 from thesis.registry.models import get_model_path, resolve_model_paths
 from thesis.training.service import train_model_for_schema
 
@@ -91,11 +95,11 @@ def _convert_alerts_to_json(
             alerts.append(
                 {
                     "time": int(row["time"]),
-                    "name": row["name"],
+                    "signature": row["name"],
                     "ip": row["ip"],
                     "host": row["host"],
                     "short": row["short"],
-                    "time_label": row["time_label"],
+                    "label": row["time_label"],
                     "event_label": row["event_label"],
                 }
             )
@@ -124,11 +128,10 @@ def _process_alert_batch(
 
     grouper = build_grouper(grouping) if grouping is not None else None
     cache = TokenCache(cache_dir=cache_dir)
-    ingestor = CacheIngestor(cache=cache)
-    count = process_alert_batch(
-        rows=payload,
+    count = ingest_to_cache(
         scenario=scenario,
-        ingestor=ingestor,
+        rows=payload,
+        cache=cache,
         grouping_mode=grouping_mode,
         grouper=grouper,
         window_size=grouping.window_size if grouping is not None else 2,
@@ -148,101 +151,17 @@ def _load_alert_groups(
             serialized = json.load(f)
         if serialized:
             print(f"  [skip] Loading alert_groups from existing {out_path}")
-            alert_groups = [
-                AlertGroup(
-                    alert_group_id=t["alert_group_id"],
-                    group_id=t["group_id"],
-                    method=t["method"],
-                    start_ts=t["start_ts"],
-                    end_ts=t["end_ts"],
-                    n_alerts=t["n_alerts"],
-                    alert_ids=t["alert_ids"],
-                    abs_items=set(t["abs_items"]),
-                    raw_items=set(t["raw_items"])
-                    if t["raw_items"] is not None
-                    else None,
-                    sorted_items=[set(s) for s in t["sorted_items"]],
-                    alert_ips=set(t["alert_ips"]),
-                    group_label=t["group_label"],
-                    alert_labels=set(t["alert_labels"])
-                    if t["alert_labels"] is not None
-                    else None,
-                    weight=t["weight"],
-                )
-                for t in serialized
-            ]
+            alert_groups = [alert_group_from_dict(t) for t in serialized]
             print(f"  Loaded {len(alert_groups)} alert_groups from cache.")
             return alert_groups
         print(f"  [warn] {out_path} is empty, rebuilding alert_groups...")
 
     cache = TokenCache(cache_dir=cache_dir)
-    snapshots = select_group_snapshots(
-        cache=cache,
-        allowed_methods=None,
-        limit=None,
-        min_start_ts=None,
-        max_end_ts=None,
-        require_closed=True,
-    )
-    alert_groups = [s.to_alert_group() for s in snapshots]
+    alert_groups = select_alert_groups(cache=cache, require_closed=True)
 
-    out_dir.mkdir(parents=True, exist_ok=True)
-    serialized = [
-        {
-            "alert_group_id": t.alert_group_id,
-            "group_id": t.group_id,
-            "method": t.method,
-            "start_ts": t.start_ts,
-            "end_ts": t.end_ts,
-            "n_alerts": t.n_alerts,
-            "alert_ids": t.alert_ids,
-            "abs_items": sorted(list(t.abs_items)),
-            "raw_items": sorted(list(t.raw_items)) if t.raw_items is not None else None,
-            "sorted_items": [sorted(s) for s in t.sorted_items],
-            "alert_ips": sorted(list(t.alert_ips)),
-            "group_label": t.group_label,
-            "alert_labels": (
-                sorted(list(t.alert_labels)) if t.alert_labels is not None else None
-            ),
-            "weight": t.weight,
-        }
-        for t in alert_groups
-    ]
-    with out_path.open("w", encoding="utf-8") as f:
-        json.dump(serialized, f, indent=2)
-
+    save_alert_groups_json(alert_groups, out_path)
     print(f"  Built {len(alert_groups)} alert_groups → {out_path}")
     return alert_groups
-
-
-def _is_single_class_split(
-    alert_groups: list,
-    test_frac: float = 0.3,
-    train_start: int = 0,
-    random_split: bool = False,
-    random_seed: int = 42,
-) -> bool:
-    """Return True if the train or test split contains only one class.
-
-    Mirrors the positional split in make_holdout_split after mixed-label rows
-    are dropped, so this can short-circuit before encoding/mining/training.
-    """
-    import random as _random
-
-    label_map = {"benign": 0, "attack": 1}
-    labels = [
-        label_map[t.group_label] for t in alert_groups if t.group_label in label_map
-    ]
-    n = len(labels)
-    if n == 0:
-        return True
-    if random_split:
-        rng = _random.Random(random_seed)
-        rng.shuffle(labels)
-    split = int((1 - test_frac) * n)
-    if split <= 0 or split >= n:
-        return True
-    return len(set(labels[train_start:split])) < 2 or len(set(labels[split:])) < 2
 
 
 def _encode_alert_groups(
@@ -363,7 +282,7 @@ def run_baseline_experiment(
             stale.unlink()
             print(f"  Removed stale parquet for random-split encoding: {stale.name}")
 
-    if _is_single_class_split(
+    if is_single_class_split(
         alert_groups,
         config.test_frac,
         random_split=config.random_split,

@@ -9,16 +9,11 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpecFromSubplotSpec
 
-SCENARIOS = [
-    "fox",
-    "harrison",
-    "russellmitchell",
-    "santos",
-    "shaw",
-    "wardbeck",
-    "wheeler",
-    "wilson",
-]
+from thesis.configs import load_scenarios
+
+# Backward-compat alias for scripts that import SCENARIOS from this module.
+# Always the ait-ads list; use load_scenarios() for other datasets.
+SCENARIOS = load_scenarios("ait-ads")
 BENIGN_LABEL = "false_positive"
 ATTACK_TYPES = [
     "dirb",
@@ -33,7 +28,6 @@ ATTACK_TYPES = [
     "service_stop",
 ]
 
-# Paul Tol muted palette — colorblind-safe
 _C_BENIGN = "#4477AA"
 _C_ATTACK = "#CC3311"
 _SCENARIO_COLORS = [
@@ -77,27 +71,63 @@ def _step_xy(edges: np.ndarray, values: np.ndarray):
 # ─── data loading ─────────────────────────────────────────────────────────────
 
 
-def load_alerts(data_dir: str, scenarios: list[str] | None = None) -> pd.DataFrame:
-    """
-    Load all scenario alert CSVs.
+def _ordered_scenarios(df: pd.DataFrame) -> list[str]:
+    """Return scenarios present in df, preserving canonical ait-ads order where possible."""
+    actual = set(df["scenario"].unique())
+    ordered = [s for s in SCENARIOS if s in actual]
+    return ordered if ordered else sorted(actual)
 
-    Returns a DataFrame with extra columns:
-      scenario, is_attack, timestamp (UTC pd.Timestamp)
+
+def load_alerts(
+    data_dir: str,
+    scenarios: list[str] | None = None,
+    dataset: str = "ait-ads",
+) -> pd.DataFrame:
+    """
+    Load alert CSVs for the given dataset.
+
+    Returns a DataFrame with common columns:
+      scenario, is_attack, timestamp (UTC pd.Timestamp), time (unix int),
+      signature (alert text), ip, label
     """
     if scenarios is None:
-        scenarios = SCENARIOS
+        scenarios = load_scenarios(dataset)
 
     frames = []
-    for sc in scenarios:
-        path = os.path.join(data_dir, f"{sc}_alerts.txt")
-        if not os.path.exists(path):
-            raise FileNotFoundError(f"Alert CSV not found: {path}")
-        df = pd.read_csv(path, dtype=str)
-        df["time"] = pd.to_numeric(df["time"], errors="coerce")
-        df["timestamp"] = pd.to_datetime(df["time"], unit="s", utc=True)
-        df["scenario"] = sc
-        df["is_attack"] = df["time_label"].ne(BENIGN_LABEL) & df["time_label"].notna()
-        frames.append(df)
+
+    if dataset == "ait-ads":
+        for sc in scenarios:
+            path = os.path.join(data_dir, f"{sc}_alerts.txt")
+            if not os.path.exists(path):
+                raise FileNotFoundError(f"Alert CSV not found: {path}")
+            df = pd.read_csv(path, dtype=str)
+            df["time"] = pd.to_numeric(df["time"], errors="coerce")
+            df["timestamp"] = pd.to_datetime(df["time"], unit="s", utc=True)
+            df["scenario"] = sc
+            df["label"] = df["time_label"]
+            df["signature"] = df["name"]
+            df["is_attack"] = df["label"].ne(BENIGN_LABEL) & df["label"].notna()
+            frames.append(df)
+
+    elif dataset == "cscas":
+        for sc in scenarios:
+            path = os.path.join(data_dir, "dataset-labeled-anon-ip.csv")
+            if not os.path.exists(path):
+                raise FileNotFoundError(f"CSCAS CSV not found: {path}")
+            df = pd.read_csv(path)
+            df["timestamp"] = pd.to_datetime(df["Timestamp"], utc=True, errors="coerce")
+            df["time"] = (df["timestamp"].astype("int64") // 10**9).astype(int)
+            df["scenario"] = sc
+            df["is_attack"] = df["Label"] == 1
+            df["label"] = df["Label"].map({0: BENIGN_LABEL, 1: "attack"})
+            df["signature"] = df["SignatureText"]
+            df["ip"] = df["ExtIP"]
+            frames.append(df)
+
+    else:
+        raise ValueError(
+            f"Unknown dataset '{dataset}'. Valid choices: {load_scenarios.__module__}"
+        )
 
     return pd.concat(frames, ignore_index=True)
 
@@ -128,7 +158,7 @@ def plot_alert_volume_concatenated(
     ncols     : number of subplot columns (default 4 → 2 × 4 for 8 scenarios)
     out_path  : if set, saves the figure there (PNG/PDF)
     """
-    scenarios = [s for s in SCENARIOS if s in df["scenario"].unique()]
+    scenarios = _ordered_scenarios(df)
     nrows = (len(scenarios) + ncols - 1) // ncols
 
     fig, axes = plt.subplots(nrows, ncols, figsize=figsize, sharey=False)
@@ -247,7 +277,7 @@ def plot_attack_phase_zoom(
     bin_hours        : histogram bin width (default 0.25 h = 15 min)
     out_path         : optional save path
     """
-    scenarios = [s for s in SCENARIOS if s in df["scenario"].unique()]
+    scenarios = _ordered_scenarios(df)
 
     # 1. Compute zoom windows per scenario
     scenario_info: list[tuple] = []
@@ -395,7 +425,7 @@ def plot_class_balance(
     Left panel: absolute counts (log scale).
     Right panel: percentage breakdown (shows class imbalance clearly).
     """
-    scenarios = [s for s in SCENARIOS if s in df["scenario"].unique()]
+    scenarios = _ordered_scenarios(df)
 
     rows = []
     for sc in scenarios:
@@ -475,17 +505,32 @@ def plot_attack_type_heatmap(
     Rows = attack types, columns = scenarios.
     Cell colour encodes log10(count + 1) so rare types are visible.
     """
-    scenarios = [s for s in SCENARIOS if s in df["scenario"].unique()]
+    scenarios = _ordered_scenarios(df)
 
     counts = pd.DataFrame(index=ATTACK_TYPES, columns=scenarios, dtype=float).fillna(0)
     for sc in scenarios:
         sc_df = df[(df["scenario"] == sc) & df["is_attack"]]
-        vc = sc_df["time_label"].value_counts()
+        vc = sc_df["label"].value_counts()
         for at in ATTACK_TYPES:
             counts.loc[at, sc] = vc.get(at, 0)
 
     # drop attack types absent in all scenarios
     counts = counts.loc[counts.sum(axis=1) > 0]
+
+    if counts.empty:
+        fig, ax = plt.subplots(figsize=figsize)
+        ax.text(
+            0.5,
+            0.5,
+            "No named attack types in this dataset",
+            ha="center",
+            va="center",
+            transform=ax.transAxes,
+            fontsize=12,
+        )
+        ax.axis("off")
+        _save(fig, out_path)
+        return fig, ax
 
     log_counts = np.log10(counts.astype(float) + 1)
 
@@ -532,13 +577,13 @@ def plot_top_alert_names(
 
     Useful for showing which IDS rules fire most often in the dataset.
     """
-    vc = df["name"].value_counts().head(top_k)
+    vc = df["signature"].value_counts().head(top_k)
     names = vc.index.tolist()
 
     # determine majority label for each name
     colors = []
     for name in names:
-        sub = df[df["name"] == name]
+        sub = df[df["signature"] == name]
         pct_attack = sub["is_attack"].mean()
         colors.append(_C_ATTACK if pct_attack >= 0.5 else _C_BENIGN)
 
@@ -576,7 +621,7 @@ def plot_inter_arrival_time_cdf(
     The vertical dashed line marks 2 seconds — the fixed grouping window used
     in this work — to show what fraction of alert pairs are captured by it.
     """
-    scenarios = [s for s in SCENARIOS if s in df["scenario"].unique()]
+    scenarios = _ordered_scenarios(df)
 
     fig, ax = plt.subplots(figsize=figsize)
 
@@ -616,7 +661,7 @@ def plot_group_size_distribution(
     (ts // window_seconds) per scenario, then plots the count distribution.
     Gives the reader an intuition for how many alerts end up in one alert_group.
     """
-    scenarios = [s for s in SCENARIOS if s in df["scenario"].unique()]
+    scenarios = _ordered_scenarios(df)
 
     all_sizes: list[int] = []
     for sc in scenarios:
@@ -692,7 +737,7 @@ def plot_alert_group_volume_concatenated(
     windows rather than individual alerts. Benign alert_groups are blue,
     attack + mixed alert_groups are red. Y-axis is log scale.
     """
-    scenarios = [s for s in SCENARIOS if s in tx_df["scenario"].unique()]
+    scenarios = _ordered_scenarios(tx_df)
     nrows = (len(scenarios) + ncols - 1) // ncols
 
     fig, axes = plt.subplots(nrows, ncols, figsize=figsize, sharey=False)
@@ -772,7 +817,7 @@ def plot_alert_group_volume_attack_zoom(
     Mirrors plot_attack_phase_zoom but operates on alert_group windows rather
     than individual alerts.
     """
-    scenarios = [s for s in SCENARIOS if s in tx_df["scenario"].unique()]
+    scenarios = _ordered_scenarios(tx_df)
 
     scenario_info: list[tuple] = []
     for sc in scenarios:
@@ -921,7 +966,7 @@ def plot_scenario_overview(
     When tx_df is provided, four alert_group columns are appended:
     Tx Total, Tx Benign, Tx Attack (+mixed), Tx Att %.
     """
-    scenarios = [s for s in SCENARIOS if s in df["scenario"].unique()]
+    scenarios = _ordered_scenarios(df)
     has_tx = tx_df is not None
 
     rows = []
@@ -933,8 +978,8 @@ def plot_scenario_overview(
         t_start = pd.to_datetime(sc_df["time"].min(), unit="s", utc=True)
         t_end = pd.to_datetime(sc_df["time"].max(), unit="s", utc=True)
         duration_days = (sc_df["time"].max() - sc_df["time"].min()) / 86400
-        n_sig = sc_df["name"].nunique()
-        n_attack_types = sc_df.loc[sc_df["is_attack"], "time_label"].nunique()
+        n_sig = sc_df["signature"].nunique()
+        n_attack_types = sc_df.loc[sc_df["is_attack"], "label"].nunique()
         row = [
             sc,
             t_start.strftime("%Y-%m-%d"),

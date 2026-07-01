@@ -33,14 +33,19 @@ def build_labeled_window_alert_groups(
     time_col: str = "time",
     detector_col: str = "short",
     host_col: str = "host",
-    label_col: str = "time_label",
-    signature_col: str = "name",
+    label_col: str = "label",
+    signature_col: str = "signature",
     benign_label: str = "false_positive",
     window_size_s: int = 2,
 ) -> pd.DataFrame:
     out = df.copy()
 
-    needed = [time_col, detector_col, host_col, label_col]
+    # Only require columns that are actually present; detector/host are optional.
+    needed = [time_col, label_col]
+    if detector_col in out.columns:
+        needed.append(detector_col)
+    if host_col in out.columns:
+        needed.append(host_col)
     out = out.dropna(subset=needed).copy()
     out[time_col] = pd.to_numeric(out[time_col], errors="coerce")
     out = out.dropna(subset=[time_col]).copy()
@@ -54,9 +59,17 @@ def build_labeled_window_alert_groups(
     out["window_start"] = (out[time_col] // window_size_s) * window_size_s
     out["window_end"] = out["window_start"] + window_size_s
 
-    out["detector_item"] = out[detector_col].astype(str)
-    out["host_item"] = out[host_col].astype(str)
-    out["detector_subtokens"] = out[detector_col].apply(extract_short_tokens)
+    if detector_col in out.columns:
+        out["detector_item"] = out[detector_col].astype(str)
+        out["detector_subtokens"] = out[detector_col].apply(extract_short_tokens)
+    else:
+        out["detector_item"] = ""
+        out["detector_subtokens"] = [set() for _ in range(len(out))]
+
+    if host_col in out.columns:
+        out["host_item"] = out[host_col].astype(str)
+    else:
+        out["host_item"] = ""
 
     if signature_col in out.columns:
         out["signature_tokens"] = out[signature_col].apply(extract_signature_tokens)

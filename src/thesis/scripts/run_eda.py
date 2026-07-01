@@ -1,5 +1,5 @@
 """
-Exploratory Data Analysis for one or more alert scenarios.
+Exploratory Data Analysis for dataset.
 
 Combines two phases in one script:
   Phase 1 (analysis): per-scenario alert_group stats, pair frequencies, CSVs,
@@ -58,8 +58,8 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from thesis.configs import load_scenarios, all_datasets
 from thesis.visualization.eda import (
-    SCENARIOS,
     load_alerts,
     load_alert_groups,
     plot_alert_volume_concatenated,
@@ -83,8 +83,12 @@ matplotlib.use("Agg")
 _HERE = Path(__file__).resolve()
 _REPO = next(p for p in _HERE.parents if (p / "pyproject.toml").exists())
 EXPERIMENTS_DIR = _REPO / "artifacts" / "experiments" / "run_eda"
-DATA_DIR = _REPO / "data" / "alerts_csv"
 ALERT_GROUPS_BASE_DIR = _REPO / "artifacts" / "alert_groups"
+
+_DATA_DIRS = {
+    "ait-ads": _REPO / "data" / "alerts_csv",
+    "cscas": _REPO / "data" / "cscas",
+}
 
 
 def count_pair_frequency(df: pd.DataFrame, items_col: str = "items") -> pd.DataFrame:
@@ -99,13 +103,13 @@ def count_pair_frequency(df: pd.DataFrame, items_col: str = "items") -> pd.DataF
 
 
 def all_pair_metrics(
-    tx: pd.DataFrame,
+    groups: pd.DataFrame,
     items_col: str = "items",
     label_col: str = "group_label",
     min_total_count: int = 1,
 ) -> pd.DataFrame:
-    attack_df = tx[tx[label_col] == "attack"]
-    benign_df = tx[tx[label_col] == "benign"]
+    attack_df = groups[groups[label_col] == "attack"]
+    benign_df = groups[groups[label_col] == "benign"]
 
     attack_pairs = count_pair_frequency(attack_df, items_col).rename(
         columns={"pair_count": "attack_count"}
@@ -165,7 +169,7 @@ def run_scenario(
     out_path: Path,
     summary_path: Path,
     balanced: str | None = None,
-    tx_balanced: str | None = None,
+    groups_balanced: str | None = None,
 ) -> None:
     os.makedirs(out_path, exist_ok=True)
     os.makedirs(summary_path, exist_ok=True)
@@ -182,34 +186,36 @@ def run_scenario(
         f.write("Missing Values:\n")
         f.write(df.isnull().sum().to_string() + "\n\n")
 
-        if "time_label" in df.columns:
+        if "label" in df.columns:
             f.write("Time label Distribution:\n")
-            f.write(df["time_label"].value_counts().to_string() + "\n\n")
+            f.write(df["label"].value_counts().to_string() + "\n\n")
 
         if "time" in df.columns:
             f.write(f"Min timestamp: {df['time'].min()}\n")
             f.write(f"Max timestamp: {df['time'].max()}\n\n")
 
         alert_groups = build_labeled_window_alert_groups(df, window_size_s=2)
-        tx_cache_dir = _tx_dir(balanced, tx_balanced)
-        tx_cache_dir.mkdir(parents=True, exist_ok=True)
-        alert_groups.to_csv(tx_cache_dir / f"{scenario}_alert_groups.csv", index=False)
+        group_cache_dir = _tx_dir(balanced, groups_balanced)
+        group_cache_dir.mkdir(parents=True, exist_ok=True)
+        alert_groups.to_csv(
+            group_cache_dir / f"{scenario}_alert_groups.csv", index=False
+        )
 
-        benign_tx = alert_groups[alert_groups["group_label"] == "benign"].copy()
-        attack_tx = alert_groups[alert_groups["group_label"] == "attack"].copy()
+        benign_groups = alert_groups[alert_groups["group_label"] == "benign"].copy()
+        attack_groups = alert_groups[alert_groups["group_label"] == "attack"].copy()
 
         f.write("AlertGroup label distribution:\n")
         f.write(alert_groups["group_label"].value_counts().to_string() + "\n\n")
 
-        tx = alert_groups.copy()
-        tx["tx_size"] = tx["items"].apply(len)
+        groups = alert_groups.copy()
+        groups["group_size"] = groups["items"].apply(len)
 
-        size_summary = tx.groupby("group_label")["tx_size"].describe()
+        size_summary = groups.groupby("group_label")["group_size"].describe()
         size_counts = (
-            tx.groupby(["group_label", "tx_size"])
+            groups.groupby(["group_label", "group_size"])
             .size()
             .reset_index(name="count")
-            .sort_values(["group_label", "tx_size"])
+            .sort_values(["group_label", "group_size"])
         )
 
         f.write("AlertGroup Size Summary:\n")
@@ -219,7 +225,7 @@ def run_scenario(
 
         plt.figure(figsize=(10, 6))
         for label, color in [("benign", "blue"), ("attack", "red")]:
-            subset = tx.loc[tx["group_label"] == label, "tx_size"]
+            subset = groups.loc[groups["group_label"] == label, "group_size"]
             plt.hist(subset, bins=20, alpha=0.7, color=color, label=label)
         plt.title(f"Distribution of alert_group size (scenario={scenario})")
         plt.xlabel("Number of items in alert_group")
@@ -229,7 +235,7 @@ def run_scenario(
         plt.gcf().text(
             0.99,
             0.01,
-            _data_label(balanced, tx_balanced),
+            _data_label(balanced, groups_balanced),
             ha="right",
             va="bottom",
             fontsize=7,
@@ -239,15 +245,15 @@ def run_scenario(
         plt.savefig(out_path / f"{scenario}_alert_group_size_distribution.png")
         plt.close()
 
-        pair_freq_all = count_pair_frequency(tx)
+        pair_freq_all = count_pair_frequency(groups)
         f.write("Top 20 most common item pairs across all alert_groups:\n")
         f.write(pair_freq_all.head(20).to_string(index=False) + "\n\n")
 
-        pair_freq_benign = count_pair_frequency(benign_tx)
+        pair_freq_benign = count_pair_frequency(benign_groups)
         f.write("Top 20 most common item pairs in BENIGN alert_groups:\n")
         f.write(pair_freq_benign.head(20).to_string(index=False) + "\n\n")
 
-        pair_freq_attack = count_pair_frequency(attack_tx)
+        pair_freq_attack = count_pair_frequency(attack_groups)
         f.write("Top 20 most common item pairs in ATTACK alert_groups:\n")
         f.write(pair_freq_attack.head(20).to_string(index=False) + "\n\n")
 
@@ -270,7 +276,7 @@ def run_scenario(
         )
         f.write(intersection.head(20).to_string(index=False) + "\n\n")
 
-        pair_metrics_df = all_pair_metrics(tx)
+        pair_metrics_df = all_pair_metrics(groups)
         f.write("Top 20 item pairs by attack count + attack support:\n")
         f.write(pair_metrics_df.head(20).to_string(index=False) + "\n\n")
 
@@ -288,7 +294,7 @@ def run_scenario(
         plt.gcf().text(
             0.99,
             0.01,
-            _data_label(balanced, tx_balanced),
+            _data_label(balanced, groups_balanced),
             ha="right",
             va="bottom",
             fontsize=7,
@@ -300,8 +306,8 @@ def run_scenario(
 
         pair_tfidf = compute_pair_tfidf_by_class(
             pair_df=pair_metrics_df[["pair", "attack_count", "benign_count"]].copy(),
-            n_attack_windows=len(attack_tx),
-            n_benign_windows=len(benign_tx),
+            n_attack_windows=len(attack_groups),
+            n_benign_windows=len(benign_groups),
         )
         f.write("Top 20 item pairs by attack TF-IDF score:\n")
         f.write(
@@ -318,7 +324,7 @@ def run_scenario(
             + "\n\n"
         )
 
-        sig_counts = compute_uniq_signature_counts(df, sig_col="name")
+        sig_counts = compute_uniq_signature_counts(df, sig_col="signature")
         f.write(f"Unique signature counts in data: {len(sig_counts)}\n")
         f.write("Top 30 most common signatures:\n")
         f.write(sig_counts.head(30).to_string(index=False) + "\n\n")
@@ -332,7 +338,7 @@ def save_overview_table(
     balanced: str | None = None,
     tx_balanced: str | None = None,
 ) -> None:
-    scenarios = [s for s in SCENARIOS if s in all_df["scenario"].unique()]
+    scenarios = sorted(all_df["scenario"].unique())
 
     rows = []
     for sc in scenarios:
@@ -343,8 +349,8 @@ def save_overview_table(
         t_start = pd.to_datetime(sc_df["time"].min(), unit="s", utc=True)
         t_end = pd.to_datetime(sc_df["time"].max(), unit="s", utc=True)
         duration_days = (sc_df["time"].max() - sc_df["time"].min()) / 86400
-        n_sig = sc_df["name"].nunique()
-        n_attack_types = sc_df.loc[sc_df["is_attack"], "time_label"].nunique()
+        n_sig = sc_df["signature"].nunique()
+        n_attack_types = sc_df.loc[sc_df["is_attack"], "label"].nunique()
         rows.append(
             {
                 "scenario": sc,
@@ -445,7 +451,7 @@ def save_label_distribution_table(
     Plot a table showing per-scenario breakdown of each time_label:
     count, % of total data, and % of attacks (attack rows only).
     """
-    scenarios = [s for s in SCENARIOS if s in all_df["scenario"].unique()]
+    scenarios = sorted(all_df["scenario"].unique())
 
     col_labels = ["Scenario", "Label", "Count", "% of data", "% of attacks"]
     cell_text = []
@@ -457,7 +463,7 @@ def save_label_distribution_table(
     for i, sc in enumerate(scenarios):
         sc_df = all_df[all_df["scenario"] == sc]
         n_total = len(sc_df)
-        label_counts = sc_df["time_label"].value_counts()
+        label_counts = sc_df["label"].value_counts()
         n_attacks = int(label_counts[label_counts.index != "false_positive"].sum())
         fp_count = int(label_counts.get("false_positive", 0))
 
@@ -671,13 +677,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "scenarios",
         nargs="*",
         metavar="SCENARIO",
-        help=f"Scenario names to analyse. Choices: {', '.join(SCENARIOS)}",
+        help="Scenario names to analyse (must belong to the selected --dataset).",
+    )
+    p.add_argument(
+        "--dataset",
+        default="ait-ads",
+        choices=all_datasets(),
+        metavar="DATASET",
+        help="Dataset to run EDA on (default: ait-ads). Determines valid scenarios and data paths.",
     )
     p.add_argument(
         "--all",
         dest="all_scenarios",
         action="store_true",
-        help="Run EDA for all scenarios.",
+        help="Run EDA for all scenarios in the selected --dataset.",
     )
     p.add_argument(
         "--balanced",
@@ -737,15 +750,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
 
+    valid_scenarios = load_scenarios(args.dataset)
+    data_dir = _DATA_DIRS[args.dataset]
+
     if args.all_scenarios:
-        scenarios = SCENARIOS
+        scenarios = valid_scenarios
     elif args.scenarios:
-        unknown = [s for s in args.scenarios if s not in SCENARIOS]
+        unknown = [s for s in args.scenarios if s not in valid_scenarios]
         if unknown:
-            print(f"Unknown scenario(s): {', '.join(unknown)}")
-            print(f"Valid choices: {', '.join(SCENARIOS)}")
+            print(
+                f"Unknown scenario(s) for dataset '{args.dataset}': {', '.join(unknown)}"
+            )
+            print(f"Valid choices: {', '.join(valid_scenarios)}")
             sys.exit(1)
-        scenarios = [s for s in SCENARIOS if s in args.scenarios]
+        scenarios = [s for s in valid_scenarios if s in args.scenarios]
     else:
         print("Specify scenario names or --all.  Use -h for help.")
         sys.exit(1)
@@ -781,9 +799,7 @@ def main(argv: list[str] | None = None) -> None:
             df["time"] = pd.to_numeric(df["time"], errors="coerce")
             df["timestamp"] = pd.to_datetime(df["time"], unit="s", utc=True)
             df["scenario"] = sc
-            df["is_attack"] = (
-                df["time_label"].ne("false_positive") & df["time_label"].notna()
-            )
+            df["is_attack"] = df["label"].ne("false_positive") & df["label"].notna()
             frames.append(df)
         all_df = pd.concat(frames, ignore_index=True)
     else:
@@ -791,7 +807,7 @@ def main(argv: list[str] | None = None) -> None:
             print(
                 "  Source: raw alerts (alert_groups will be loaded from balanced tx dir)"
             )
-        all_df = load_alerts(str(DATA_DIR), scenarios=scenarios)
+        all_df = load_alerts(str(data_dir), scenarios=scenarios, dataset=args.dataset)
     print(f"  {len(all_df):,} alerts loaded.\n")
 
     # Phase 1: per-scenario analysis
@@ -804,7 +820,7 @@ def main(argv: list[str] | None = None) -> None:
                 run_dir / scenario,
                 summary_path,
                 balanced=balanced_method,
-                tx_balanced=tx_balanced_method,
+                groups_balanced=tx_balanced_method,
             )
 
         print("\nComputing dataset overview table...")

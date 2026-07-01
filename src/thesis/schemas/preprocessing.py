@@ -12,11 +12,11 @@ class IncomingAlert:
     """
 
     time: Any
-    name: str | None
+    signature: str | None
     ip: str | None
     host: str | None
     short: str | None
-    time_label: str | None
+    label: str | None
     event_label: str | None
 
     @classmethod
@@ -26,11 +26,11 @@ class IncomingAlert:
         """
         required = [
             "time",
-            "name",
+            "signature",
             "ip",
             "host",
             "short",
-            # "time_label",
+            # "label",
             # "event_label",
         ]
         missing = [c for c in required if c not in row]
@@ -42,11 +42,11 @@ class IncomingAlert:
 
         return cls(
             time=row["time"],
-            name=row.get("name"),
+            signature=row.get("signature"),
             ip=row.get("ip"),
             host=row.get("host"),
             short=row.get("short"),
-            time_label=row.get("time_label"),
+            label=row.get("label"),
             event_label=row.get("event_label"),
         )
 
@@ -64,11 +64,11 @@ class ParsedAlert:
     ts: float
     time_norm: pd.Timestamp
 
-    name: str | None = None
+    signature: str | None = None
     ip: str | None = None
     host: str | None = None
     short: str | None = None
-    time_label: str | None = None
+    label: str | None = None
     event_label: str | None = None
 
     raw: dict[str, Any] = field(default_factory=dict)
@@ -78,11 +78,11 @@ class ParsedAlert:
             "alert_id": self.alert_id,
             "ts": self.ts,
             "time_norm": self.time_norm,
-            "name": self.name,
+            "signature": self.signature,
             "ip": self.ip,
             "host": self.host,
             "short": self.short,
-            "time_label": self.time_label,
+            "label": self.label,
             "event_label": self.event_label,
             "raw": self.raw,
         }
@@ -98,14 +98,14 @@ class TokenizedAlert:
     ts: int
     time_norm: Any
 
-    name: str | None
+    signature: str | None
     ip: str | None
     host: str | None
     short: str | None
 
     tokens: set[str] = field(default_factory=set)
 
-    time_label: str | None = None
+    label: str | None = None
     event_label: str | None = None
 
     raw: dict[str, Any] = field(default_factory=dict)

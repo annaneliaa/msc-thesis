@@ -35,7 +35,7 @@ class CacheIngestor:
             host=alert.host,
             short=alert.short,
             event_label=alert.event_label,
-            time_label=alert.time_label,
+            label=alert.label,
         )
 
     def ingest_alert(self, alert: TokenizedAlert) -> None:
@@ -120,10 +120,10 @@ class CacheIngestor:
             group.last_update_ts = max(group.last_update_ts, alert.ts)
 
             # labels
-            if alert.time_label is not None:
+            if alert.label is not None:
                 if group.alert_labels is None:
                     group.alert_labels = set()
-                group.alert_labels.add(str(alert.time_label))
+                group.alert_labels.add(str(alert.label))
 
                 group.group_label = label_window_from_alert_labels(
                     group.alert_labels,

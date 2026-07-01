@@ -10,11 +10,11 @@ from thesis.schemas.preprocessing import IncomingAlert, ParsedAlert
 def test_parse_alert_row_returns_parsed_alert_with_expected_values():
     alert = IncomingAlert(
         time=1642213952,
-        name="Wazuh: ClamAV database update",
+        signature="Wazuh: ClamAV database update",
         ip="172.17.131.81",
         host="mail",
         short="W-Sys-Cav",
-        time_label="false_positive",
+        label="false_positive",
         event_label="-",
     )
 
@@ -28,18 +28,18 @@ def test_parse_alert_row_returns_parsed_alert_with_expected_values():
 
     assert parsed.ts == 1642213952
 
-    assert parsed.name == "Wazuh: ClamAV database update"
+    assert parsed.signature == "Wazuh: ClamAV database update"
     assert parsed.ip == "172.17.131.81"
     assert parsed.host == "mail"
     assert parsed.short == "W-Sys-Cav"
 
     assert parsed.raw == {
         "time": 1642213952,
-        "name": "Wazuh: ClamAV database update",
+        "signature": "Wazuh: ClamAV database update",
         "ip": "172.17.131.81",
         "host": "mail",
         "short": "W-Sys-Cav",
-        "time_label": "false_positive",
+        "label": "false_positive",
         "event_label": "-",
     }
 
@@ -50,17 +50,17 @@ def test_parse_alert_row_returns_parsed_alert_with_expected_values():
 def test_parse_alert_row_normalizes_missing_values():
     alert = IncomingAlert(
         time=1642213952,
-        name="",
+        signature="",
         ip=None,
         host="mail",
         short="W-Sys-Cav",
-        time_label="false_positive",
+        label="false_positive",
         event_label="-",
     )
 
     parsed = parse_incoming_alert(alert=alert, scenario="fox")
 
-    assert parsed.name is None
+    assert parsed.signature is None
     assert parsed.ip is None
     assert parsed.host == "mail"
     assert parsed.short == "W-Sys-Cav"
@@ -69,11 +69,11 @@ def test_parse_alert_row_normalizes_missing_values():
 def test_parse_alert_row_raises_on_invalid_timestamp():
     alert = IncomingAlert(
         time="not_a_timestamp",
-        name="Wazuh: ClamAV database update",
+        signature="Wazuh: ClamAV database update",
         ip="172.17.131.81",
         host="mail",
         short="W-Sys-Cav",
-        time_label="false_positive",
+        label="false_positive",
         event_label="-",
     )
 
@@ -84,11 +84,11 @@ def test_parse_alert_row_raises_on_invalid_timestamp():
 def test_incoming_alert_missing_time_raises_type_error():
     with pytest.raises(TypeError):
         IncomingAlert(
-            name="Wazuh: ClamAV database update",
+            signature="Wazuh: ClamAV database update",
             ip="172.17.131.81",
             host="mail",
             short="W-Sys-Cav",
-            time_label="false_positive",
+            label="false_positive",
             event_label="-",
         )
 
@@ -126,29 +126,29 @@ def test_normalize_missing_value_passes_through_normal_value():
 def test_from_row_creates_incoming_alert_from_dict():
     row = {
         "time": 1642213952,
-        "name": "Wazuh: ClamAV database update",
+        "signature": "Wazuh: ClamAV database update",
         "ip": "172.17.131.81",
         "host": "mail",
         "short": "W-Sys-Cav",
-        "time_label": "false_positive",
+        "label": "false_positive",
         "event_label": "-",
     }
 
     alert = IncomingAlert.from_row(row)
 
     assert alert.time == 1642213952
-    assert alert.name == "Wazuh: ClamAV database update"
+    assert alert.signature == "Wazuh: ClamAV database update"
     assert alert.ip == "172.17.131.81"
     assert alert.host == "mail"
     assert alert.short == "W-Sys-Cav"
-    assert alert.time_label == "false_positive"
+    assert alert.label == "false_positive"
     assert alert.event_label == "-"
 
 
 def test_from_row_allows_missing_optional_label_fields():
     row = {
         "time": 1642213952,
-        "name": "Wazuh: ClamAV database update",
+        "signature": "Wazuh: ClamAV database update",
         "ip": "172.17.131.81",
         "host": "mail",
         "short": "W-Sys-Cav",
@@ -156,13 +156,13 @@ def test_from_row_allows_missing_optional_label_fields():
 
     alert = IncomingAlert.from_row(row)
 
-    assert alert.time_label is None
+    assert alert.label is None
     assert alert.event_label is None
 
 
 def test_from_row_raises_on_missing_required_field():
     row = {
-        "name": "Wazuh: ClamAV database update",
+        "signature": "Wazuh: ClamAV database update",
         "ip": "172.17.131.81",
         "host": "mail",
         "short": "W-Sys-Cav",

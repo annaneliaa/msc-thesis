@@ -120,11 +120,11 @@ def _load_tok_cache(path: Path) -> list[TokenizedAlert]:
             alert_id=r["alert_id"],
             ts=r["ts"],
             time_norm=None,
-            name=r.get("name"),
+            signature=r.get("signature"),
             ip=r.get("ip"),
             host=r.get("host"),
             short=r.get("short"),
-            time_label=r.get("time_label"),
+            label=r.get("label"),
             event_label=r.get("event_label"),
             tokens=set(r.get("tokens", [])),
         )
@@ -138,11 +138,11 @@ def _save_tok_cache(path: Path, alerts: list[TokenizedAlert]) -> None:
         {
             "alert_id": a.alert_id,
             "ts": a.ts,
-            "name": a.name,
+            "signature": a.signature,
             "ip": a.ip,
             "host": a.host,
             "short": a.short,
-            "time_label": a.time_label,
+            "label": a.label,
             "event_label": a.event_label,
             "tokens": sorted(a.tokens),
         }
@@ -234,8 +234,8 @@ def build_snapshots_in_memory(
         g["items"] |= set(alert.tokens)
         if alert.ip:
             g["alert_ips"].add(alert.ip)
-        if alert.time_label is not None:
-            g["alert_labels"].add(str(alert.time_label))
+        if alert.label is not None:
+            g["alert_labels"].add(str(alert.label))
         g["start_ts"] = min(g["start_ts"], alert.ts)
         g["end_ts"] = max(g["end_ts"], alert.ts)
 

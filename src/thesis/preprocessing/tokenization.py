@@ -134,8 +134,8 @@ def build_feature_tokens(alert: ParsedAlert) -> set[str]:
         tokens.add(f"short:{alert.short}")
     if alert.host:
         tokens.add(f"host:{alert.host}")
-    if alert.name:
-        tokens |= tokenize_name_to_signature_substrings(alert.name)
+    if alert.signature:
+        tokens |= tokenize_name_to_signature_substrings(alert.signature)
     # if alert.ip:
     #     tokens.add(f"ip:{alert.ip}")
 
@@ -152,11 +152,11 @@ def tokenize_alert(alert: ParsedAlert) -> TokenizedAlert:
         alert_id=alert.alert_id,
         ts=alert.ts,
         time_norm=alert.time_norm,
-        name=alert.name,
+        signature=alert.signature,
         ip=alert.ip,
         host=alert.host,
         short=alert.short,
-        time_label=alert.time_label,
+        label=alert.label,
         event_label=alert.event_label,
         tokens=tokens,
         raw=alert.raw.copy() if alert.raw else {},

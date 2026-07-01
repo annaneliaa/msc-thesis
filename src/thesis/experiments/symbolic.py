@@ -68,10 +68,10 @@ from thesis.experiments.baseline import (
     _convert_alerts_to_json,
     _encode_alert_groups,
     _ensure_feature_manifest,
-    _is_single_class_split,
     _load_alert_groups,
     _process_alert_batch,
 )
+from thesis.pipeline.pipeline import is_single_class_split as _is_single_class_split
 from thesis.features.service import build_persist_and_register_symbolic_schema
 from thesis.mining.itemset_mining_job import run_alert_group_eclat_job
 from thesis.mining.sequence_mining_job import run_alert_group_prefixspan_job

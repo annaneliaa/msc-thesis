@@ -12,7 +12,7 @@ from thesis.schemas.preprocessing import ParsedAlert, TokenizedAlert
 
 def make_parsed_alert(
     *,
-    name: str | None = "Wazuh: ClamAV database update",
+    signature: str | None = "Wazuh: ClamAV database update",
     ip: str | None = "172.17.131.81",
     host: str | None = "mail",
     short: str | None = "W-Sys-Cav",
@@ -21,17 +21,17 @@ def make_parsed_alert(
         alert_id="abc123",
         ts=1642213952,
         time_norm=pd.Timestamp("2022-01-15 09:12:32+00:00"),
-        name=name,
+        signature=signature,
         ip=ip,
         host=host,
         short=short,
         raw={
             "time": 1642213952,
-            "name": name,
+            "signature": signature,
             "ip": ip,
             "host": host,
             "short": short,
-            "time_label": "false_positive",
+            "label": "false_positive",
             "event_label": "-",
         },
     )
@@ -74,7 +74,7 @@ def test_build_feature_tokens():
 
 
 def test_build_feature_tokens_omits_missing_fields():
-    alert = make_parsed_alert(name=None, host="mail", short=None)
+    alert = make_parsed_alert(signature=None, host="mail", short=None)
 
     tokens = build_feature_tokens(alert)
 
@@ -91,7 +91,7 @@ def test_tokenize_alert_returns_tokenized_alert_with_expected_values():
     assert tokenized.alert_id == alert.alert_id
     assert tokenized.ts == alert.ts
     assert tokenized.time_norm == alert.time_norm
-    assert tokenized.name == alert.name
+    assert tokenized.signature == alert.signature
     assert tokenized.ip == alert.ip
     assert tokenized.host == alert.host
     assert tokenized.short == alert.short

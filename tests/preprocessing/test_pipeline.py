@@ -3,8 +3,8 @@ import json
 from typer.testing import CliRunner
 
 from thesis.cli import app
-from thesis.preprocessing.cache import TokenCache
-from thesis.preprocessing.group_selector import select_group_snapshots
+from thesis.caching.cache import TokenCache
+from thesis.caching.selector import select_group_snapshots
 
 runner = CliRunner()
 SCENARIO = "fox"
@@ -25,20 +25,20 @@ def test_preprocess_alert_batch_cli_runs_full_pipeline(tmp_path, monkeypatch):
     alerts_payload = [
         {
             "time": 1642213952,
-            "name": "Wazuh: ClamAV database update",
+            "signature": "Wazuh: ClamAV database update",
             "ip": "172.17.131.81",
             "host": "mail",
             "short": "W-Sys-Cav",
-            "time_label": "false_positive",
+            "label": "false_positive",
             "event_label": "-",
         },
         {
             "time": 1642213953,
-            "name": "Suricata: TLS invalid handshake",
+            "signature": "Suricata: TLS invalid handshake",
             "ip": "172.17.131.90",
             "host": "web",
             "short": "A-Network-Tls",
-            "time_label": "true_positive",
+            "label": "true_positive",
             "event_label": "attack_1",
         },
     ]
@@ -62,7 +62,7 @@ def test_preprocess_alert_batch_cli_runs_full_pipeline(tmp_path, monkeypatch):
     assert result.exit_code == 0, result.stdout
     assert "Processed 2 alerts." in result.stdout
 
-    cache = TokenCache(cache_dir=cache_dir, scenario=SCENARIO)
+    cache = TokenCache(cache_dir=cache_dir / SCENARIO)
 
     alert_files = list((cache_dir / SCENARIO / "alerts").glob("*.json"))
     group_files = list((cache_dir / SCENARIO / "groups").glob("*.json"))
@@ -105,11 +105,11 @@ def test_duplicate_alert_ingestion_does_not_duplicate_group_entries(
 ):
     alert_payload = {
         "time": 1642213952,
-        "name": "Wazuh: ClamAV database update",
+        "signature": "Wazuh: ClamAV database update",
         "ip": "172.17.131.81",
         "host": "mail",
         "short": "W-Sys-Cav",
-        "time_label": "false_positive",
+        "label": "false_positive",
         "event_label": "-",
     }
 
@@ -134,7 +134,7 @@ def test_duplicate_alert_ingestion_does_not_duplicate_group_entries(
     assert result.exit_code == 0, result.stdout
     assert "Processed 2 alerts." in result.stdout
 
-    cache = TokenCache(cache_dir=cache_dir, scenario=SCENARIO)
+    cache = TokenCache(cache_dir=cache_dir / SCENARIO)
 
     alert_files = list((cache_dir / SCENARIO / "alerts").glob("*.json"))
     group_files = list((cache_dir / SCENARIO / "groups").glob("*.json"))
@@ -168,11 +168,11 @@ def test_empty_alerts_are_not_added_to_cache(tmp_path, monkeypatch):
     alerts_payload = [
         {
             "time": None,
-            "name": None,
+            "signature": None,
             "ip": None,
             "host": None,
             "short": None,
-            "time_label": None,
+            "label": None,
             "event_label": None,
         }
     ]
@@ -209,20 +209,20 @@ def test_alerts_json_to_group_snapshot_selection_full_pipeline(tmp_path, monkeyp
     alerts_payload = [
         {
             "time": 1642213952,
-            "name": "Wazuh: ClamAV database update",
+            "signature": "Wazuh: ClamAV database update",
             "ip": "172.17.131.81",
             "host": "mail",
             "short": "W-Sys-Cav",
-            "time_label": "false_positive",
+            "label": "false_positive",
             "event_label": "-",
         },
         {
             "time": 1642213953,
-            "name": "Suricata: TLS invalid handshake",
+            "signature": "Suricata: TLS invalid handshake",
             "ip": "172.17.131.90",
             "host": "web",
             "short": "A-Network-Tls",
-            "time_label": "true_positive",
+            "label": "true_positive",
             "event_label": "attack_1",
         },
     ]
@@ -246,7 +246,7 @@ def test_alerts_json_to_group_snapshot_selection_full_pipeline(tmp_path, monkeyp
     assert preprocess_result.exit_code == 0, preprocess_result.stdout
     assert "Processed 2 alerts." in preprocess_result.stdout
 
-    cache = TokenCache(cache_dir=cache_dir, scenario=SCENARIO)
+    cache = TokenCache(cache_dir=cache_dir / SCENARIO)
     snapshots = select_group_snapshots(cache=cache, require_closed=True)
 
     assert len(snapshots) >= 1

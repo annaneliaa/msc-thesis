@@ -10,12 +10,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from thesis.preprocessing.grouping.alertbert_grouper import (
+from thesis.grouping.alertbert_grouper import (
     ALERTBERT_METHOD,
     _TokenizedAlertDataset,
     AlertBERTGrouper,
 )
-from thesis.preprocessing.group_alerts import (
+from thesis.grouping.group_alerts import (
     ALERTBERT_METHOD as DISPATCH_ALERTBERT_METHOD,
     FIXED_WINDOW_METHOD,
     group_alerts,
@@ -35,7 +35,7 @@ def make_alert(
         alert_id=alert_id,
         ts=ts,
         time_norm=None,
-        name=None,
+        signature=None,
         ip=None,
         host=host,
         short=short,
@@ -105,7 +105,7 @@ class TestTokenizedAlertDataset:
             alert_id="x",
             ts=0,
             time_norm=None,
-            name=None,
+            signature=None,
             ip=None,
             host=None,
             short=None,

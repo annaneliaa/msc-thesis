@@ -6,8 +6,8 @@ import pandas as pd
 
 
 def naive50(df: pd.DataFrame, seed: int = 42) -> tuple[pd.DataFrame, dict]:
-    attack = df[df["time_label"] != "false_positive"]
-    benign = df[df["time_label"] == "false_positive"]
+    attack = df[df["label"] != "false_positive"]
+    benign = df[df["label"] == "false_positive"]
     n_attack, n_benign = len(attack), len(benign)
     minority_n = min(n_attack, n_benign)
 
@@ -39,9 +39,9 @@ def type_stratified(df: pd.DataFrame, seed: int = 42) -> tuple[pd.DataFrame, dic
     Prevents a single dominant attack type from overwhelming the rest while
     keeping the full benign set intact.
     """
-    attack = df[df["time_label"] != "false_positive"]
-    benign = df[df["time_label"] == "false_positive"]
-    type_counts = attack["time_label"].value_counts()
+    attack = df[df["label"] != "false_positive"]
+    benign = df[df["label"] == "false_positive"]
+    type_counts = attack["label"].value_counts()
 
     if len(type_counts) < 2:
         attack_sampled = attack
@@ -49,7 +49,7 @@ def type_stratified(df: pd.DataFrame, seed: int = 42) -> tuple[pd.DataFrame, dic
     else:
         target = int(type_counts.iloc[1])
         parts = []
-        for _, group in attack.groupby("time_label"):
+        for _, group in attack.groupby("label"):
             parts.append(
                 group.sample(n=target, random_state=seed)
                 if len(group) > target

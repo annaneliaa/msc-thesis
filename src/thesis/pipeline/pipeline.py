@@ -278,6 +278,78 @@ def save_encoded_df(
     return parquet_path, csv_path
 
 
+def alert_group_from_dict(d: dict) -> AlertGroup:
+    """Deserialize an AlertGroup from the dict format produced by alert_group_to_dict."""
+    return AlertGroup(
+        alert_group_id=d["alert_group_id"],
+        group_id=d["group_id"],
+        method=d["method"],
+        start_ts=d["start_ts"],
+        end_ts=d["end_ts"],
+        n_alerts=d["n_alerts"],
+        alert_ids=d.get("alert_ids"),
+        abs_items=set(d["abs_items"]),
+        raw_items=set(d["raw_items"]) if d.get("raw_items") is not None else None,
+        sorted_items=[set(s) for s in d.get("sorted_items", [])],
+        alert_ips=set(d.get("alert_ips", [])),
+        group_label=d.get("group_label"),
+        alert_labels=set(d["alert_labels"])
+        if d.get("alert_labels") is not None
+        else None,
+        weight=d.get("weight", 1.0),
+    )
+
+
+def load_alert_groups_json(path: Path) -> list[AlertGroup]:
+    with path.open("r", encoding="utf-8") as f:
+        return [alert_group_from_dict(d) for d in json.load(f)]
+
+
+def ingest_to_cache(
+    scenario: str,
+    rows: list[dict],
+    cache: TokenCache,
+    grouping_mode: str = FIXED_WINDOW_METHOD,
+    grouper: "AlertBERTGrouper | None" = None,
+    window_size: int = 2,
+) -> int:
+    """Wrap process_alert_batch with CacheIngestor construction."""
+    ingestor = CacheIngestor(cache=cache)
+    return process_alert_batch(
+        rows=rows,
+        scenario=scenario,
+        ingestor=ingestor,
+        grouping_mode=grouping_mode,
+        grouper=grouper,
+        window_size=window_size,
+    )
+
+
+def is_single_class_split(
+    alert_groups: list[AlertGroup],
+    test_frac: float = 0.3,
+    train_start: int = 0,
+    random_split: bool = False,
+    random_seed: int = 42,
+) -> bool:
+    """Return True if the train or test split would contain only one class."""
+    import random as _random
+
+    label_map = {"benign": 0, "attack": 1}
+    labels = [
+        label_map[t.group_label] for t in alert_groups if t.group_label in label_map
+    ]
+    n = len(labels)
+    if n == 0:
+        return True
+    if random_split:
+        _random.Random(random_seed).shuffle(labels)
+    split = int((1 - test_frac) * n)
+    if split <= 0 or split >= n:
+        return True
+    return len(set(labels[train_start:split])) < 2 or len(set(labels[split:])) < 2
+
+
 def combine_mining_results(
     eclat_mined_df: pd.DataFrame,
     item_seq_mined_df: pd.DataFrame,

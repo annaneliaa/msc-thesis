@@ -420,7 +420,7 @@ def _log_threshold_sweep(
     """
     all_detectors = scores_df.sort_values("s_det", ascending=False)
     n_alerts_total = len(alerts_df)
-    label_totals = alerts_df["time_label"].value_counts().sort_index()
+    label_totals = alerts_df["label"].value_counts().sort_index()
 
     sep = "=" * 72
 
@@ -461,7 +461,7 @@ def _log_threshold_sweep(
             f"\n  {'time_label':<20} {'total':>8} {'kept':>8} {'removed':>8} {'% removed':>10}"
         )
         print(f"  {'-'*20} {'-'*8} {'-'*8} {'-'*8} {'-'*10}")
-        kept_label_counts = kept_alerts["time_label"].value_counts().sort_index()
+        kept_label_counts = kept_alerts["label"].value_counts().sort_index()
         for label, total in label_totals.items():
             kept = kept_label_counts.get(label, 0)
             removed = total - kept
@@ -511,8 +511,8 @@ if __name__ == "__main__":
                 per_scenario_rates.append(rate)
                 print(f"  {scenario}: {rate*100:.2f}% ({n_before - n_after:,} removed)")
                 removed = scen_before[~scen_before.index.isin(scen_after.index)]
-                label_counts = removed["time_label"].value_counts()
-                label_totals = scen_before["time_label"].value_counts()
+                label_counts = removed["label"].value_counts()
+                label_totals = scen_before["label"].value_counts()
                 for label, count in label_counts.items():
                     total = label_totals.get(label, 0)
                     print(f"    {label}: {count:,} / {total:,}")
@@ -530,7 +530,7 @@ if __name__ == "__main__":
 
         for scenario, group in filtered_df.groupby("scenario"):
             original = group.rename(columns={"timestamp": "time", "detector": "short"})[
-                ["time", "name", "ip", "host", "short", "time_label", "event_label"]
+                ["time", "signature", "ip", "host", "short", "label", "event_label"]
             ].assign(time=lambda d: d["time"].astype(int))
             out_csv = PROCESSED_DATA_DIR / scenario / "alerts_filtered.csv"
             original.to_csv(out_csv, index=False)
@@ -548,7 +548,7 @@ if __name__ == "__main__":
             tx_alerts = group.rename(
                 columns={"timestamp": "time", "detector": "short"}
             )[
-                ["time", "name", "ip", "host", "short", "time_label", "event_label"]
+                ["time", "signature", "ip", "host", "short", "label", "event_label"]
             ].assign(time=lambda d: d["time"].astype(int))
             alert_groups = build_labeled_window_alert_groups(tx_alerts)
             out_tx = ALERT_GROUPS_DIR / f"{scenario}_alert_groups.csv"

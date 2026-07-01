@@ -1,11 +1,11 @@
-from thesis.preprocessing.cache import TokenCache
-from thesis.preprocessing.group_selector import (
+from thesis.caching.cache import TokenCache
+from thesis.caching.selector import (
     create_cache_query,
     select_group_snapshots,
     select_group_snapshots_from_response,
 )
 from thesis.schemas.cache import CacheQuery, CacheResponse, GroupCacheEntry
-from thesis.schemas.preprocessing import GroupSnapshot
+from thesis.schemas.groups import GroupSnapshot
 
 SCENARIO = "test_scenario"
 
@@ -45,7 +45,7 @@ def test_create_cache_query_builds_expected_defaults():
     query = create_cache_query()
 
     assert isinstance(query, CacheQuery)
-    assert query.allowed_methods == {"fixed_window", "alertbert"}
+    assert query.allowed_methods is None
     assert query.only_closed is True
     assert query.allowed_statuses == {"closed"}
     assert query.min_start_ts is None
@@ -72,7 +72,7 @@ def test_create_cache_query_overrides_defaults():
 
 
 def test_cache_query_returns_matching_groups_only(tmp_path):
-    cache = TokenCache(cache_dir=tmp_path, scenario=SCENARIO)
+    cache = TokenCache(cache_dir=tmp_path / SCENARIO)
 
     g1 = make_group_entry(
         group_id="g1",
@@ -122,7 +122,7 @@ def test_cache_query_returns_matching_groups_only(tmp_path):
 
 
 def test_cache_query_returns_only_closed_groups_when_requested(tmp_path):
-    cache = TokenCache(cache_dir=tmp_path, scenario=SCENARIO)
+    cache = TokenCache(cache_dir=tmp_path / SCENARIO)
 
     open_group = make_group_entry(
         group_id="g1",
@@ -158,7 +158,7 @@ def test_cache_query_returns_only_closed_groups_when_requested(tmp_path):
 
 
 def test_cache_query_returns_empty_response_when_no_groups_match(tmp_path):
-    cache = TokenCache(cache_dir=tmp_path, scenario=SCENARIO)
+    cache = TokenCache(cache_dir=tmp_path / SCENARIO)
 
     g1 = make_group_entry(
         group_id="g1",
@@ -385,7 +385,7 @@ def test_select_group_snapshots_from_response_returns_empty_list_for_empty_respo
 
 
 def test_select_group_snapshots_queries_cache_and_returns_snapshots(tmp_path):
-    cache = TokenCache(cache_dir=tmp_path, scenario=SCENARIO)
+    cache = TokenCache(cache_dir=tmp_path / SCENARIO)
 
     g1 = make_group_entry(
         group_id="g1",

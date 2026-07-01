@@ -156,11 +156,11 @@ def convert_alerts_to_json(
         for row in reader:
             alert = {
                 "time": int(row["time"]),
-                "name": row["name"],
+                "signature": row["name"],
                 "ip": row["ip"],
                 "host": row["host"],
                 "short": row["short"],
-                "time_label": row["time_label"],
+                "label": row["time_label"],
                 "event_label": row["event_label"],
             }
             alerts.append(alert)
