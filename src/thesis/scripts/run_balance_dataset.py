@@ -48,7 +48,7 @@ import pandas as pd
 
 from thesis.data.balance_alerts import METHODS as ALERT_METHODS
 from thesis.data.balance_alert_groups import METHODS as TX_METHODS
-from thesis.preprocessing.alert_groups import build_labeled_window_alert_groups
+from thesis.data.alert_groups import build_labeled_window_alert_groups
 
 _HERE = Path(__file__).resolve()
 _REPO = next(p for p in _HERE.parents if (p / "pyproject.toml").exists())

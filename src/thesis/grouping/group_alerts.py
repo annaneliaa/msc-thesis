@@ -3,10 +3,11 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
-from thesis.schemas.preprocessing import GroupingRecord, TokenizedAlert
+from thesis.schemas.groups import GroupingRecord
+from thesis.schemas.preprocessing import TokenizedAlert
 
 if TYPE_CHECKING:
-    from thesis.preprocessing.grouping.alertbert_grouper import AlertBERTGrouper
+    from thesis.grouping.alertbert_grouper import AlertBERTGrouper
 
 FIXED_WINDOW_SECONDS = 2
 FIXED_WINDOW_METHOD = "fixed_window"

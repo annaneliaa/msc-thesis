@@ -2,25 +2,11 @@ from pathlib import Path
 from typing import Iterable, Dict
 
 from thesis.schemas.cache import AlertCacheEntry, GroupCacheEntry
-from thesis.schemas.preprocessing import GroupingRecord
-from thesis.preprocessing.cache import TokenCache
-from thesis.schemas.preprocessing import TokenizedAlert
-
-
-def label_window_from_alert_labels(
-    alert_labels: set[str],
-    benign_label: str = "false_positive",
-) -> str:
-    labels = {str(lbl) for lbl in alert_labels if lbl is not None}
-
-    has_benign = benign_label in labels
-    has_attack = any(lbl != benign_label for lbl in labels)
-
-    if has_attack and has_benign:
-        return "mixed"
-    if has_attack:
-        return "attack"
-    return "benign"
+from thesis.schemas.groups import GroupingRecord
+from thesis.schemas.preprocessing import ParsedSuricataGroup, TokenizedAlert
+from thesis.caching.cache import TokenCache
+from thesis.grouping.group_alerts import SURICATA_GROUPED_METHOD
+from thesis.caching.util import label_window_from_alert_labels
 
 
 class CacheIngestor:
@@ -151,3 +137,25 @@ class CacheIngestor:
         # write to cache
         for group in groups.values():
             self.cache.write_group_entry(group)
+
+    @staticmethod
+    def _suricata_to_group_cache_entry(parsed: ParsedSuricataGroup) -> GroupCacheEntry:
+        return GroupCacheEntry(
+            group_id=parsed.group_id,
+            method=SURICATA_GROUPED_METHOD,
+            status="closed",
+            start_ts=parsed.ts,
+            end_ts=parsed.ts,
+            last_update_ts=parsed.ts,
+            n_alerts=parsed.n_alerts,
+            items=parsed.tokens,
+            sorted_items=[],
+            alert_ids=[],
+            alert_ips={parsed.ext_ip},
+            group_label=parsed.label,
+            alert_labels=None,
+        )
+
+    def ingest_suricata_group_batch(self, entries: list[ParsedSuricataGroup]) -> None:
+        for entry in entries:
+            self.cache.write_group_entry(self._suricata_to_group_cache_entry(entry))

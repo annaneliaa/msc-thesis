@@ -3,7 +3,13 @@ from __future__ import annotations
 from typing import Any
 import hashlib
 import pandas as pd
-from thesis.schemas.preprocessing import IncomingAlert, ParsedAlert
+from thesis.schemas.preprocessing import (
+    IncomingAlert,
+    ParsedAlert,
+    ParsedSuricataGroup,
+    IncomingSuricataGroup,
+)
+from thesis.preprocessing.suricata_tokenization import tokenize_signature
 
 
 def normalize_missing_value(value: Any) -> str | None:
@@ -57,6 +63,40 @@ def make_alert_id(
     )
 
     return hashlib.sha1(key.encode("utf-8")).hexdigest()
+
+
+def parse_suricata_group_row(row: IncomingSuricataGroup) -> ParsedSuricataGroup:
+    """
+    Parse one pre-grouped Suricata row into a normalized internal representation.
+
+    Tokens are extracted from SignatureText via the Suricata-specific tokenizer.
+    The caller (caching module) is responsible for converting this to a GroupCacheEntry.
+    """
+    ts_pd = pd.to_datetime(row.timestamp, utc=True, errors="coerce")
+    if pd.isna(ts_pd):
+        raise ValueError(f"Invalid timestamp: {row.timestamp!r}")
+    ts = int(ts_pd.timestamp())
+
+    key = "|".join(
+        [
+            str(row.signature_id),
+            row.ext_ip,
+            row.int_ip or "-1",
+            row.timestamp,
+        ]
+    )
+    group_id = hashlib.sha1(key.encode("utf-8")).hexdigest()
+
+    sig = tokenize_signature(row.signature_id, row.signature_text)
+
+    return ParsedSuricataGroup(
+        group_id=group_id,
+        ts=ts,
+        n_alerts=row.alert_count,
+        tokens=sig.tokens,
+        ext_ip=row.ext_ip,
+        label="benign" if row.label == 0 else "attack",
+    )
 
 
 def parse_incoming_alert(

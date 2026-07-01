@@ -23,7 +23,7 @@ import numpy as np
 from pathlib import Path
 
 from thesis.paths import ROOT
-from thesis.preprocessing.alert_groups import build_labeled_window_alert_groups
+from thesis.data.alert_groups import build_labeled_window_alert_groups
 
 
 class _Tee:

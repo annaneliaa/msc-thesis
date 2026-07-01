@@ -4,16 +4,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from thesis.config import GroupingConfig
-from thesis.schemas.preprocessing import GroupSnapshot, IncomingAlert, TokenizedAlert
-from thesis.preprocessing.parsing import parse_incoming_alert
-from thesis.preprocessing.tokenization import tokenize_alert
-from thesis.preprocessing.cache_ingestor import CacheIngestor
-from thesis.preprocessing.cache import TokenCache
-from thesis.preprocessing.group_selector import (
-    select_group_snapshots_from_response,
-    create_cache_query,
+from thesis.schemas.preprocessing import (
+    IncomingAlert,
+    IncomingSuricataGroup,
+    TokenizedAlert,
 )
-from thesis.preprocessing.group_alerts import (
+from thesis.preprocessing.parsing import parse_incoming_alert, parse_suricata_group_row
+from thesis.preprocessing.tokenization import tokenize_alert
+from thesis.caching.ingestor import CacheIngestor
+from thesis.grouping.group_alerts import (
     ALERTBERT_METHOD,
     FIXED_WINDOW_METHOD,
     FIXED_WINDOW_HOST_METHOD,
@@ -21,19 +20,14 @@ from thesis.preprocessing.group_alerts import (
 )
 
 if TYPE_CHECKING:
-    from thesis.preprocessing.grouping.alertbert_grouper import AlertBERTGrouper
-
-""""
-Set up pipeline methods here for the module.
-To be called from CLI commands to expose as less as possible.
-"""
+    from thesis.grouping.alertbert_grouper import AlertBERTGrouper
 
 
 def build_grouper(grouping: GroupingConfig) -> "AlertBERTGrouper | None":
     """Construct an AlertBERTGrouper from config, or return None for fixed-window mode."""
     if grouping.mode != ALERTBERT_METHOD:
         return None
-    from thesis.preprocessing.grouping.alertbert_grouper import AlertBERTGrouper
+    from thesis.grouping.alertbert_grouper import AlertBERTGrouper
 
     cfg = grouping.alertbert
     checkpoint_dir = Path(cfg.models_path) / cfg.model_id
@@ -53,7 +47,7 @@ def process_alert_batch(
     scenario: str,
     ingestor: CacheIngestor,
     grouping_mode: str = FIXED_WINDOW_METHOD,
-    grouper: AlertBERTGrouper | None = None,
+    grouper: "AlertBERTGrouper | None" = None,
     window_size: int = 2,
 ) -> int:
     tokenized_alerts: list[TokenizedAlert] = []
@@ -83,29 +77,26 @@ def process_alert_batch(
     return len(tokenized_alerts)
 
 
-def select_groups_from_cache(
-    cache: TokenCache,
-    allowed_methods: set[str] | None = None,
-    limit: int | None = None,
-    min_start_ts: int | None = None,
-    max_end_ts: int | None = None,
-    require_closed: bool = True,
-) -> list[GroupSnapshot]:
+def process_suricata_group_batch(
+    rows: list[dict],
+    ingestor: CacheIngestor,
+) -> int:
     """
-    Query cache and return stable group snapshots for mining-prep.
+    Parse and ingest a batch of pre-grouped Suricata rows.
+
+    Each row is already a closed group; the grouping step is skipped entirely.
+    Tokens are derived from SignatureText via the Suricata-specific tokenizer.
+    Returns the number of rows successfully ingested.
     """
-    query = create_cache_query(
-        allowed_methods=allowed_methods,
-        only_closed=require_closed,
-        min_start_ts=min_start_ts,
-        max_end_ts=max_end_ts,
-        limit=limit,
-    )
+    entries = []
+    for row in rows:
+        try:
+            suricata_row = IncomingSuricataGroup.from_row(row)
+            entry = parse_suricata_group_row(suricata_row)
+            entries.append(entry)
+        except Exception as e:
+            print(f"Skipping Suricata row due to error: {e}")
+            continue
 
-    response = cache.query(query)
-
-    return select_group_snapshots_from_response(
-        response=response,
-        limit=limit,
-        require_closed=require_closed,
-    )
+    ingestor.ingest_suricata_group_batch(entries)
+    return len(entries)

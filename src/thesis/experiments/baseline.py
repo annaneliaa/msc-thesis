@@ -29,17 +29,13 @@ from thesis.features.util import select_symbolic_features
 from thesis.config import GroupingConfig
 from thesis.paths import ensure_artifact_dirs
 from thesis.schemas.mining import FeatureSelectionConfig
-from thesis.preprocessing.cache import TokenCache
-from thesis.preprocessing.cache_ingestor import CacheIngestor
-from thesis.preprocessing.mining_prep import build_alert_groups
-from thesis.preprocessing.group_alerts import ALERTBERT_METHOD, FIXED_WINDOW_METHOD
-from thesis.schemas.preprocessing import AlertGroup
+from thesis.caching.cache import TokenCache
+from thesis.caching.ingestor import CacheIngestor
+from thesis.caching.selector import select_group_snapshots
+from thesis.grouping.group_alerts import ALERTBERT_METHOD, FIXED_WINDOW_METHOD
+from thesis.schemas.groups import AlertGroup
 from thesis.schemas.experiments import BaselineExperimentConfig, ExperimentResult
-from thesis.preprocessing.service import (
-    build_grouper,
-    process_alert_batch,
-    select_groups_from_cache,
-)
+from thesis.pipeline import build_grouper, process_alert_batch
 from thesis.registry.models import get_model_path, resolve_model_paths
 from thesis.training.service import train_model_for_schema
 
@@ -180,7 +176,7 @@ def _load_alert_groups(
         print(f"  [warn] {out_path} is empty, rebuilding alert_groups...")
 
     cache = TokenCache(cache_dir=cache_dir)
-    snapshots = select_groups_from_cache(
+    snapshots = select_group_snapshots(
         cache=cache,
         allowed_methods=None,
         limit=None,
@@ -188,7 +184,7 @@ def _load_alert_groups(
         max_end_ts=None,
         require_closed=True,
     )
-    alert_groups = build_alert_groups(snapshots)
+    alert_groups = [s.to_alert_group() for s in snapshots]
 
     out_dir.mkdir(parents=True, exist_ok=True)
     serialized = [

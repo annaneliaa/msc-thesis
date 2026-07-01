@@ -6,7 +6,8 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from thesis.schemas.preprocessing import GroupingRecord, TokenizedAlert
+from thesis.schemas.groups import GroupingRecord
+from thesis.schemas.preprocessing import TokenizedAlert
 
 ALERTBERT_METHOD = "alertbert"
 

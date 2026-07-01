@@ -1,7 +1,7 @@
 from collections.abc import Iterable
 import pandas as pd
 
-from thesis.schemas.preprocessing import AlertGroup
+from thesis.schemas.groups import AlertGroup
 from thesis.schemas.features import SymbolicFeatureSchema, SymbolicFeature
 from thesis.mining.repeat_encoding import encode_sequence_of_itemsets
 from thesis.mining.token_abstraction import abstract_mail_hosts

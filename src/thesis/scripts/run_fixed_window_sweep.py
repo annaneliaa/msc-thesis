@@ -30,13 +30,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from thesis.preprocessing.group_alerts import (
+from thesis.grouping.group_alerts import (
     group_alerts_fixed_window,
     group_alerts_fixed_window_host,
 )
 from thesis.preprocessing.parsing import parse_incoming_alert
 from thesis.preprocessing.tokenization import tokenize_alert
-from thesis.schemas.preprocessing import IncomingAlert, TokenizedAlert, GroupSnapshot
+from thesis.schemas.groups import GroupSnapshot
+from thesis.schemas.preprocessing import IncomingAlert, TokenizedAlert
 from thesis.paths import CACHE_DIR
 
 

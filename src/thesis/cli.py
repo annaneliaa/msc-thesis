@@ -23,14 +23,10 @@ from thesis.paths import ensure_artifact_dirs
 from thesis.schemas.validation import validate_dataframe
 from thesis.registry.models import list_all_models, get_model_path
 from thesis.registry.encoders import list_all_encoders
-from thesis.preprocessing.cache import TokenCache
-from thesis.preprocessing.cache_ingestor import CacheIngestor
-from thesis.preprocessing.service import (
-    build_grouper,
-    process_alert_batch,
-    select_groups_from_cache,
-)
-from thesis.preprocessing.mining_prep import build_alert_groups
+from thesis.caching.cache import TokenCache
+from thesis.caching.ingestor import CacheIngestor
+from thesis.caching.selector import select_group_snapshots
+from thesis.pipeline import build_grouper, process_alert_batch
 from thesis.training.service import train_model_for_schema
 from thesis.encoders.service import encode_alert_groups_for_schema
 from thesis.features.service import build_persist_and_register_symbolic_schema
@@ -274,7 +270,7 @@ def select_groups(
     try:
         cache = TokenCache(cache_dir=Path(cache_dir) / scenario)
 
-        snapshots = select_groups_from_cache(
+        snapshots = select_group_snapshots(
             cache=cache,
             allowed_methods=None,  # TODO: add option to filter by method
             limit=retention_windows,
@@ -342,7 +338,7 @@ def load_alert_groups(
     try:
         cache = TokenCache(cache_dir=Path(cache_dir) / scenario)
 
-        snapshots = select_groups_from_cache(
+        snapshots = select_group_snapshots(
             cache=cache,
             allowed_methods=None,
             limit=None,
@@ -351,7 +347,7 @@ def load_alert_groups(
             require_closed=True,
         )
 
-        alert_groups = build_alert_groups(snapshots)
+        alert_groups = [s.to_alert_group() for s in snapshots]
 
         out_dir = Path(f"artifacts/cache/{scenario}/alert_groups")
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -406,7 +402,7 @@ def encode_alert_groups(
     try:
         cache = TokenCache(cache_dir=Path(cache_dir) / scenario_name)
 
-        snapshots = select_groups_from_cache(
+        snapshots = select_group_snapshots(
             cache=cache,
             allowed_methods=None,
             limit=None,
@@ -415,7 +411,7 @@ def encode_alert_groups(
             require_closed=True,
         )
 
-        alert_groups = list(build_alert_groups(snapshots))
+        alert_groups = [s.to_alert_group() for s in snapshots]
 
         schema = FEATURE_SCHEMAS.load(
             scenario_name=scenario_name,

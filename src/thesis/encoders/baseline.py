@@ -2,7 +2,7 @@ from typing import Any, Iterable
 import ipaddress
 import pandas as pd
 
-from thesis.schemas.preprocessing import AlertGroup
+from thesis.schemas.groups import AlertGroup
 
 
 def _count_items_with_prefix(items: set[str], prefix: str) -> int:

@@ -1,5 +1,5 @@
 import pandas as pd
-from typing import Any, Optional
+from typing import Any
 from dataclasses import dataclass, field
 
 
@@ -112,60 +112,73 @@ class TokenizedAlert:
 
 
 @dataclass(slots=True)
-class GroupingRecord:
-    alert_id: str
-    group_id: str
-    method: str  # "fixed_window"
+class IncomingSuricataGroup:
+    """
+    One row from the Suricata pre-grouped dataset.
+
+    Each row represents a cluster of alerts sharing the same signature and
+    external IP, already aggregated by the source dataset. There are no
+    individual alert IDs — only the aggregate count and label are available.
+    """
+
+    timestamp: str  # ISO 8601 with timezone, e.g. "2022-01-20T00:00:03+02:00"
+    signature_text: str  # e.g. "ET EXPLOIT D-Link ..."
+    signature_id: int
+    alert_count: int
+    proto: int
+    ext_ip: str  # anonymised external IP, e.g. "extip1"
+    ext_port: int
+    int_ip: str | None  # anonymised internal IP; None when not available
+    int_port: int
+    label: int  # 0 = benign, 1 = attack
+
+    @classmethod
+    def from_row(cls, row: dict[str, Any]) -> "IncomingSuricataGroup":
+        required = [
+            "Timestamp",
+            "SignatureText",
+            "SignatureID",
+            "AlertCount",
+            "Proto",
+            "ExtIP",
+            "ExtPort",
+            "IntIP",
+            "IntPort",
+            "Label",
+        ]
+        missing = [c for c in required if c not in row]
+        if missing:
+            raise ValueError(
+                f"SuricataGroupRow.from_row() missing fields: {missing}. "
+                f"Available: {list(row.keys())}"
+            )
+        int_ip_raw = str(row["IntIP"]).strip()
+        return cls(
+            timestamp=str(row["Timestamp"]),
+            signature_text=str(row["SignatureText"]),
+            signature_id=int(row["SignatureID"]),
+            alert_count=int(row["AlertCount"]),
+            proto=int(row["Proto"]),
+            ext_ip=str(row["ExtIP"]),
+            ext_port=int(row["ExtPort"]),
+            int_ip=None if int_ip_raw in ("-1", "") else int_ip_raw,
+            int_port=int(row["IntPort"]),
+            label=int(row["Label"]),
+        )
 
 
 @dataclass(slots=True)
-class GroupSnapshot:  # stable snapshot
-    # identity
+class ParsedSuricataGroup:
+    """
+    Parsed representation of one pre-grouped Suricata row.
+
+    Produced by parse_suricata_group_row; consumed by the caching module to
+    build a GroupCacheEntry. No cache-specific fields are present here.
+    """
+
     group_id: str
-    method: str  # "fixed_window" | "alertbert"
-    version: int
-
-    # temporal scope
-    start_ts: int
-    end_ts: int
-
-    # membership
-    alert_ids: list[str] = field(default_factory=list)
-    n_alerts: int = 0
-    items: set[str] = field(
-        default_factory=set
-    )  # raw group items, pre-abstraction # unordered, deduplicated, for itemset mining
-    sorted_items: list[set[str]] = field(
-        default_factory=list
-    )  # ordered list of per-alert itemsets, for sequence mining
-    alert_ips: set[str] = field(default_factory=set)
-    # labels (for evaluation)
-    alert_labels: Optional[set[str]] = None
-    group_label: Optional[str] = None
-
-    # lifecycle
-    status: str = "closed"  # expected: "closed" when emitted
-
-
-@dataclass(slots=True)
-class AlertGroup:  # mining input (with weight)
-    alert_group_id: str
-    group_id: str
-    method: str  # "fixed_window" | "alertbert"
-
-    start_ts: int
-    end_ts: int
-
+    ts: int
     n_alerts: int
-    alert_ids: Optional[list[str]] = None
-    abs_items: set[str] = field(default_factory=set)  # mining-ready abstracted itemset
-    raw_items: Optional[set[str]] = None  # pre-abstraction mining items
-    sorted_items: list[set[str]] = field(
-        default_factory=list
-    )  # ordered list of per-alert itemsets, for sequence mining
-    alert_ips: set[str] = field(default_factory=set)
-
-    group_label: Optional[str] = None
-    alert_labels: Optional[set[str]] = None
-
-    weight: float = 1.0
+    tokens: set[str]
+    ext_ip: str
+    label: str  # "benign" | "attack"

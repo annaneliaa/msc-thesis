@@ -2,7 +2,7 @@ from collections.abc import Iterable
 
 import pandas as pd
 
-from thesis.schemas.preprocessing import AlertGroup
+from thesis.schemas.groups import AlertGroup
 from thesis.schemas.features import FeatureSchema
 from thesis.encoders.baseline import BaselineFeatureEncoder
 from thesis.encoders.symbolic import SymbolicFeatureEncoder

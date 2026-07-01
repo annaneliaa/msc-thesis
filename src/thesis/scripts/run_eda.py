@@ -73,7 +73,7 @@ from thesis.visualization.eda import (
     plot_alert_group_volume_attack_zoom,
     plot_alert_group_volume_concatenated,
 )
-from thesis.preprocessing.alert_groups import build_labeled_window_alert_groups
+from thesis.data.alert_groups import build_labeled_window_alert_groups
 
 import matplotlib
 

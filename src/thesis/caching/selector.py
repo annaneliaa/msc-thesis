@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from thesis.preprocessing.cache import TokenCache
+from thesis.caching.cache import TokenCache
 from thesis.schemas.cache import CacheQuery, CacheResponse
-from thesis.schemas.preprocessing import GroupSnapshot
+from thesis.schemas.groups import GroupSnapshot
 
 
 def create_cache_query(
