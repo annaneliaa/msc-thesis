@@ -68,16 +68,21 @@ Output (under artifacts/experiments/run_model_comparison/comparison_<ts>/):
   mlp/scenario/<scenario>/          mlp compare, baseline, symbolic JSONs
   plots/
     comparison_table.txt / .csv
+    workload_reduction_table.csv   per-recall-target confusion matrix + workload reduction
     logreg/                   per-model feature analysis plots
     mlp/
     logreg/
       shap_bars_logreg.png    signed SHAP importance across scenarios (symbolic experiment)
+      confusion_matrix_logreg.png  per-scenario baseline/symbolic confusion matrices @ threshold=0.5
     mlp/
       shap_bars_mlp.png
+      confusion_matrix_mlp.png
     cross_model/
       perf_auc.png              AUC: logreg vs mlp, baseline + symbolic
       perf_metrics.png          F1/precision/recall/ba for baseline
       jaccard_spearman.png    per-scenario Jaccard + Spearman rank (logreg vs mlp)
+      workload_reduction.png  workload reduction (% alert-groups not flagged) at
+                               fixed recall targets (0.90/0.95/0.99), baseline vs symbolic
       common_features_logreg.png  signed SHAP per scenario for features shared across scenarios
       common_features_mlp.png
 """
@@ -457,6 +462,7 @@ _PERF_METRICS = [
     "balanced_accuracy",
     "fp",
     "tp",
+    "tn",
     "fn",
     "n_features",
 ]
@@ -476,6 +482,129 @@ def _build_comparison_df(all_results: dict[str, list[dict]]) -> pd.DataFrame:
     for col in ["auc", "f1", "precision", "recall", "balanced_accuracy"]:
         df[col] = pd.to_numeric(df[col], errors="coerce").round(4)
     return df
+
+
+def _build_workload_df(all_results: dict[str, list[dict]]) -> pd.DataFrame:
+    """Tidy rows of workload-at-recall operating points (one row per
+    model/scenario/experiment/recall-target). Rows are dropped for a target
+    when the recall could not be reached (workload_at_recall[target] is None)."""
+    rows = []
+    for model, results in all_results.items():
+        for r in results:
+            for exp in ("baseline", "symbolic"):
+                wk = r[exp].get("workload_at_recall") or {}
+                for target_key, stats in wk.items():
+                    if not stats:
+                        continue
+                    rows.append(
+                        {
+                            "model": model,
+                            "scenario": r["scenario"],
+                            "experiment": exp,
+                            "recall_target": target_key,
+                            **stats,
+                        }
+                    )
+    return pd.DataFrame(rows)
+
+
+def plot_workload_reduction(
+    df: pd.DataFrame,
+    out_dir: Path,
+    filtered: bool,
+    method: str | None = None,
+    models: list[str] | None = None,
+) -> None:
+    """Workload reduction (% of alert-groups not flagged for review) at each
+    fixed-recall operating point, baseline vs symbolic, per model/scenario."""
+    if models is None:
+        models = list(MODELS)
+    if df.empty:
+        print("  [info] No workload_at_recall data — skipping workload reduction plot.")
+        return
+
+    targets = sorted(df["recall_target"].unique())
+    scenarios = sorted(df["scenario"].unique())
+    n_sc = len(scenarios)
+    n_bars = len(models) * 2
+    x = np.arange(n_sc)
+    w = 0.8 / n_bars
+    offsets = [w * (i - (n_bars - 1) / 2) for i in range(n_bars)]
+
+    fig, axes = plt.subplots(
+        1, len(targets), figsize=(max(8, n_sc * 2.2) * len(targets), 5), squeeze=False
+    )
+    axes = axes[0]
+
+    for ax, target in zip(axes, targets):
+        bar_idx = 0
+        for model in models:
+            for exp, suffix, alpha, hatch in [
+                ("baseline", "base", 0.55, "//"),
+                ("symbolic", "sym", 0.85, ""),
+            ]:
+                sub = df[
+                    (df["experiment"] == exp)
+                    & (df["model"] == model)
+                    & (df["recall_target"] == target)
+                ]
+                vals, fps = [], []
+                for s in scenarios:
+                    r = sub[sub["scenario"] == s]
+                    if len(r):
+                        vals.append(float(r.iloc[0]["workload_reduction"]) * 100)
+                        fps.append(int(r.iloc[0]["fp"]))
+                    else:
+                        vals.append(float("nan"))
+                        fps.append(None)
+                bars = ax.bar(
+                    x + offsets[bar_idx],
+                    vals,
+                    w,
+                    label=f"{_MODEL_LABELS[model]} ({suffix})",
+                    color=_MODEL_COLORS[model],
+                    alpha=alpha,
+                    hatch=hatch,
+                )
+                for bar, val, fp in zip(bars, vals, fps):
+                    if not np.isnan(val):
+                        ax.text(
+                            bar.get_x() + bar.get_width() / 2,
+                            bar.get_height() + 1,
+                            f"{val:.0f}%\n(fp={fp})",
+                            ha="center",
+                            va="bottom",
+                            fontsize=6,
+                            rotation=45,
+                        )
+                bar_idx += 1
+        ax.set_xticks(x)
+        ax.set_xticklabels(scenarios, rotation=20, ha="right")
+        ax.set_ylim(0, 115)
+        ax.set_ylabel("Workload reduction (%)")
+        ax.set_title(f"Recall ≥ {float(target) * 100:.0f}%")
+        ax.grid(axis="y", alpha=0.3)
+
+    axes[0].legend(fontsize=7, loc="lower right")
+    fig.suptitle(
+        "Alert-group workload reduction at fixed recall targets\n"
+        "(% of alert-groups not flagged for analyst review; labels = residual FP count)"
+    )
+    fig.tight_layout()
+    fig.text(
+        0.99,
+        0.01,
+        _data_label(filtered, method),
+        ha="right",
+        va="bottom",
+        fontsize=7,
+        color="gray",
+        transform=fig.transFigure,
+    )
+    out = out_dir / "workload_reduction.png"
+    fig.savefig(out, dpi=150)
+    plt.close(fig)
+    print(f"  Saved → {out}")
 
 
 def _format_text_table(df: pd.DataFrame, models: list[str] | None = None) -> str:
@@ -666,6 +795,99 @@ def plot_perf_metrics(
     fig.savefig(out, dpi=150)
     plt.close(fig)
     print(f"  Saved → {out}")
+
+
+def plot_confusion_matrices(
+    df: pd.DataFrame,
+    out_dir: Path,
+    filtered: bool,
+    method: str | None = None,
+    models: list[str] | None = None,
+) -> None:
+    """One figure per model: grid of 2x2 confusion-matrix heatmaps (rows =
+    scenario, cols = baseline/symbolic) at the default 0.5 threshold, using
+    tp/fp/tn/fn already present in the compare JSON. Each panel is also
+    labelled with the workload reduction at that (unconstrained) operating
+    point: (tn+fn)/total, i.e. the fraction of alert-groups not flagged."""
+    if models is None:
+        models = list(MODELS)
+
+    for model in models:
+        sub = df[df["model"] == model]
+        scenarios = sorted(sub["scenario"].unique())
+        if not scenarios:
+            continue
+
+        fig, axes = plt.subplots(
+            len(scenarios),
+            2,
+            figsize=(6.5, max(3, 2.6 * len(scenarios))),
+            squeeze=False,
+        )
+        any_plotted = False
+        for i, scenario in enumerate(scenarios):
+            for j, exp in enumerate(("baseline", "symbolic")):
+                ax = axes[i][j]
+                r = sub[(sub["scenario"] == scenario) & (sub["experiment"] == exp)]
+                if r.empty or pd.isna(r.iloc[0].get("tp")):
+                    ax.axis("off")
+                    continue
+                row = r.iloc[0]
+                tn, fp, fn, tp = (
+                    int(row["tn"]),
+                    int(row["fp"]),
+                    int(row["fn"]),
+                    int(row["tp"]),
+                )
+                total = tn + fp + fn + tp
+                cm = np.array([[tn, fp], [fn, tp]])
+                reduction = (tn + fn) / total if total else float("nan")
+
+                ax.imshow(cm, cmap="Blues", vmin=0)
+                vmax = cm.max() if cm.max() else 1
+                for (y, x_), v in np.ndenumerate(cm):
+                    pct = v / total * 100 if total else 0.0
+                    ax.text(
+                        x_,
+                        y,
+                        f"{v}\n({pct:.1f}%)",
+                        ha="center",
+                        va="center",
+                        fontsize=8,
+                        color="white" if v > vmax / 2 else "black",
+                    )
+                ax.set_xticks([0, 1])
+                ax.set_xticklabels(["pred benign", "pred attack"], fontsize=7)
+                ax.set_yticks([0, 1])
+                ax.set_yticklabels(["true benign", "true attack"], fontsize=7)
+                ax.set_title(
+                    f"{scenario} — {exp}\nworkload reduction: {reduction:.0%}",
+                    fontsize=8,
+                )
+                any_plotted = True
+
+        if not any_plotted:
+            plt.close(fig)
+            continue
+
+        fig.suptitle(
+            f"Confusion matrices @ threshold=0.5 — {_MODEL_LABELS[model]}", fontsize=11
+        )
+        fig.tight_layout(rect=[0, 0.02, 1, 0.97])
+        fig.text(
+            0.99,
+            0.005,
+            _data_label(filtered, method),
+            ha="right",
+            va="bottom",
+            fontsize=7,
+            color="gray",
+            transform=fig.transFigure,
+        )
+        out = out_dir / f"confusion_matrix_{model}.png"
+        fig.savefig(out, dpi=150)
+        plt.close(fig)
+        print(f"  Saved → {out}")
 
 
 # ---------------------------------------------------------------------------
@@ -1564,6 +1786,17 @@ def _run_main(args, run_dir: Path, plots_dir: Path) -> None:
     print("\n[plots]")
     plot_perf_auc(df, cross_dir, filtered, method, models=models)
     plot_perf_metrics(df, cross_dir, filtered, method, models=models)
+
+    workload_df = _build_workload_df(all_results)
+    if not workload_df.empty:
+        workload_df.to_csv(plots_dir / "workload_reduction_table.csv", index=False)
+        print(f"  Saved → {plots_dir / 'workload_reduction_table.csv'}")
+    plot_workload_reduction(workload_df, cross_dir, filtered, method, models=models)
+
+    for model in models:
+        model_plot_dir = plots_dir / model
+        model_plot_dir.mkdir(parents=True, exist_ok=True)
+        plot_confusion_matrices(df, model_plot_dir, filtered, method, models=[model])
 
     # ── Phase 3: Per-model feature analysis ───────────────────────────────────
     print(f"\n{'='*60}\n  PHASE 3: PER-MODEL FEATURE ANALYSIS\n{'='*60}")

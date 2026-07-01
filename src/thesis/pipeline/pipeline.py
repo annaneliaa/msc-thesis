@@ -211,6 +211,45 @@ def ingest_ait_alert_batch(
     print(f"  Processed {count} alerts into cache.")
 
 
+def ingest_ait_scenario(
+    scenario: str,
+    alerts_json_path: Path | None = None,
+    cache_dir: Path | None = None,
+    grouping: GroupingConfig | None = None,
+) -> Path:
+    """
+    Populate alert_groups_raw.json for one AIT-ADS scenario: convert the raw
+    alerts CSV to JSON, tokenise + ingest into the TokenCache, ensure the
+    feature manifest exists, then build alert_groups from the closed groups.
+
+    This is the same ingestion prefix run_baseline_experiment() performs
+    before training — factored out so scripts that only need alert_groups
+    (e.g. run_mining_window_sweep.py) don't have to run a full baseline
+    experiment (and train a model) just to populate the cache.
+    """
+    grouping = grouping or GroupingConfig()
+    cache_dir = cache_dir or (
+        ROOT / "artifacts" / "cache" / scenario / "groups" / grouping.mode
+    )
+    out_path = cache_dir / "alert_groups" / "alert_groups_raw.json"
+
+    if out_path.exists():
+        print(f"  [skip] alert_groups already exist at {out_path}")
+        return out_path
+
+    alerts_path = convert_ait_alerts_to_json(scenario, alerts_json_path)
+    ingest_ait_alert_batch(
+        scenario,
+        alerts_path,
+        cache_dir,
+        grouping_mode=grouping.mode,
+        grouping=grouping,
+    )
+    ensure_feature_manifest(scenario)
+    load_or_build_alert_groups(scenario, cache_dir)
+    return out_path
+
+
 # ---------------------------------------------------------------------------
 # CSCAS ingestion (pre-grouped Suricata rows)
 # ---------------------------------------------------------------------------

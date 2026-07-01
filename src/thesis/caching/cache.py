@@ -95,6 +95,11 @@ class TokenCache:
     def _group_from_payload(payload: dict) -> GroupCacheEntry:
         payload = dict(payload)
 
+        # Back-compat: cache files written before the transaction->alert_group
+        # rename use "tx_label" for what is now GroupCacheEntry.group_label.
+        if "tx_label" in payload:
+            payload.setdefault("group_label", payload.pop("tx_label"))
+
         if payload.get("items") is not None:
             payload["items"] = set(payload["items"])
 

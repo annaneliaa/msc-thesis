@@ -58,6 +58,7 @@ from thesis.features.schema_registry import FeatureSchemaRegistry
 from thesis.paths import ensure_artifact_dirs
 from thesis.schemas.experiments import AnomalyExperimentConfig, ExperimentResult
 from thesis.training.model_factory import get_model_factory
+from thesis.training.workload import compute_workload_at_recall
 
 _ANOMALY_MODELS = {"bernoulli_oc", "autoencoder_oc", "ocsvm"}
 
@@ -203,6 +204,7 @@ def _compute_anomaly_metrics(
         "fp": int(fp),
         "tn": int(tn),
         "fn": int(fn),
+        "workload_at_recall": compute_workload_at_recall(y_test, scores),
         "n_train_benign": int(len(X_train)),
         "top_feature_importances": {
             "by_coefficient": native_importances,

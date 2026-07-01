@@ -126,6 +126,7 @@ def train_model_for_schema(
             "fp": int(result["fp"]),
             "tn": int(result["tn"]),
             "fn": int(result["fn"]),
+            "workload_at_recall": result.get("workload_at_recall", {}),
             "train_auc": float(result["train_auc"]),
             "performance_gap_train_vs_test": float(result["train_auc"])
             - float(result["auc"]),

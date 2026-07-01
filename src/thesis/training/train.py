@@ -12,6 +12,7 @@ from sklearn.metrics import (
 from sklearn.inspection import permutation_importance
 
 from thesis.schemas.features import FeatureSchema
+from thesis.training.workload import DEFAULT_RECALL_TARGETS, compute_workload_at_recall
 
 
 def train_eval_holdout(
@@ -40,6 +41,7 @@ def train_eval_holdout(
             "fp": 0,
             "tn": 0,
             "fn": 0,
+            "workload_at_recall": {f"{r:.2f}": None for r in DEFAULT_RECALL_TARGETS},
             "train_auc": np.nan,
             "top_feature_importances": {},
             "y_test": y_test,
@@ -164,6 +166,7 @@ def train_eval_holdout(
         "fp": int(fp),
         "tn": int(tn),
         "fn": int(fn),
+        "workload_at_recall": compute_workload_at_recall(y_test, proba_test),
         "train_auc": train_auc,
         "top_feature_importances": importances,
         "y_test": y_test,

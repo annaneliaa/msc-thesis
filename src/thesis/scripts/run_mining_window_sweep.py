@@ -30,6 +30,16 @@ Usage:
         --granularities 0.25 \\
         --modes benign
 
+    # All AIT-ADS scenarios (fox, harrison, russellmitchell, santos, shaw,
+    # wardbeck, wheeler, wilson — see src/thesis/configs/scenarios.json).
+    # --all sweeps every scenario cached under artifacts/cache/ regardless of
+    # dataset, so list the AIT-ADS scenarios explicitly to scope the run to them:
+    python src/thesis/scripts/run_mining_window_sweep.py \
+        fox harrison russellmitchell santos shaw wardbeck wheeler wilson \
+        --filter-config src/thesis/configs/mining_filters_simple.yaml \
+        --granularities 0.1 0.2 0.33 \
+        --modes benign mixed
+
     # CSCAS (pre-grouped Suricata scenario) — run once first:
     #   python src/thesis/scripts/run_ingest_cscas.py
     # then use --grouping-method since CSCAS alert_groups live under
@@ -104,9 +114,9 @@ def _load_raw_alert_groups(
             hint = "Run `python src/thesis/scripts/run_ingest_cscas.py` first."
         else:
             hint = (
-                "Run `python -m thesis.experiments.runner baseline "
-                f"{scenario}` first (or any experiment that ingests this "
-                "scenario) to populate alert_groups."
+                f"Run `python src/thesis/scripts/run_ingest_ait_ads.py {scenario}` "
+                "first (or any experiment that ingests this scenario) to "
+                "populate alert_groups."
             )
         raise FileNotFoundError(
             f"No alert_groups found for '{scenario}' (grouping_method="
