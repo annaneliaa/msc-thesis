@@ -35,7 +35,7 @@ from thesis.caching.selector import select_group_snapshots
 from thesis.grouping.group_alerts import ALERTBERT_METHOD, FIXED_WINDOW_METHOD
 from thesis.schemas.groups import AlertGroup
 from thesis.schemas.experiments import BaselineExperimentConfig, ExperimentResult
-from thesis.pipeline import build_grouper, process_alert_batch
+from thesis.pipeline.pipeline import build_grouper, process_alert_batch
 from thesis.registry.models import get_model_path, resolve_model_paths
 from thesis.training.service import train_model_for_schema
 

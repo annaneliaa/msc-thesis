@@ -16,6 +16,7 @@ TIME_DELTA_METHOD = "time_delta"
 TIME_DELTA_HOST_METHOD = "time_delta_host"
 TIME_DELTA_SECONDS = 2.0
 ALERTBERT_METHOD = "alertbert"
+SURICATA_GROUPED_METHOD = "suricata_grouped"
 
 
 def fixed_window_group_id(ts: int, window_size: int = FIXED_WINDOW_SECONDS) -> str:
