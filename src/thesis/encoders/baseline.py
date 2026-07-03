@@ -1,42 +1,45 @@
+from datetime import datetime, timezone
 from typing import Any, Iterable
-import ipaddress
 import pandas as pd
 
 from thesis.schemas.groups import AlertGroup
+
+# IANA port ranges: well-known, registered, dynamic/ephemeral.
+_PORT_CLASS_UNKNOWN = 3
+_PORT_CLASS_WELL_KNOWN = 0
+_PORT_CLASS_REGISTERED = 1
+_PORT_CLASS_DYNAMIC = 2
 
 
 def _count_items_with_prefix(items: set[str], prefix: str) -> int:
     return sum(1 for item in items if item.startswith(prefix))
 
 
-def _is_internal_ip(ip: str) -> bool:
-    try:
-        return ipaddress.ip_address(ip).is_private
-    except ValueError:
-        return False
+def _port_class(port: int | None) -> int:
+    if port is None or port < 0:
+        return _PORT_CLASS_UNKNOWN
+    if port <= 1023:
+        return _PORT_CLASS_WELL_KNOWN
+    if port <= 49151:
+        return _PORT_CLASS_REGISTERED
+    return _PORT_CLASS_DYNAMIC
 
 
 def compute_baseline_features(tx: AlertGroup) -> dict[str, Any]:
     items = set(tx.abs_items or tx.raw_items or [])
-    ip_values = list(tx.alert_ips or [])
-
-    duration_sec = max(0, int(tx.end_ts) - int(tx.start_ts))
-    n_alerts = int(tx.n_alerts)
-    n_items = len(items)
-
-    n_internal_ips = sum(1 for ip in ip_values if _is_internal_ip(ip))
-    n_external_ips = sum(1 for ip in ip_values if not _is_internal_ip(ip))
+    hour_of_day = datetime.fromtimestamp(int(tx.start_ts), tz=timezone.utc).hour
 
     return {
-        "duration_sec": duration_sec,
-        # "n_alerts": n_alerts,
-        "n_items": n_items,
+        "hour_of_day": hour_of_day,
+        "n_alerts": int(tx.n_alerts),
         "n_hosts": _count_items_with_prefix(items, "host:"),
         "n_shorts": _count_items_with_prefix(items, "short:"),
         "n_sigs": _count_items_with_prefix(items, "sig:"),
-        "n_internal_ips": n_internal_ips,
-        "n_external_ips": n_external_ips,
-        "alerts_per_second": n_alerts / max(1, duration_sec),
+        "proto": tx.proto if tx.proto is not None else -1,
+        "int_port_class": _port_class(tx.int_port),
+        "ext_port_class": _port_class(tx.ext_port),
+        "int_ip_is_multiple": int(tx.int_ip_is_multiple),
+        "ext_ip_is_multiple": int(tx.ext_ip_is_multiple),
     }
 
 

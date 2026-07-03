@@ -11,40 +11,11 @@ from thesis.schemas.features import (
     SymbolicFeatureSchema,
 )
 
-
-BASE_FEATURES = [
-    "duration_sec",
-    "n_items",
-    "n_hosts",
-    "n_shorts",
-    "n_sigs",
-    "n_internal_ips",
-    "n_external_ips",
-    "alerts_per_second",
-]
-
-
-DYNAMIC_FEATURES = [
-    "short_count_1d",
-    "short_fp_rate_1d",
-    "short_attack_rate_1d",
-    "host_count_1d",
-    "host_fp_rate_1d",
-    "host_attack_rate_1d",
-    "ip_count_1d",
-    "ip_fp_rate_1d",
-    "ip_attack_rate_1d",
-    "short_host_count_1d",
-    "short_host_fp_rate_1d",
-    "short_host_attack_rate_1d",
-    "short_ip_count_1d",
-    "short_ip_fp_rate_1d",
-    "short_ip_attack_rate_1d",
-    "seconds_since_short_seen",
-    "seconds_since_host_seen",
-    "seconds_since_ip_seen",
-    "seconds_since_short_host_seen",
-]
+from thesis.configs import (
+    dataset_for_scenario,
+    load_base_features,
+    load_dynamic_features,
+)
 
 
 class FeatureSchemaRegistry:
@@ -122,13 +93,27 @@ class FeatureSchemaRegistry:
                     f"so schema_version='{schema_version}' cannot be applied."
                 )
 
+            base = None
+            if spec.get("base"):
+                dataset = dataset_for_scenario(scenario_name)
+                if dataset is None:
+                    raise ValueError(
+                        f"Scenario '{scenario_name}' is not listed under any "
+                        "dataset in scenarios.json; cannot resolve base features."
+                    )
+                base = BaseFeatureSchema(load_base_features(dataset))
+
+            dynamic = (
+                DynamicFeatureSchema(load_dynamic_features())
+                if spec.get("dynamic")
+                else None
+            )
+
             return FeatureSchema(
                 schema_name=schema_name,
                 schema_version=resolved_schema_version,
-                base=BaseFeatureSchema(BASE_FEATURES) if spec.get("base") else None,
-                dynamic=DynamicFeatureSchema(DYNAMIC_FEATURES)
-                if spec.get("dynamic")
-                else None,
+                base=base,
+                dynamic=dynamic,
                 symbolic=symbolic,
             )
 

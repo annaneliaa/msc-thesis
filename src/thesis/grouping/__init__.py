@@ -7,6 +7,7 @@ from thesis.grouping.group_alerts import (
     TIME_DELTA_METHOD,
     TIME_DELTA_HOST_METHOD,
     SURICATA_GROUPED_METHOD,
+    CSCAS_METHOD,
     group_alerts,
 )
 
@@ -17,5 +18,6 @@ __all__ = [
     "TIME_DELTA_METHOD",
     "TIME_DELTA_HOST_METHOD",
     "SURICATA_GROUPED_METHOD",
+    "CSCAS_METHOD",
     "group_alerts",
 ]

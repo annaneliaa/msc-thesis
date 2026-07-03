@@ -180,5 +180,11 @@ class ParsedSuricataGroup:
     ts: int
     n_alerts: int
     tokens: set[str]
+    proto: int
     ext_ip: str
+    ext_ip_is_multiple: bool
+    ext_port: int
+    int_ip: str | None
+    int_ip_is_multiple: bool
+    int_port: int
     label: str  # "benign" | "attack"

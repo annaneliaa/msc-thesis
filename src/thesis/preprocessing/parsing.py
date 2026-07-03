@@ -94,7 +94,13 @@ def parse_suricata_group_row(row: IncomingSuricataGroup) -> ParsedSuricataGroup:
         ts=ts,
         n_alerts=row.alert_count,
         tokens=sig.tokens,
+        proto=row.proto,
         ext_ip=row.ext_ip,
+        ext_ip_is_multiple=(row.ext_ip == "-1"),
+        ext_port=row.ext_port,
+        int_ip=row.int_ip,
+        int_ip_is_multiple=(row.int_ip is None),
+        int_port=row.int_port,
         label="benign" if row.label == 0 else "attack",
     )
 

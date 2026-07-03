@@ -315,6 +315,12 @@ def ingest_cscas_scenario(
                 group_label=parsed.label,
                 alert_labels=None,
                 weight=1.0,
+                proto=parsed.proto,
+                int_ip=parsed.int_ip,
+                int_port=parsed.int_port,
+                ext_port=parsed.ext_port,
+                int_ip_is_multiple=parsed.int_ip_is_multiple,
+                ext_ip_is_multiple=parsed.ext_ip_is_multiple,
             )
         )
 
@@ -435,6 +441,12 @@ def alert_group_to_dict(t: AlertGroup) -> dict:
         "group_label": t.group_label,
         "alert_labels": sorted(t.alert_labels) if t.alert_labels is not None else None,
         "weight": t.weight,
+        "proto": t.proto,
+        "int_ip": t.int_ip,
+        "int_port": t.int_port,
+        "ext_port": t.ext_port,
+        "int_ip_is_multiple": t.int_ip_is_multiple,
+        "ext_ip_is_multiple": t.ext_ip_is_multiple,
     }
 
 
@@ -612,6 +624,12 @@ def alert_group_from_dict(d: dict) -> AlertGroup:
         if d.get("alert_labels") is not None
         else None,
         weight=d.get("weight", 1.0),
+        proto=d.get("proto"),
+        int_ip=d.get("int_ip"),
+        int_port=d.get("int_port"),
+        ext_port=d.get("ext_port"),
+        int_ip_is_multiple=d.get("int_ip_is_multiple", False),
+        ext_ip_is_multiple=d.get("ext_ip_is_multiple", False),
     )
 
 

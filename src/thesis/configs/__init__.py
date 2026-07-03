@@ -31,3 +31,21 @@ def dataset_for_scenario(scenario: str) -> str | None:
         if scenario in scenarios:
             return dataset
     return None
+
+
+def load_base_features(dataset: str) -> list[str]:
+    """Load the base feature list for a dataset (e.g. 'ait-ads', 'cscas')."""
+    with (_CONFIGS_DIR / "baseline_features.json").open() as f:
+        mapping = json.load(f)
+    if dataset not in mapping:
+        raise KeyError(
+            f"No baseline features defined for dataset '{dataset}'. "
+            f"Available: {list(mapping)}"
+        )
+    return mapping[dataset]
+
+
+def load_dynamic_features() -> list[str]:
+    """Load the dataset-agnostic dynamic feature list."""
+    with (_CONFIGS_DIR / "dynamic_features.json").open() as f:
+        return json.load(f)

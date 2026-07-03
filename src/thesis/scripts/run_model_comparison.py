@@ -15,7 +15,8 @@ Usage:
   python src/thesis/scripts/run_model_comparison.py --all --filtered naive50
   python src/thesis/scripts/run_model_comparison.py --all --no-run --filtered
   python src/thesis/scripts/run_model_comparison.py fox --models logreg
-  python src/thesis/scripts/run_model_comparison.py fox --models logreg mlp
+  python src/thesis/scripts/run_model_comparison.py fox --models logreg mlp \
+    --filter-config src/thesis/configs/mining_filters_simple.yaml
 
 Mining scope (--mine-frac / --no-overlap):
   AlertGroups are sorted chronologically before any split is applied.
@@ -703,7 +704,7 @@ def plot_perf_auc(
     ax.set_xticklabels(scenarios, rotation=20, ha="right")
     ax.set_ylim(0, 1.1)
     ax.set_ylabel("AUC")
-    ax.set_title("AUC comparison: LogReg vs MLP")
+    ax.set_title("AUC comparison: " + " vs ".join(_MODEL_LABELS[m] for m in models))
     ax.legend(fontsize=8, loc="lower right")
     ax.grid(axis="y", alpha=0.3)
     fig.tight_layout()
@@ -737,7 +738,7 @@ def plot_perf_metrics(
     scenarios = sorted(df["scenario"].unique())
     n_sc = len(scenarios)
     x = np.arange(n_sc)
-    w = 0.35
+    w = 0.8 / len(models)
 
     metrics = [
         ("f1", "F1"),
@@ -748,7 +749,7 @@ def plot_perf_metrics(
     fig, axes = plt.subplots(2, 2, figsize=(max(10, n_sc * 2.2), 8))
     for ax, (key, title) in zip(axes.flatten(), metrics):
         for i, model in enumerate(models):
-            offset = w * (i - 0.5)
+            offset = w * (i - (len(models) - 1) / 2)
             vals = []
             for s in scenarios:
                 r = base[(base["scenario"] == s) & (base["model"] == model)][key]
@@ -779,7 +780,7 @@ def plot_perf_metrics(
         ax.legend(fontsize=8)
         ax.grid(axis="y", alpha=0.3)
 
-    fig.suptitle("Baseline metrics: LogReg vs MLP")
+    fig.suptitle("Baseline metrics: " + " vs ".join(_MODEL_LABELS[m] for m in models))
     fig.tight_layout()
     fig.text(
         0.99,

@@ -81,3 +81,11 @@ class AlertGroup:  # encoding/experiment input (with weight)
     alert_labels: Optional[set[str]] = None
 
     weight: float = 1.0
+
+    # CSCAS-only network metadata (None for AIT-ADS scenarios)
+    proto: Optional[int] = None
+    int_ip: Optional[str] = None
+    int_port: Optional[int] = None
+    ext_port: Optional[int] = None
+    int_ip_is_multiple: bool = False
+    ext_ip_is_multiple: bool = False
