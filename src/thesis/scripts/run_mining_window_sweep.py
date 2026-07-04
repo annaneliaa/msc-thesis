@@ -43,11 +43,22 @@ Usage:
     # CSCAS (pre-grouped Suricata scenario) — run once first:
     #   python src/thesis/scripts/run_ingest_cscas.py
     # then use --grouping-method since CSCAS alert_groups live under
-    # groups/suricata_grouped/ rather than groups/fixed_window/. Sequence
+    # groups/cscas_pregrouped/ rather than groups/fixed_window/. Sequence
     # mining is skipped automatically for these groups (sorted_items is
     # always empty — see _run_mining_for_window).
     python src/thesis/scripts/run_mining_window_sweep.py cscas \
-        --grouping-method suricata_grouped \
+        --grouping-method cscas_pregrouped \
+        --granularities 0.1 0.2 0.33 \
+        --modes benign mixed
+
+    # CSCAS grouped by (internal target IP, 1h window) instead of one basket
+    # per signature — baskets can span multiple signatures, so itemset
+    # mining can find real cross-signature co-occurrence and sequence mining
+    # has actual sorted_items to chain. Ingest with the matching method first:
+    #   python src/thesis/scripts/run_ingest_cscas.py \
+    #       --grouping-method cscas_target_window --window-seconds 3600
+    python src/thesis/scripts/run_mining_window_sweep.py cscas \
+        --grouping-method cscas_target_window \
         --granularities 0.1 0.2 0.33 \
         --modes benign mixed
 
@@ -58,7 +69,12 @@ Output (under artifacts/experiments/mining_window_sweep/<dataset>/<run_tag>/,
         <timestamp>_<filter_config_stem>_<modes>_gran-<granularities>, e.g.
         20260701_120000_mining_filters_simple_benign-mixed_gran-0.1-0.2-0.33;
         --output-dir overrides this entirely):
-    window_features_<scenario>_<mode>_<gran>.csv  — mined features per window
+    window_features_<scenario>_<mode>_<gran>_<win>.csv  — mined features for one
+                                                            window, with pattern,
+                                                            k, support*, confidence*
+    mined_features_overview.csv                    — the above, concatenated across
+                                                       every scenario/mode/gran/window
+                                                       mined this run, for eyeballing
     table1_stability_<scenario>_<mode>.csv         — within-scenario stability
     table2_sharing.csv                             — cross-scenario feature sharing
     table3_convergence.csv                         — Jaccard convergence curves
@@ -110,8 +126,11 @@ def _load_raw_alert_groups(
         / "alert_groups_raw.json"
     )
     if not path.exists():
-        if grouping_method == "suricata_grouped":
-            hint = "Run `python src/thesis/scripts/run_ingest_cscas.py` first."
+        if grouping_method.startswith("cscas"):
+            hint = (
+                "Run `python src/thesis/scripts/run_ingest_cscas.py "
+                f"--grouping-method {grouping_method}` first."
+            )
         else:
             hint = (
                 f"Run `python src/thesis/scripts/run_ingest_ait_ads.py {scenario}` "
@@ -158,9 +177,25 @@ def _save_temp_alert_groups(rows: list[dict], path: Path) -> None:
         json.dump(rows, f)
 
 
-def _window_cache_key(scenario: str, mode: str, gran: float, win_idx: int) -> str:
+def _window_cache_key(
+    scenario: str,
+    mode: str,
+    gran: float,
+    win_idx: int,
+    grouping_method: str,
+    min_support: float,
+    max_itemset_size: int,
+    max_seq_len: int,
+) -> str:
     gran_tag = f"{gran:.6f}".rstrip("0").rstrip(".")
-    return f"{scenario}__{mode}__{gran_tag}__{win_idx}"
+    # Every parameter that changes what gets mined must be part of the cache
+    # key -- otherwise a later run with e.g. a different --min-support or
+    # --grouping-method silently returns another run's cached parquets for
+    # the same (scenario, mode, gran, win_idx).
+    return (
+        f"{scenario}__{mode}__{gran_tag}__{win_idx}"
+        f"__{grouping_method}__sup{min_support:g}__k{max_itemset_size}__seq{max_seq_len}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -306,6 +341,7 @@ def _run_mining_for_window(
     max_seq_len: int,
     filter_config: Path | None,
     cache_dir: Path,
+    grouping_method: str,
     smart_ratio_threshold: float = 1.5,
     f_attack_scenario: float = 0.0,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
@@ -322,7 +358,16 @@ def _run_mining_for_window(
     f_attack is circular: in a heavily attack-laden window the expected
     background support inflates, rescuing almost everything incorrectly.
     """
-    key = _window_cache_key(scenario, mode, gran, win_idx)
+    key = _window_cache_key(
+        scenario,
+        mode,
+        gran,
+        win_idx,
+        grouping_method,
+        min_support,
+        max_itemset_size,
+        max_seq_len,
+    )
     win_cache = cache_dir / key
     eclat_raw_path = win_cache / "eclat_raw.parquet"
     eclat_filt_path = win_cache / "eclat_filtered.parquet"
@@ -362,7 +407,16 @@ def _run_mining_for_window(
     # We reuse the mixed mode's cached raw parquets if available to avoid
     # re-running the expensive mining step.
     if mode == "smart":
-        mixed_key = _window_cache_key(scenario, "mixed", gran, win_idx)
+        mixed_key = _window_cache_key(
+            scenario,
+            "mixed",
+            gran,
+            win_idx,
+            grouping_method,
+            min_support,
+            max_itemset_size,
+            max_seq_len,
+        )
         mixed_cache = cache_dir / mixed_key
         mixed_eclat_raw = mixed_cache / "eclat_raw.parquet"
         mixed_seq_raw = mixed_cache / "seq_raw.parquet"
@@ -403,7 +457,7 @@ def _run_mining_for_window(
         )
         eclat_raw = eclat_result.mined_df.copy()
 
-        # Pre-grouped scenarios (e.g. CSCAS/suricata_grouped) have no
+        # Pre-grouped scenarios (e.g. CSCAS/cscas_pregrouped) have no
         # intra-group alert order — sorted_items is always empty — so
         # PrefixSpan would mine zero sequences and the downstream confidence
         # scoring/sort step chokes on the resulting columnless DataFrame.
@@ -506,6 +560,44 @@ def _feature_set_from_dfs(eclat_df: pd.DataFrame, seq_df: pd.DataFrame) -> set[s
     for _, row in seq_df.iterrows():
         ids.add(_feature_id_from_seq_row(row))
     return ids
+
+
+_DETAIL_COLUMNS = [
+    "k",
+    "support",
+    "support_benign",
+    "support_attack",
+    "support_diff",
+    "confidence_benign",
+    "confidence_attack",
+]
+
+
+def _feature_detail_rows(df: pd.DataFrame, mining_type: str, source: str) -> list[dict]:
+    """
+    Row-per-pattern view of a mined itemset/sequence DataFrame, for the
+    human-inspectable mined_features_overview.csv — unlike _feature_set_from_dfs
+    (which only produces an opaque id used for Jaccard/stability bookkeeping),
+    this keeps support/confidence numbers so patterns can be eyeballed directly.
+    """
+    if df.empty:
+        return []
+    id_fn = (
+        _feature_id_from_itemset_row
+        if mining_type == "itemset"
+        else _feature_id_from_seq_row
+    )
+    rows: list[dict] = []
+    for _, row in df.iterrows():
+        rec = {
+            "mining_type": mining_type,
+            "source": source,
+            "pattern": id_fn(row),
+        }
+        for col in _DETAIL_COLUMNS:
+            rec[col] = row.get(col)
+        rows.append(rec)
+    return rows
 
 
 # ---------------------------------------------------------------------------
@@ -1105,6 +1197,7 @@ def main() -> None:
     # ------------------------------------------------------------------
     all_results: list[WindowResult] = []
     all_rows_by_scenario: dict[str, list[dict]] = {}
+    all_wf_rows: list[dict] = []
 
     for scenario in args.scenarios:
         print(f"\n[scenario={scenario}] Loading alert_groups...")
@@ -1164,6 +1257,7 @@ def main() -> None:
                         max_seq_len=args.max_seq_len,
                         filter_config=filter_config,
                         cache_dir=win_mining_cache,
+                        grouping_method=args.grouping_method,
                     )
 
                     features_raw = _feature_set_from_dfs(eclat_raw, seq_raw)
@@ -1190,19 +1284,34 @@ def main() -> None:
                         )
                     )
 
-                    # Save window features CSV for inspection
+                    # Save window features CSV for inspection — full pattern/
+                    # support/confidence detail, not just an opaque feature id.
+                    wf_rows = (
+                        _feature_detail_rows(eclat_raw, "itemset", "raw")
+                        + _feature_detail_rows(seq_raw, "sequence", "raw")
+                        + _feature_detail_rows(eclat_filt, "itemset", "filtered")
+                        + _feature_detail_rows(seq_filt, "sequence", "filtered")
+                    )
                     wf_rows = [
-                        {"feature": f, "source": "raw"} for f in features_raw
-                    ] + [
-                        {"feature": f, "source": "filtered"} for f in features_filtered
+                        {
+                            "scenario": scenario,
+                            "mode": mode,
+                            "gran": gran,
+                            "win_idx": win_idx,
+                            **rec,
+                        }
+                        for rec in wf_rows
                     ]
-                    wf_df = pd.DataFrame(wf_rows).drop_duplicates()
+                    wf_df = pd.DataFrame(wf_rows).drop_duplicates(
+                        subset=["mining_type", "source", "pattern"]
+                    )
                     wf_dir = out_dir / "window_features"
                     wf_dir.mkdir(parents=True, exist_ok=True)
                     wf_name = (
                         f"window_features_{scenario}_{mode}_{gran:.2f}_{win_idx}.csv"
                     )
                     wf_df.to_csv(wf_dir / wf_name, index=False)
+                    all_wf_rows.extend(wf_df.to_dict("records"))
 
     # ------------------------------------------------------------------
     # Phase 2: analysis tables
@@ -1240,6 +1349,18 @@ def main() -> None:
         (t7, "table7_cross_granularity"),
     ]:
         df.to_csv(out_dir / f"{name}.csv", index=False)
+
+    # Consolidated mined-features overview — every pattern mined this run,
+    # with its actual itemset/sequence content and support/confidence, so it
+    # can be eyeballed directly instead of only through the aggregate stats
+    # tables above (which report on feature *ids*, not what they contain).
+    overview_df = pd.DataFrame(all_wf_rows)
+    if not overview_df.empty:
+        overview_df = overview_df.sort_values(
+            ["scenario", "mode", "gran", "win_idx", "support"],
+            ascending=[True, True, True, True, False],
+        )
+    overview_df.to_csv(out_dir / "mined_features_overview.csv", index=False)
 
     # Summary text
     summary = _summary_lines(t1, t2, t3, t4, t5, t6, t7)

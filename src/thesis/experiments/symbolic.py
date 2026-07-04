@@ -61,6 +61,7 @@ from pathlib import Path
 import pandas as pd
 
 from thesis.config import load_mining_filter_config
+from thesis.configs import dataset_for_scenario
 from thesis.experiments.baseline import (
     ALERTBERT_METHOD,
     _EXPERIMENTS_DIR,
@@ -71,6 +72,7 @@ from thesis.pipeline.pipeline import (
     encode_and_cache_alert_groups,
     ensure_feature_manifest,
     ingest_ait_alert_batch,
+    ingest_cscas_scenario,
     load_or_build_alert_groups,
 )
 from thesis.pipeline.pipeline import is_single_class_split as _is_single_class_split
@@ -113,6 +115,7 @@ def _mine_and_register_symbolic_schema(
     abstraction_level: int = 0,
     min_support_diff: float = 0.05,
     run_attack_pass: bool = True,
+    has_sequence_data: bool = True,
 ) -> Path:
     run_dir = create_run_dir(run_name)
 
@@ -133,20 +136,27 @@ def _mine_and_register_symbolic_schema(
         jaccard_threshold=jaccard_threshold,
     )
 
-    print("--- Running PrefixSpan sequence mining ---")
-    item_seq_result = run_alert_group_prefixspan_job(
-        alert_groups_path=alert_groups_path,
-        scenario_name=scenario,
-        run_name=run_name,
-        min_support=min_support,
-        max_len=max_seq_len,
-        target_label=target_label,
-        run_dir=run_dir,
-        top_k_per_pass=_top_k_per_pass,
-    )
+    if has_sequence_data:
+        print("--- Running PrefixSpan sequence mining ---")
+        item_seq_result = run_alert_group_prefixspan_job(
+            alert_groups_path=alert_groups_path,
+            scenario_name=scenario,
+            run_name=run_name,
+            min_support=min_support,
+            max_len=max_seq_len,
+            target_label=target_label,
+            run_dir=run_dir,
+            top_k_per_pass=_top_k_per_pass,
+        )
+        item_seq_df = item_seq_result.mined_df.copy()
+    else:
+        print(
+            "  [skip] All alert_groups have empty sorted_items (pre-grouped "
+            "scenario) — skipping sequence mining."
+        )
+        item_seq_df = pd.DataFrame()
 
     eclat_df = eclat_result.mined_df.copy()
-    item_seq_df = item_seq_result.mined_df.copy()
 
     mining_stats: dict = {
         "n_itemsets_mined": len(eclat_df),
@@ -240,20 +250,27 @@ def _mine_and_register_symbolic_schema(
             jaccard_threshold=jaccard_threshold,
         )
 
-        print("--- Running PrefixSpan sequence mining on attack ---")
-        attack_seq_result = run_alert_group_prefixspan_job(
-            alert_groups_path=alert_groups_path,
-            scenario_name=scenario,
-            run_name=run_name,
-            min_support=min_support,
-            max_len=max_seq_len,
-            target_label="attack",
-            run_dir=run_dir / "attack",
-            top_k_per_pass=_top_k_per_pass,
-        )
+        if has_sequence_data:
+            print("--- Running PrefixSpan sequence mining on attack ---")
+            attack_seq_result = run_alert_group_prefixspan_job(
+                alert_groups_path=alert_groups_path,
+                scenario_name=scenario,
+                run_name=run_name,
+                min_support=min_support,
+                max_len=max_seq_len,
+                target_label="attack",
+                run_dir=run_dir / "attack",
+                top_k_per_pass=_top_k_per_pass,
+            )
+            attack_seq_df = attack_seq_result.mined_df.copy()
+        else:
+            print(
+                "  [skip] All alert_groups have empty sorted_items (pre-grouped "
+                "scenario) — skipping attack sequence mining."
+            )
+            attack_seq_df = pd.DataFrame()
 
         attack_eclat_df = attack_eclat_result.mined_df.copy()
-        attack_seq_df = attack_seq_result.mined_df.copy()
 
         mining_stats["n_attack_itemsets_mined"] = len(attack_eclat_df)
         mining_stats["n_attack_sequences_mined"] = len(attack_seq_df)
@@ -523,19 +540,24 @@ def run_symbolic_experiment(
         ):
             feature_selection = mining_filters.feature_selection
 
-    # 1. Convert alerts CSV → JSON
-    print("[1/8] Converting alerts to JSON...")
-    alerts_path = convert_ait_alerts_to_json(config.scenario, config.alerts_json_path)
+    # 1-2. Ingest raw data into alert_groups_raw.json under config.cache_dir
+    if dataset_for_scenario(config.scenario) == "cscas":
+        print("[1-2/8] Ingesting CSCAS scenario...")
+        ingest_cscas_scenario(cache_dir=config.cache_dir)
+    else:
+        print("[1/8] Converting alerts to JSON...")
+        alerts_path = convert_ait_alerts_to_json(
+            config.scenario, config.alerts_json_path
+        )
 
-    # 2. Tokenise + ingest into cache
-    print("[2/8] Processing alert batch...")
-    ingest_ait_alert_batch(
-        config.scenario,
-        alerts_path,
-        config.cache_dir,
-        grouping_mode=config.grouping.mode,
-        grouping=config.grouping,
-    )
+        print("[2/8] Processing alert batch...")
+        ingest_ait_alert_batch(
+            config.scenario,
+            alerts_path,
+            config.cache_dir,
+            grouping_mode=config.grouping.mode,
+            grouping=config.grouping,
+        )
 
     # 3. Ensure feature manifest
     print("[3/8] Checking feature manifest...")
@@ -694,6 +716,7 @@ def run_symbolic_experiment(
             print(
                 f"  [info] No attack alert_groups in mine window ({n_mine}/{n_total}) — skipping attack mining pass."
             )
+        has_sequence_data = any(t.sorted_items for t in alert_groups[:n_mine])
         symbolic_schema_path, mining_run_dir, mining_stats = (
             _mine_and_register_symbolic_schema(
                 scenario=config.scenario,
@@ -708,6 +731,7 @@ def run_symbolic_experiment(
                 abstraction_map_path=config.abstraction_map_path,
                 abstraction_level=config.abstraction_level,
                 run_attack_pass=n_attack_in_mine > 0,
+                has_sequence_data=has_sequence_data,
             )
         )
 

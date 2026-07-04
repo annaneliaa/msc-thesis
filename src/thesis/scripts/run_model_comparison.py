@@ -17,6 +17,14 @@ Usage:
   python src/thesis/scripts/run_model_comparison.py fox --models logreg
   python src/thesis/scripts/run_model_comparison.py fox --models logreg mlp \
     --filter-config src/thesis/configs/mining_filters_simple.yaml
+  python src/thesis/scripts/run_model_comparison.py cscas --models logreg mlp
+
+  cscas is pre-grouped (rows arrive already aggregated, not an alert-by-alert
+  stream), so --filtered/--window-size don't apply to it and it's resolved to
+  its own cache dir (artifacts/cache/cscas/groups/cscas_pregrouped/)
+  automatically. It can be mixed with AIT-ADS scenarios in the same run, e.g.
+  `fox cscas`. Anomaly models (bernoulli_oc, autoencoder_oc, ocsvm) aren't
+  wired for cscas yet and are skipped for it with a warning.
 
 Mining scope (--mine-frac / --no-overlap):
   AlertGroups are sorted chronologically before any split is applied.
@@ -105,6 +113,7 @@ import numpy as np
 import pandas as pd
 
 from thesis.config import GroupingConfig
+from thesis.configs import dataset_for_scenario
 from thesis.experiments.baseline import (
     BaselineExperimentConfig,
     run_baseline_experiment,
@@ -114,6 +123,7 @@ from thesis.experiments.symbolic import (
     run_symbolic_experiment,
 )
 from thesis.experiments.anomaly import run_anomaly_experiment
+from thesis.grouping.group_alerts import CSCAS_PREGROUPED_METHOD
 from thesis.schemas.experiments import AnomalyExperimentConfig
 from thesis.paths import ABSTRACTION_MAP_PATH, CACHE_DIR
 from thesis.visualization.eda import SCENARIOS as ALL_SCENARIOS
@@ -152,6 +162,21 @@ def _data_label(filtered: bool, method: str | None = None) -> str:
     if not filtered:
         return "data: raw"
     return f"data: {method}" if method else "data: filtered"
+
+
+def _dataset_scenario_path(base: Path, scenario: str) -> Path:
+    """base/<dataset>/<scenario>, e.g. .../scenario/ait-ads/fox or .../scenario/cscas/cscas.
+
+    Falls back to the legacy flat base/<scenario> layout when that's what
+    already exists on disk (runs written before dataset subdirs existed),
+    so resuming/reading older run directories still works.
+    """
+    dataset = dataset_for_scenario(scenario) or "unknown"
+    nested = base / dataset / scenario
+    flat = base / scenario
+    if not nested.exists() and flat.exists():
+        return flat
+    return nested
 
 
 # ---------------------------------------------------------------------------
@@ -208,7 +233,7 @@ def _run_for_model(
     """
     print(f"\n{'='*60}\n  {model_name.upper()} — {scenario}\n{'='*60}")
 
-    scenario_dir = model_dir / "scenario" / scenario
+    scenario_dir = _dataset_scenario_path(model_dir / "scenario", scenario)
     scenario_dir.mkdir(parents=True, exist_ok=True)
     extra: dict = {"cache_dir": cache_dir}
     if grouping is not None:
@@ -292,7 +317,7 @@ def _run_for_model(
     if symbolic.mining_run_dir is not None:
         _run_mining_inspection(
             symbolic.mining_run_dir,
-            out_dir=model_dir.parent / "mining" / scenario,
+            out_dir=_dataset_scenario_path(model_dir.parent / "mining", scenario),
         )
 
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -350,7 +375,9 @@ def _run_for_model(
 
 
 def _load_compare_json(model_dir: Path, scenario: str) -> dict | None:
-    candidates = sorted((model_dir / "scenario" / scenario).glob("compare_*.json"))
+    candidates = sorted(
+        _dataset_scenario_path(model_dir / "scenario", scenario).glob("compare_*.json")
+    )
     if not candidates:
         return None
     with candidates[-1].open() as f:
@@ -480,6 +507,8 @@ def _build_comparison_df(all_results: dict[str, list[dict]]) -> pd.DataFrame:
                     row[k] = m.get(k, float("nan"))
                 rows.append(row)
     df = pd.DataFrame(rows)
+    if df.empty:
+        return df
     for col in ["auc", "f1", "precision", "recall", "balanced_accuracy"]:
         df[col] = pd.to_numeric(df[col], errors="coerce").round(4)
     return df
@@ -949,7 +978,10 @@ def run_per_model_feature_analysis(
         if s not in sym_data:
             stored = compare[s].get("symbolic", {}).get("results_file")
             if stored:
-                local = model_dir / "scenario" / s / Path(stored).name
+                local = (
+                    _dataset_scenario_path(model_dir / "scenario", s)
+                    / Path(stored).name
+                )
                 if local.exists():
                     with local.open() as _f:
                         sym_data[s] = json.load(_f)
@@ -1739,12 +1771,30 @@ def _run_main(args, run_dir: Path, plots_dir: Path) -> None:
                 if existing is not None and not args.force:
                     print(f"[skip] {model}/{scenario} — exists. Use --force to re-run.")
                     continue
+                is_cscas = dataset_for_scenario(scenario) == "cscas"
+                if is_cscas and model in ANOMALY_MODELS:
+                    print(
+                        f"[skip] {model}/{scenario} — anomaly experiments aren't "
+                        "wired for cscas yet (anomaly.py has no pre-grouped "
+                        "ingestion branch)."
+                    )
+                    continue
                 alerts_path = (
                     _REPO / "artifacts" / "processed-data" / scenario / alerts_filename
-                    if filtered
+                    if filtered and not is_cscas
                     else None
                 )
-                scenario_cache_dir = CACHE_DIR / scenario / "groups" / method_tag
+                scenario_method_tag = (
+                    CSCAS_PREGROUPED_METHOD if is_cscas else method_tag
+                )
+                scenario_grouping = (
+                    GroupingConfig(mode=CSCAS_PREGROUPED_METHOD)
+                    if is_cscas
+                    else grouping
+                )
+                scenario_cache_dir = (
+                    CACHE_DIR / scenario / "groups" / scenario_method_tag
+                )
                 scenario_cache_dir.mkdir(parents=True, exist_ok=True)
                 try:
                     _run_for_model(
@@ -1754,7 +1804,7 @@ def _run_main(args, run_dir: Path, plots_dir: Path) -> None:
                         filter_config=args.filter_config,
                         alerts_json_path=alerts_path,
                         cache_dir=scenario_cache_dir,
-                        grouping=grouping,
+                        grouping=scenario_grouping,
                         mine_frac=args.mine_frac,
                         no_overlap=args.no_overlap,
                         random_split=args.random_split,

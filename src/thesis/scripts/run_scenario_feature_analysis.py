@@ -49,6 +49,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import Patch
 
+from thesis.configs import dataset_for_scenario
+
 
 _HERE = Path(__file__).resolve()
 _REPO = next(p for p in _HERE.parents if (p / "pyproject.toml").exists())
@@ -90,7 +92,30 @@ def _scenarios_in_run(run_dir: Path) -> list[str]:
     scenario_base = run_dir / "scenario"
     if not scenario_base.is_dir():
         return []
-    return sorted(p.name for p in scenario_base.iterdir() if p.is_dir())
+    # New layout nests scenario dirs under a dataset dir (scenario/<dataset>/<scenario>);
+    # older runs have scenario dirs directly under scenario/<scenario>. A child with
+    # its own compare_*.json is a scenario dir; otherwise it's a dataset dir one
+    # level up from the scenario dirs.
+    scenarios: set[str] = set()
+    for child in scenario_base.iterdir():
+        if not child.is_dir():
+            continue
+        if any(child.glob("compare_*.json")):
+            scenarios.add(child.name)
+        else:
+            scenarios.update(p.name for p in child.iterdir() if p.is_dir())
+    return sorted(scenarios)
+
+
+def _scenario_dir(run_dir: Path, scenario: str) -> Path:
+    """run_dir/scenario/<dataset>/<scenario>, falling back to the legacy flat
+    run_dir/scenario/<scenario> layout when that's what already exists on disk."""
+    dataset = dataset_for_scenario(scenario) or "unknown"
+    nested = run_dir / "scenario" / dataset / scenario
+    flat = run_dir / "scenario" / scenario
+    if not nested.exists() and flat.exists():
+        return flat
+    return nested
 
 
 def load_all(
@@ -105,7 +130,7 @@ def load_all(
     symbolic_by_scenario: dict[str, dict] = {}
 
     for scenario in scenarios:
-        scenario_dir = run_dir / "scenario" / scenario
+        scenario_dir = _scenario_dir(run_dir, scenario)
         candidates = sorted(scenario_dir.glob("compare_*.json"))
         if not candidates:
             print(

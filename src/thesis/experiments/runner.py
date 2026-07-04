@@ -25,6 +25,7 @@ Examples:
     python -m thesis.experiments.runner transfer fox bear
     python -m thesis.experiments.runner transfer fox bear --filter-config src/thesis/configs/mining_filters_strict.yaml
     python -m thesis.experiments.runner ingest-cscas cscas
+    python -m thesis.experiments.runner symbolic cscas
 """
 
 from __future__ import annotations
@@ -34,11 +35,14 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from thesis.config import GroupingConfig
+from thesis.configs import dataset_for_scenario
 from thesis.experiments.baseline import (
     BaselineExperimentConfig,
     _EXPERIMENTS_DIR,
     run_baseline_experiment,
 )
+from thesis.grouping.group_alerts import CSCAS_PREGROUPED_METHOD
 from thesis.pipeline.pipeline import ingest_cscas_scenario
 from thesis.experiments.symbolic import (
     SymbolicExperimentConfig,
@@ -48,11 +52,34 @@ from thesis.experiments.transfer import (
     TransferExperimentConfig,
     run_transfer_experiment,
 )
-from thesis.paths import ABSTRACTION_MAP_PATH
+from thesis.paths import ABSTRACTION_MAP_PATH, CACHE_DIR
+
+
+def _resolve_grouping_mode(scenario: str, grouping_mode: str = "fixed_window") -> str:
+    """Actual grouping method for a scenario: cscas rows arrive pre-grouped, others use the requested mode."""
+    return (
+        CSCAS_PREGROUPED_METHOD
+        if dataset_for_scenario(scenario) == "cscas"
+        else grouping_mode
+    )
+
+
+def _resolve_cache_dir(scenario: str, grouping_mode: str = "fixed_window") -> Path:
+    """Scenario/grouping-specific cache dir, e.g. artifacts/cache/<scenario>/groups/<method>."""
+    return (
+        CACHE_DIR
+        / scenario
+        / "groups"
+        / _resolve_grouping_mode(scenario, grouping_mode)
+    )
 
 
 def run_baseline(scenario: str) -> None:
-    config = BaselineExperimentConfig(scenario=scenario)
+    config = BaselineExperimentConfig(
+        scenario=scenario,
+        cache_dir=_resolve_cache_dir(scenario),
+        grouping=GroupingConfig(mode=_resolve_grouping_mode(scenario)),
+    )
     result = run_baseline_experiment(config)
     print(
         f"\n[{scenario}] baseline done — "
@@ -65,6 +92,8 @@ def run_baseline(scenario: str) -> None:
 def run_symbolic(scenario: str, filter_config: Path | None = None) -> None:
     config = SymbolicExperimentConfig(
         scenario=scenario,
+        cache_dir=_resolve_cache_dir(scenario),
+        grouping=GroupingConfig(mode=_resolve_grouping_mode(scenario)),
         filter_config=filter_config,
         abstraction_map_path=ABSTRACTION_MAP_PATH,
     )
@@ -102,12 +131,19 @@ def run_compare(
     model_name: str = "logreg",
 ) -> None:
     print("\n--- Phase 1/2: baseline ---")
-    baseline_config = BaselineExperimentConfig(scenario=scenario, model_name=model_name)
+    baseline_config = BaselineExperimentConfig(
+        scenario=scenario,
+        model_name=model_name,
+        cache_dir=_resolve_cache_dir(scenario),
+        grouping=GroupingConfig(mode=_resolve_grouping_mode(scenario)),
+    )
     baseline = run_baseline_experiment(baseline_config)
 
     print("\n--- Phase 2/2: symbolic ---")
     symbolic_config = SymbolicExperimentConfig(
         scenario=scenario,
+        cache_dir=_resolve_cache_dir(scenario),
+        grouping=GroupingConfig(mode=_resolve_grouping_mode(scenario)),
         filter_config=filter_config,
         model_name=model_name,
     )

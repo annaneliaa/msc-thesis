@@ -15,7 +15,7 @@ class GroupingRecord:
 class GroupSnapshot:  # stable snapshot
     # identity
     group_id: str
-    method: str  # "fixed_window" | "alertbert" | "suricata_grouped"
+    method: str  # "fixed_window" | "alertbert" | "cscas_pregrouped"
 
     # temporal scope
     start_ts: int
@@ -63,7 +63,7 @@ class GroupSnapshot:  # stable snapshot
 class AlertGroup:  # encoding/experiment input (with weight)
     alert_group_id: str
     group_id: str
-    method: str  # "fixed_window" | "alertbert" | "suricata_grouped"
+    method: str  # "fixed_window" | "alertbert" | "cscas_pregrouped"
 
     start_ts: int
     end_ts: int

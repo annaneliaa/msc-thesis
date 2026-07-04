@@ -5,7 +5,7 @@ from thesis.schemas.cache import AlertCacheEntry, GroupCacheEntry
 from thesis.schemas.groups import GroupingRecord
 from thesis.schemas.preprocessing import ParsedSuricataGroup, TokenizedAlert
 from thesis.caching.cache import TokenCache
-from thesis.grouping.group_alerts import SURICATA_GROUPED_METHOD
+from thesis.grouping.group_alerts import CSCAS_PREGROUPED_METHOD
 from thesis.caching.util import label_window_from_alert_labels
 
 
@@ -142,7 +142,7 @@ class CacheIngestor:
     def _suricata_to_group_cache_entry(parsed: ParsedSuricataGroup) -> GroupCacheEntry:
         return GroupCacheEntry(
             group_id=parsed.group_id,
-            method=SURICATA_GROUPED_METHOD,
+            method=CSCAS_PREGROUPED_METHOD,
             status="closed",
             start_ts=parsed.ts,
             end_ts=parsed.ts,

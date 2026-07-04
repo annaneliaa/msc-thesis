@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from thesis.paths import ensure_artifact_dirs
+from thesis.configs import dataset_for_scenario
 from thesis.grouping.group_alerts import ALERTBERT_METHOD
 from thesis.schemas.experiments import BaselineExperimentConfig, ExperimentResult
 from thesis.pipeline.pipeline import (
@@ -28,6 +29,7 @@ from thesis.pipeline.pipeline import (
     encode_and_cache_alert_groups,
     ensure_feature_manifest,
     ingest_ait_alert_batch,
+    ingest_cscas_scenario,
     is_single_class_split,
     load_or_build_alert_groups,
 )
@@ -51,19 +53,26 @@ def run_baseline_experiment(
 
     print(f"\n[Baseline] Scenario: '{config.scenario}'")
 
-    # 1. Convert alerts CSV → JSON
-    print("[1/6] Converting alerts to JSON...")
-    alerts_path = convert_ait_alerts_to_json(config.scenario, config.alerts_json_path)
+    # 1-2. Ingest raw data into alert_groups_raw.json under config.cache_dir
+    if dataset_for_scenario(config.scenario) == "cscas":
+        print("[1-2/7] Ingesting CSCAS scenario...")
+        ingest_cscas_scenario(cache_dir=config.cache_dir)
+    else:
+        # 1. Convert alerts CSV → JSON
+        print("[1/7] Converting alerts to JSON...")
+        alerts_path = convert_ait_alerts_to_json(
+            config.scenario, config.alerts_json_path
+        )
 
-    # 2. Tokenise + ingest into cache
-    print("[2/7] Processing alert batch...")
-    ingest_ait_alert_batch(
-        config.scenario,
-        alerts_path,
-        config.cache_dir,
-        grouping_mode=config.grouping.mode,
-        grouping=config.grouping,
-    )
+        # 2. Tokenise + ingest into cache
+        print("[2/7] Processing alert batch...")
+        ingest_ait_alert_batch(
+            config.scenario,
+            alerts_path,
+            config.cache_dir,
+            grouping_mode=config.grouping.mode,
+            grouping=config.grouping,
+        )
 
     # 3. Ensure feature manifest exists (creates base + base+dynamic schemas if missing)
     print("[3/7] Checking feature manifest...")

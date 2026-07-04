@@ -23,7 +23,17 @@ class IncomingAlert:
     def from_row(cls, row: dict[str, Any]) -> "IncomingAlert":
         """
         Create IncomingAlert from a dict-like row.
+
+        Accepts both the canonical alerts.json field names and the raw
+        AIT-ADS CSV column names ("name", "time_label"), so stale
+        alerts.json caches written before the canonical rename existed
+        still parse correctly.
         """
+        if "signature" not in row and "name" in row:
+            row = {**row, "signature": row["name"]}
+        if "label" not in row and "time_label" in row:
+            row = {**row, "label": row["time_label"]}
+
         required = [
             "time",
             "signature",
