@@ -64,15 +64,8 @@ def test_preprocess_alert_batch_cli_runs_full_pipeline(tmp_path, monkeypatch):
 
     cache = TokenCache(cache_dir=cache_dir / SCENARIO)
 
-    alert_files = list((cache_dir / SCENARIO / "alerts").glob("*.json"))
     group_files = list((cache_dir / SCENARIO / "groups").glob("*.json"))
-
-    assert len(alert_files) == 1
-    assert alert_files[0].name == f"{SCENARIO}.json"
     assert len(group_files) >= 1
-
-    alert_entries = cache.read_alert_batch(SCENARIO)
-    assert len(alert_entries) == 2
 
     snapshots = select_group_snapshots(cache=cache, require_closed=True)
     assert len(snapshots) >= 1
@@ -136,16 +129,8 @@ def test_duplicate_alert_ingestion_does_not_duplicate_group_entries(
 
     cache = TokenCache(cache_dir=cache_dir / SCENARIO)
 
-    alert_files = list((cache_dir / SCENARIO / "alerts").glob("*.json"))
     group_files = list((cache_dir / SCENARIO / "groups").glob("*.json"))
-
-    assert len(alert_files) == 1
     assert len(group_files) == 1
-
-    # Current pipeline behavior: duplicates are preserved in alert batch storage
-    alert_entries = cache.read_alert_batch(SCENARIO)
-    assert len(alert_entries) == 2
-    assert len({entry.alert_id for entry in alert_entries}) == 1
 
     snapshots = select_group_snapshots(cache=cache, require_closed=True)
     assert len(snapshots) == 1
@@ -195,13 +180,9 @@ def test_empty_alerts_are_not_added_to_cache(tmp_path, monkeypatch):
 
     assert result.exit_code == 0, result.stdout
 
-    alert_dir = cache_dir / SCENARIO / "alerts"
     group_dir = cache_dir / SCENARIO / "groups"
-
-    alert_files = list(alert_dir.glob("*.json")) if alert_dir.exists() else []
     group_files = list(group_dir.glob("*.json")) if group_dir.exists() else []
 
-    assert len(alert_files) == 0
     assert len(group_files) == 0
 
 

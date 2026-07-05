@@ -5,7 +5,7 @@ from thesis.features.schema_builder import build_symbolic_feature_schema
 from thesis.features.persistence import save_symbolic_feature_schema
 from thesis.features.manifest import initialize_feature_manifest
 from thesis.features.util import next_schema_version, register_symbolic_schema_version
-from thesis.schemas.features import SymbolicFeatureSchema
+from thesis.schemas.features import AttributePredicate, SymbolicFeatureSchema
 from thesis.schemas.mining import FeatureSelectionConfig
 
 
@@ -18,6 +18,7 @@ def build_persist_and_register_symbolic_schema(
     feature_selection: FeatureSelectionConfig | None = None,
     root_dir: Path = Path("artifacts/features"),
     bump: str = "patch",
+    predicates: list[AttributePredicate] | None = None,
 ) -> tuple[Path, dict]:
     """
     Build symbolic features from mined itemsets, persist them versioned,
@@ -53,6 +54,7 @@ def build_persist_and_register_symbolic_schema(
         source_label=source_label,
         schema_name=schema_name,
         schema_version=schema_version,
+        predicates=predicates,
     )
 
     n_candidates = len(df)
@@ -74,6 +76,7 @@ def build_persist_and_register_symbolic_schema(
             schema_name=symbolic_schema.schema_name,
             schema_version=symbolic_schema.schema_version,
             features=features,
+            predicates=symbolic_schema.predicates,
         )
 
     schema_filename = f"{schema_name}/{schema_version}.json"

@@ -1,0 +1,197 @@
+from __future__ import annotations
+
+import itertools
+from typing import Any, Sequence
+
+import pandas as pd
+
+from thesis.mining.attribute_features import (
+    BINARY_CATEGORICAL_FIELDS,
+    MULTI_VALUED_CATEGORICAL_FIELDS,
+    NUMERIC_FIELDS,
+    compute_candidate_attribute_features,
+)
+from thesis.schemas.groups import AlertGroup
+
+_EPS = 1e-9
+
+
+def build_categorical_predicate_matrix(
+    alert_groups: Sequence[AlertGroup],
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series, dict[str, tuple[str, Any]]]:
+    """
+    Single per-group pass building everything downstream mining needs:
+    - X_cat: one binary (0/1) column per candidate single categorical
+      predicate (Step 1's input, and Step 2's categorical columns)
+    - X_num: the numeric base-feature columns (Step 2's numeric columns) --
+      built here too so compute_candidate_attribute_features() is only
+      ever called once per alert group, not re-derived later
+    - y: the binary Label column (1 = attack, 0 = benign)
+    - column_predicate_map: column -> (attribute, expected_value), describing
+      how to reconstruct each X_cat column as a condition against
+      compute_candidate_attribute_features() output
+    """
+    cat_rows: list[dict[str, int]] = []
+    num_rows: list[dict[str, float]] = []
+    labels: list[int] = []
+    column_predicate_map: dict[str, tuple[str, Any]] = {}
+
+    for tx in alert_groups:
+        feats = compute_candidate_attribute_features(tx)
+
+        cat_row: dict[str, int] = {}
+        for field_name in MULTI_VALUED_CATEGORICAL_FIELDS:
+            value = feats[field_name]
+            col = f"{field_name}={value}"
+            cat_row[col] = 1
+            column_predicate_map.setdefault(col, (field_name, value))
+        for field_name in BINARY_CATEGORICAL_FIELDS:
+            cat_row[field_name] = int(bool(feats[field_name]))
+            column_predicate_map.setdefault(field_name, (field_name, True))
+        cat_rows.append(cat_row)
+
+        num_rows.append(
+            {field_name: feats[field_name] for field_name in NUMERIC_FIELDS}
+        )
+
+        labels.append(1 if tx.group_label == "attack" else 0)
+
+    X_cat = pd.DataFrame(cat_rows).fillna(0).astype(int)
+    X_num = pd.DataFrame(num_rows)
+    y = pd.Series(labels, name="Label")
+    return X_cat, X_num, y, column_predicate_map
+
+
+def _chi_square_p_value(
+    n_fires_attack: int, n_attack: int, n_fires_benign: int, n_benign: int
+) -> float | None:
+    if n_attack == 0 or n_benign == 0:
+        return None
+    table = [
+        [n_fires_attack, n_attack - n_fires_attack],
+        [n_fires_benign, n_benign - n_fires_benign],
+    ]
+    try:
+        from scipy.stats import chi2_contingency
+
+        _, p_value, _, _ = chi2_contingency(table)
+        return float(p_value)
+    except Exception:
+        return None
+
+
+def compute_predicate_contrast_stats(X: pd.DataFrame, y: pd.Series) -> pd.DataFrame:
+    """
+    For every single categorical predicate column, and every pairwise AND
+    combination (enumerated exhaustively -- the candidate space is a few
+    dozen columns, so this is cheap and needs no mining library/pruning),
+    compute attack_support, benign_support, growth_rate, lift, and the
+    chi-square p-value on the 2x2 contingency table.
+    """
+    base_rate = float(y.mean()) if len(y) else 0.0
+    y_arr = y.to_numpy()
+    attack_mask = y_arr == 1
+    benign_mask = y_arr == 0
+    n_attack = int(attack_mask.sum())
+    n_benign = int(benign_mask.sum())
+    n_total = len(X)
+
+    columns = list(X.columns)
+    candidates: list[tuple[str, ...]] = [(c,) for c in columns]
+    candidates += list(itertools.combinations(columns, 2))
+
+    rows = []
+    for combo in candidates:
+        if len(combo) == 1:
+            fires = X[combo[0]].to_numpy().astype(bool)
+        else:
+            fires = X[combo[0]].to_numpy().astype(bool) & X[combo[1]].to_numpy().astype(
+                bool
+            )
+
+        n_fires_attack = int((fires & attack_mask).sum())
+        n_fires_benign = int((fires & benign_mask).sum())
+
+        attack_support = n_fires_attack / n_attack if n_attack else 0.0
+        benign_support = n_fires_benign / n_benign if n_benign else 0.0
+        growth_rate = attack_support / (benign_support + _EPS)
+        lift = attack_support / (base_rate + _EPS) if base_rate else 0.0
+
+        p_value = _chi_square_p_value(
+            n_fires_attack, n_attack, n_fires_benign, n_benign
+        )
+
+        support_count = n_fires_attack + n_fires_benign
+        support = support_count / n_total if n_total else 0.0
+
+        rows.append(
+            {
+                "itemset": combo,
+                "support": support,
+                "support_count": support_count,
+                "confidence_attack": attack_support,
+                "confidence_benign": benign_support,
+                "growth_rate": growth_rate,
+                "lift": lift,
+                "p_value": p_value,
+                "mining_type": "contrast_categorical",
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+
+def filter_contrast_survivors(
+    stats_df: pd.DataFrame,
+    min_attack_coverage: float = 0.05,
+    min_benign_coverage: float = 0.05,
+    min_growth_rate: float = 3.0,
+    max_p_value: float | None = None,
+) -> pd.DataFrame:
+    """
+    Keep a predicate/pair only if it is both meaningfully discriminative
+    (growth_rate, or its reciprocal direction, clears min_growth_rate) and
+    has enough coverage on the class it discriminates toward -- this is what
+    stops a predicate that fires on a handful of attack groups out of tens
+    of thousands from surviving purely because those few inflate its growth
+    rate. An optional chi-square significance gate can be layered on top,
+    most useful for pairwise predicates where attack-side counts get small
+    fast.
+    """
+    if stats_df.empty:
+        return stats_df
+
+    inv_threshold = 1.0 / min_growth_rate if min_growth_rate > 0 else float("inf")
+
+    def _keep(row: pd.Series) -> bool:
+        growth_rate = row["growth_rate"]
+        attack_leaning = growth_rate >= min_growth_rate
+        benign_leaning = row["confidence_benign"] > 0 and growth_rate <= inv_threshold
+
+        if not (attack_leaning or benign_leaning):
+            return False
+        if attack_leaning and row["confidence_attack"] < min_attack_coverage:
+            return False
+        if benign_leaning and row["confidence_benign"] < min_benign_coverage:
+            return False
+        if max_p_value is not None:
+            p_value = row["p_value"]
+            if p_value is None or p_value >= max_p_value:
+                return False
+        return True
+
+    mask = stats_df.apply(_keep, axis=1)
+    return stats_df[mask].reset_index(drop=True)
+
+
+def surviving_single_columns(stats_df: pd.DataFrame) -> list[str]:
+    """
+    Flatten survivor itemsets (singles and pairs) into the underlying single
+    column names Step 2 needs in its training matrix -- if only a pair
+    survives, both constituent columns must still be present for the tree to
+    be able to recover that combination via nested splits.
+    """
+    cols: set[str] = set()
+    for itemset in stats_df["itemset"]:
+        cols.update(itemset)
+    return sorted(cols)

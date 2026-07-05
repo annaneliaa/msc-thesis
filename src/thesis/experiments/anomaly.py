@@ -43,7 +43,6 @@ from sklearn.metrics import (
 from thesis.config import load_mining_filter_config
 from thesis.encoders.service import encode_alert_groups_for_schema
 from thesis.experiments.baseline import (
-    ALERTBERT_METHOD,
     _EXPERIMENTS_DIR,
     _ROOT,
 )
@@ -293,12 +292,15 @@ def run_anomaly_experiment(config: AnomalyExperimentConfig) -> ExperimentResult:
                                 "end_ts": t.end_ts,
                                 "n_alerts": t.n_alerts,
                                 "alert_ids": t.alert_ids,
-                                "abs_items": sorted(list(t.abs_items)),
                                 "raw_items": sorted(list(t.raw_items))
                                 if t.raw_items is not None
                                 else None,
-                                "sorted_items": [sorted(s) for s in t.sorted_items],
-                                "alert_ips": sorted(list(t.alert_ips)),
+                                "sorted_items": [sorted(s) for s in t.sorted_items]
+                                if t.sorted_items is not None
+                                else None,
+                                "alert_ips": sorted(list(t.alert_ips))
+                                if t.alert_ips is not None
+                                else None,
                                 "group_label": t.group_label,
                                 "alert_labels": sorted(list(t.alert_labels))
                                 if t.alert_labels is not None
@@ -436,11 +438,7 @@ def run_anomaly_experiment(config: AnomalyExperimentConfig) -> ExperimentResult:
     results_file = results_dir / f"anomaly_{config.model_name}_{timestamp}.json"
 
     exp_label = "anomaly_symbolic" if do_symbolic else "anomaly_base"
-    grouping_params = (
-        config.grouping.alertbert.model_dump()
-        if config.grouping.mode == ALERTBERT_METHOD
-        else None
-    )
+    grouping_params = None
     with results_file.open("w") as f:
         json.dump(
             {

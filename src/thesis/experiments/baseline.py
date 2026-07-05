@@ -22,7 +22,6 @@ from pathlib import Path
 
 from thesis.paths import ensure_artifact_dirs
 from thesis.configs import dataset_for_scenario
-from thesis.grouping.group_alerts import ALERTBERT_METHOD
 from thesis.schemas.experiments import BaselineExperimentConfig, ExperimentResult
 from thesis.pipeline.pipeline import (
     convert_ait_alerts_to_json,
@@ -206,11 +205,7 @@ def run_baseline_experiment(
     results_dir.mkdir(parents=True, exist_ok=True)
     results_file = results_dir / f"baseline_{timestamp}.json"
 
-    grouping_params = (
-        config.grouping.alertbert.model_dump()
-        if config.grouping.mode == ALERTBERT_METHOD
-        else None
-    )
+    grouping_params = None
     with results_file.open("w", encoding="utf-8") as f:
         json.dump(
             {

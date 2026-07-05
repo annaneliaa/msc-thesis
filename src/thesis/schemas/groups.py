@@ -8,14 +8,14 @@ from typing import Optional
 class GroupingRecord:
     alert_id: str
     group_id: str
-    method: str  # "fixed_window"
+    method: str  # "fixed_window" | "cscas_pregrouped | cscas_grouping"
 
 
 @dataclass(slots=True)
 class GroupSnapshot:  # stable snapshot
     # identity
     group_id: str
-    method: str  # "fixed_window" | "alertbert" | "cscas_pregrouped"
+    method: str  # "fixed_window" | "cscas_pregrouped | cscas_grouping"
 
     # temporal scope
     start_ts: int
@@ -46,7 +46,6 @@ class GroupSnapshot:  # stable snapshot
             start_ts=self.start_ts,
             end_ts=self.end_ts,
             n_alerts=self.n_alerts,
-            abs_items=set(self.items),
             raw_items=set(self.items),
             sorted_items=self.sorted_items,
             alert_ids=list(self.alert_ids),
@@ -63,29 +62,40 @@ class GroupSnapshot:  # stable snapshot
 class AlertGroup:  # encoding/experiment input (with weight)
     alert_group_id: str
     group_id: str
-    method: str  # "fixed_window" | "alertbert" | "cscas_pregrouped"
-
+    method: str  # "fixed_window" | "cscas_pregrouped"
+    group_label: Optional[str] = None
+    weight: float = 1.0
     start_ts: int
-    end_ts: int
+    end_ts: Optional[int]
 
     n_alerts: int
-    alert_ids: Optional[list[str]] = None
-    abs_items: set[str] = field(default_factory=set)  # mining-ready abstracted itemset
-    raw_items: Optional[set[str]] = None  # pre-abstraction mining items
-    sorted_items: list[set[str]] = field(
-        default_factory=list
-    )  # ordered list of per-alert itemsets, for sequence mining
-    alert_ips: set[str] = field(default_factory=set)
+    raw_items: Optional[set[str]] = None  # mining items (tokens / signature words)
 
-    group_label: Optional[str] = None
+    # AIT-ADS only (None for CSCAS)
+    alert_ids: Optional[list[str]] = None  # AIT-ADS only (None for CSCAS)
+    sorted_items: Optional[list[set[str]]] = (
+        None  # AIT-ADS only: ordered per-alert itemsets for sequence mining
+    )
+    alert_ips: Optional[set[str]] = None
     alert_labels: Optional[set[str]] = None
-
-    weight: float = 1.0
 
     # CSCAS-only network metadata (None for AIT-ADS scenarios)
     proto: Optional[int] = None
+    ext_ip: Optional[str] = None
     int_ip: Optional[str] = None
     int_port: Optional[int] = None
     ext_port: Optional[int] = None
-    int_ip_is_multiple: bool = False
-    ext_ip_is_multiple: bool = False
+    int_ip_is_multiple: Optional[bool] = None
+    ext_ip_is_multiple: Optional[bool] = None
+
+    # CSCAS-only attribute-mining fields (None for AIT-ADS scenarios)
+    category: Optional[str] = None
+    ruleset: Optional[str] = None
+    cve_refs: Optional[set[str]] = None
+    qualifiers: Optional[set[str]] = None
+    signature_matches_per_day: Optional[float] = None
+    similarity: Optional[float] = None
+    signature_id_similarity: Optional[float] = None
+    attr_similarities: Optional[dict[str, float]] = None
+    scas: Optional[int] = None
+    ext_port_is_multiple: Optional[bool] = None

@@ -62,7 +62,7 @@ def load_detector_scores() -> pd.DataFrame:
 
 def load_raw_alerts() -> pd.DataFrame:
     """Load raw alerts.json files from all scenarios."""
-    from thesis.data.detector_filter import load_alerts
+    from thesis.old.data.detector_filter import load_alerts
 
     alerts_dir = _REPO / "data" / "alerts_csv"
     return load_alerts(alerts_dir)

@@ -55,6 +55,31 @@ class MiningFilterConfig(BaseModel):
     feature_selection: FeatureSelectionConfig = FeatureSelectionConfig()
 
 
+class ContrastSetFilterConfig(BaseModel):
+    """Step 1 (contrast-set mining over categorical predicates) thresholds."""
+
+    min_attack_coverage: float = 0.05
+    min_benign_coverage: float = 0.05
+    min_growth_rate: float = 3.0
+    max_p_value: float | None = None
+
+
+class DecisionTreeRuleConfig(BaseModel):
+    """Step 2 (decision-tree rule extraction) hyperparameters."""
+
+    max_depth: int = 4
+    min_samples_leaf: int = 20
+    class_weight: str | None = "balanced"
+    random_state: int = 0
+
+
+class AttributeMiningConfig(BaseModel):
+    """Config for the two-stage per-alert-group attribute mining pipeline."""
+
+    contrast: ContrastSetFilterConfig = ContrastSetFilterConfig()
+    tree: DecisionTreeRuleConfig = DecisionTreeRuleConfig()
+
+
 # Pydantic object models used in mining module (API payloads and metadata objects
 
 

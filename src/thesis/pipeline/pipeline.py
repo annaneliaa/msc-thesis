@@ -3,7 +3,6 @@ from __future__ import annotations
 import csv
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import pandas as pd
 
@@ -23,41 +22,10 @@ from thesis.caching.cache import TokenCache
 from thesis.caching.ingestor import CacheIngestor
 from thesis.caching.selector import select_group_snapshots
 from thesis.grouping.group_alerts import (
-    ALERTBERT_METHOD,
     FIXED_WINDOW_METHOD,
-    FIXED_WINDOW_HOST_METHOD,
     CSCAS_PREGROUPED_METHOD,
-    CSCAS_TARGET_WINDOW_METHOD,
-    CSCAS_TARGET_WINDOW_SECONDS,
-    CSCAS_TARGET_SESSION_METHOD,
-    CSCAS_TARGET_SESSION_TIMEOUT_SECONDS,
-    CSCAS_TARGET_SESSION_LENGTH_SECONDS,
     group_alerts,
-    group_cscas_rows_by_target_window,
-    group_cscas_rows_by_target_session,
 )
-
-if TYPE_CHECKING:
-    from thesis.grouping.alertbert_grouper import AlertBERTGrouper
-
-
-def build_grouper(grouping: GroupingConfig) -> "AlertBERTGrouper | None":
-    """Construct an AlertBERTGrouper from config, or return None for fixed-window mode."""
-    if grouping.mode != ALERTBERT_METHOD:
-        return None
-    from thesis.grouping.alertbert_grouper import AlertBERTGrouper
-
-    cfg = grouping.alertbert
-    checkpoint_dir = Path(cfg.models_path) / cfg.model_id
-    return AlertBERTGrouper(
-        checkpoint_dir=checkpoint_dir,
-        delta=cfg.delta,
-        theta=cfg.theta,
-        dim_reduction=cfg.dim_reduction,
-        padding=cfg.padding,
-        readout=cfg.readout,
-        device=cfg.device,
-    )
 
 
 def process_alert_batch(
@@ -65,7 +33,6 @@ def process_alert_batch(
     scenario: str,
     ingestor: CacheIngestor,
     grouping_mode: str = FIXED_WINDOW_METHOD,
-    grouper: "AlertBERTGrouper | None" = None,
     window_size: int = 2,
 ) -> int:
     tokenized_alerts: list[TokenizedAlert] = []
@@ -80,14 +47,11 @@ def process_alert_batch(
             continue
 
     grouping_kwargs: dict = {}
-    if grouping_mode in (FIXED_WINDOW_METHOD, FIXED_WINDOW_HOST_METHOD):
+    if grouping_mode == FIXED_WINDOW_METHOD:
         grouping_kwargs["window_size"] = window_size
     alert_groups = group_alerts(
-        tokenized_alerts, method=grouping_mode, grouper=grouper, **grouping_kwargs
+        tokenized_alerts, method=grouping_mode, **grouping_kwargs
     )
-
-    if tokenized_alerts:
-        ingestor.ingest_alert_batch(tokenized_alerts, batch_name=scenario)
 
     if alert_groups:
         ingestor.ingest_groups(tokenized_alerts, alert_groups)
@@ -197,23 +161,21 @@ def ingest_ait_alert_batch(
     grouping_mode: str = FIXED_WINDOW_METHOD,
     grouping: GroupingConfig | None = None,
 ) -> None:
-    """Tokenise alerts.json and ingest alerts + groups into the TokenCache at cache_dir."""
-    alert_store_dir = cache_dir / "alerts"
-    if alert_store_dir.exists() and any(alert_store_dir.glob("*.json")):
-        print(f"  [skip] Alert cache already populated at {alert_store_dir}")
+    """Tokenise alerts.json and ingest groups into the TokenCache at cache_dir."""
+    group_store_dir = cache_dir / "groups"
+    if group_store_dir.exists() and any(group_store_dir.glob("*.json")):
+        print(f"  [skip] Group cache already populated at {group_store_dir}")
         return
 
     with alerts_path.open("r", encoding="utf-8") as f:
         payload = json.load(f)
 
-    grouper = build_grouper(grouping) if grouping is not None else None
     cache = TokenCache(cache_dir=cache_dir)
     count = ingest_to_cache(
         scenario=scenario,
         rows=payload,
         cache=cache,
         grouping_mode=grouping_mode,
-        grouper=grouper,
         window_size=grouping.window_size if grouping is not None else 2,
     )
     print(f"  Processed {count} alerts into cache.")
@@ -263,85 +225,26 @@ def ingest_ait_scenario(
 # ---------------------------------------------------------------------------
 
 
-def _cscas_cache_subdir(
-    grouping_method: str,
-    window_seconds: float,
-    session_timeout: float,
-    session_length: float,
-) -> str:
-    """
-    Cache directory name for a given CSCAS grouping_method/hyperparameter combo.
-
-    window_seconds only affects CSCAS_TARGET_WINDOW_METHOD baskets, and
-    session_timeout/session_length only affect CSCAS_TARGET_SESSION_METHOD
-    baskets, so each is folded into the subdir name only for its own method --
-    otherwise two ingests with different hyperparameters would write to the
-    same directory and silently clobber/skip each other.
-    """
-    if grouping_method == CSCAS_TARGET_WINDOW_METHOD:
-        window_tag = f"{window_seconds:g}".replace(".", "_")
-        return f"{grouping_method}_w{window_tag}s"
-    if grouping_method == CSCAS_TARGET_SESSION_METHOD:
-        timeout_tag = f"{session_timeout:g}".replace(".", "_")
-        length_tag = f"{session_length:g}".replace(".", "_")
-        return f"{grouping_method}_t{timeout_tag}s_l{length_tag}s"
-    return grouping_method
-
-
 def ingest_cscas_scenario(
     csv_path: Path | None = None,
     cache_dir: Path | None = None,
-    grouping_method: str = CSCAS_PREGROUPED_METHOD,
-    window_seconds: float = CSCAS_TARGET_WINDOW_SECONDS,
-    session_timeout: float = CSCAS_TARGET_SESSION_TIMEOUT_SECONDS,
-    session_length: float = CSCAS_TARGET_SESSION_LENGTH_SECONDS,
 ) -> Path:
     """
     Parse data/cscas/dataset-labeled-anon-ip.csv into alert_groups_raw.json,
     the same artifact load_or_build_alert_groups() produces for AIT scenarios,
-    so downstream scripts (e.g. run_mining_window_sweep.py) can consume it via
-    --grouping-method <grouping_method>.
+    so downstream scripts (e.g. run_mining_window_sweep.py) can consume it.
 
     CSCAS rows are already closed, pre-aggregated groups (one signature x
     external-IP cluster per row), unlike AIT's alert-by-alert stream. There is
     no incremental grouping step, so this skips TokenCache/GroupCacheEntry
     storage entirely — writing ~1.4M individual per-group cache files would be
-    impractically slow — and builds AlertGroup objects directly in memory.
-
-    grouping_method selects how CSV rows become AlertGroup baskets:
-    - CSCAS_PREGROUPED_METHOD ("cscas_pregrouped", default): one basket per
-      CSV row, i.e. per single signature. Itemset mining on these baskets can
-      only ever decompose one signature's own description into words — it
-      cannot discover cross-signature co-occurrence — and sorted_items is
-      always empty, so sequence mining is a no-op.
-    - CSCAS_TARGET_WINDOW_METHOD ("cscas_target_window"): rows are grouped by
-      (internal target IP, fixed time window of window_seconds), so a basket
-      can contain multiple distinct signatures fired against the same host
-      within a bounded time span. See group_cscas_rows_by_target_window for
-      why this is what makes mining meaningful for this dataset, and for the
-      detection-latency caveat fixed windows have.
-    - CSCAS_TARGET_SESSION_METHOD ("cscas_target_session"): rows are grouped
-      by internal target IP using a session-gap scheme (session_timeout,
-      session_length) instead of a fixed window -- see
-      group_cscas_rows_by_target_session for why this bounds detection
-      latency more tightly for the common case of a target that goes quiet.
-
-    Whichever hyperparameters apply to grouping_method are folded into the
-    cache subdir name (see _cscas_cache_subdir) so that re-ingesting with
-    different hyperparameters writes to a separate directory instead of
-    silently reusing another run's stale alert_groups_raw.json.
+    impractically slow — and builds AlertGroup objects directly in memory, one
+    basket per CSV row (CSCAS_PREGROUPED_METHOD).
     """
     scenario = "cscas"
     csv_path = csv_path or (ROOT / "data" / "cscas" / "dataset-labeled-anon-ip.csv")
     cache_dir = cache_dir or (
-        ROOT
-        / "artifacts"
-        / "cache"
-        / scenario
-        / "groups"
-        / _cscas_cache_subdir(
-            grouping_method, window_seconds, session_timeout, session_length
-        )
+        ROOT / "artifacts" / "cache" / scenario / "groups" / CSCAS_PREGROUPED_METHOD
     )
     out_path = cache_dir / "alert_groups" / "alert_groups_raw.json"
 
@@ -370,43 +273,38 @@ def ingest_cscas_scenario(
     if n_skipped:
         print(f"  [warn] Skipped {n_skipped} rows due to parsing errors.")
 
-    if grouping_method == CSCAS_PREGROUPED_METHOD:
-        alert_groups: list[AlertGroup] = [
-            AlertGroup(
-                alert_group_id=parsed.group_id,
-                group_id=parsed.group_id,
-                method=CSCAS_PREGROUPED_METHOD,
-                start_ts=parsed.ts,
-                end_ts=parsed.ts,
-                n_alerts=parsed.n_alerts,
-                abs_items=set(parsed.tokens),
-                raw_items=set(parsed.tokens),
-                sorted_items=[],
-                alert_ips={parsed.ext_ip},
-                group_label=parsed.label,
-                alert_labels=None,
-                weight=1.0,
-                proto=parsed.proto,
-                int_ip=parsed.int_ip,
-                int_port=parsed.int_port,
-                ext_port=parsed.ext_port,
-                int_ip_is_multiple=parsed.int_ip_is_multiple,
-                ext_ip_is_multiple=parsed.ext_ip_is_multiple,
-            )
-            for parsed in parsed_rows
-        ]
-    elif grouping_method == CSCAS_TARGET_WINDOW_METHOD:
-        alert_groups = group_cscas_rows_by_target_window(
-            parsed_rows, window_seconds=window_seconds
+    alert_groups: list[AlertGroup] = [
+        AlertGroup(
+            alert_group_id=parsed.group_id,
+            group_id=parsed.group_id,
+            method=CSCAS_PREGROUPED_METHOD,
+            start_ts=parsed.ts,
+            end_ts=parsed.ts,
+            n_alerts=parsed.n_alerts,
+            raw_items=set(parsed.tokens),
+            group_label=parsed.label,
+            alert_labels=None,
+            weight=1.0,
+            proto=parsed.proto,
+            ext_ip=parsed.ext_ip,
+            int_ip=parsed.int_ip,
+            int_port=parsed.int_port,
+            ext_port=parsed.ext_port,
+            int_ip_is_multiple=parsed.int_ip_is_multiple,
+            ext_ip_is_multiple=parsed.ext_ip_is_multiple,
+            category=parsed.category,
+            ruleset=parsed.ruleset,
+            cve_refs=set(parsed.cve_refs),
+            qualifiers=set(parsed.qualifiers),
+            signature_matches_per_day=parsed.signature_matches_per_day,
+            similarity=parsed.similarity,
+            signature_id_similarity=parsed.signature_id_similarity,
+            attr_similarities=dict(parsed.attr_similarities),
+            scas=parsed.scas,
+            ext_port_is_multiple=parsed.ext_port_is_multiple,
         )
-    elif grouping_method == CSCAS_TARGET_SESSION_METHOD:
-        alert_groups = group_cscas_rows_by_target_session(
-            parsed_rows,
-            session_timeout=session_timeout,
-            session_length=session_length,
-        )
-    else:
-        raise ValueError(f"Unsupported CSCAS grouping_method: {grouping_method!r}")
+        for parsed in parsed_rows
+    ]
 
     alert_groups.sort(key=lambda g: g.start_ts)
     save_alert_groups_json(alert_groups, out_path)
@@ -436,7 +334,6 @@ def run_preprocess_batch(
     cache_dir: Path | str,
     rows: list[dict],
     grouping_mode: str,
-    grouper: "AlertBERTGrouper | None" = None,
     window_size: int = 2,
 ) -> int:
     cache = open_scenario_cache(scenario, cache_dir)
@@ -446,7 +343,6 @@ def run_preprocess_batch(
         scenario=scenario,
         ingestor=ingestor,
         grouping_mode=grouping_mode,
-        grouper=grouper,
         window_size=window_size,
     )
 
@@ -515,19 +411,31 @@ def alert_group_to_dict(t: AlertGroup) -> dict:
         "end_ts": t.end_ts,
         "n_alerts": t.n_alerts,
         "alert_ids": t.alert_ids,
-        "abs_items": sorted(t.abs_items),
         "raw_items": sorted(t.raw_items) if t.raw_items is not None else None,
-        "sorted_items": [sorted(itemset) for itemset in t.sorted_items],
-        "alert_ips": sorted(t.alert_ips),
+        "sorted_items": [sorted(itemset) for itemset in t.sorted_items]
+        if t.sorted_items is not None
+        else None,
+        "alert_ips": sorted(t.alert_ips) if t.alert_ips is not None else None,
         "group_label": t.group_label,
         "alert_labels": sorted(t.alert_labels) if t.alert_labels is not None else None,
         "weight": t.weight,
         "proto": t.proto,
+        "ext_ip": t.ext_ip,
         "int_ip": t.int_ip,
         "int_port": t.int_port,
         "ext_port": t.ext_port,
         "int_ip_is_multiple": t.int_ip_is_multiple,
         "ext_ip_is_multiple": t.ext_ip_is_multiple,
+        "category": t.category,
+        "ruleset": t.ruleset,
+        "cve_refs": sorted(t.cve_refs) if t.cve_refs is not None else None,
+        "qualifiers": sorted(t.qualifiers) if t.qualifiers is not None else None,
+        "signature_matches_per_day": t.signature_matches_per_day,
+        "similarity": t.similarity,
+        "signature_id_similarity": t.signature_id_similarity,
+        "attr_similarities": t.attr_similarities,
+        "scas": t.scas,
+        "ext_port_is_multiple": t.ext_port_is_multiple,
     }
 
 
@@ -698,21 +606,33 @@ def alert_group_from_dict(d: dict) -> AlertGroup:
         end_ts=d["end_ts"],
         n_alerts=d["n_alerts"],
         alert_ids=d.get("alert_ids"),
-        abs_items=set(d["abs_items"]),
         raw_items=set(d["raw_items"]) if d.get("raw_items") is not None else None,
-        sorted_items=[set(s) for s in d.get("sorted_items", [])],
-        alert_ips=set(d.get("alert_ips", [])),
+        sorted_items=[set(s) for s in d["sorted_items"]]
+        if d.get("sorted_items") is not None
+        else None,
+        alert_ips=set(d["alert_ips"]) if d.get("alert_ips") is not None else None,
         group_label=d.get("group_label"),
         alert_labels=set(d["alert_labels"])
         if d.get("alert_labels") is not None
         else None,
         weight=d.get("weight", 1.0),
         proto=d.get("proto"),
+        ext_ip=d.get("ext_ip"),
+        category=d.get("category"),
+        ruleset=d.get("ruleset"),
+        cve_refs=set(d["cve_refs"]) if d.get("cve_refs") is not None else None,
+        qualifiers=set(d["qualifiers"]) if d.get("qualifiers") is not None else None,
+        signature_matches_per_day=d.get("signature_matches_per_day"),
+        similarity=d.get("similarity"),
+        signature_id_similarity=d.get("signature_id_similarity"),
+        attr_similarities=d.get("attr_similarities"),
+        scas=d.get("scas"),
+        ext_port_is_multiple=d.get("ext_port_is_multiple"),
         int_ip=d.get("int_ip"),
         int_port=d.get("int_port"),
         ext_port=d.get("ext_port"),
-        int_ip_is_multiple=d.get("int_ip_is_multiple", False),
-        ext_ip_is_multiple=d.get("ext_ip_is_multiple", False),
+        int_ip_is_multiple=d.get("int_ip_is_multiple"),
+        ext_ip_is_multiple=d.get("ext_ip_is_multiple"),
     )
 
 
@@ -726,7 +646,6 @@ def ingest_to_cache(
     rows: list[dict],
     cache: TokenCache,
     grouping_mode: str = FIXED_WINDOW_METHOD,
-    grouper: "AlertBERTGrouper | None" = None,
     window_size: int = 2,
 ) -> int:
     """Wrap process_alert_batch with CacheIngestor construction."""
@@ -736,7 +655,6 @@ def ingest_to_cache(
         scenario=scenario,
         ingestor=ingestor,
         grouping_mode=grouping_mode,
-        grouper=grouper,
         window_size=window_size,
     )
 

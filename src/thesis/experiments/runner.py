@@ -89,13 +89,18 @@ def run_baseline(scenario: str) -> None:
     )
 
 
-def run_symbolic(scenario: str, filter_config: Path | None = None) -> None:
+def run_symbolic(
+    scenario: str,
+    filter_config: Path | None = None,
+    mining_strategy: str = "cooccurrence",
+) -> None:
     config = SymbolicExperimentConfig(
         scenario=scenario,
         cache_dir=_resolve_cache_dir(scenario),
         grouping=GroupingConfig(mode=_resolve_grouping_mode(scenario)),
         filter_config=filter_config,
         abstraction_map_path=ABSTRACTION_MAP_PATH,
+        mining_strategy=mining_strategy,
     )
     result = run_symbolic_experiment(config)
     print(
@@ -129,6 +134,7 @@ def run_compare(
     scenario: str,
     filter_config: Path | None = None,
     model_name: str = "logreg",
+    mining_strategy: str = "cooccurrence",
 ) -> None:
     print("\n--- Phase 1/2: baseline ---")
     baseline_config = BaselineExperimentConfig(
@@ -146,6 +152,7 @@ def run_compare(
         grouping=GroupingConfig(mode=_resolve_grouping_mode(scenario)),
         filter_config=filter_config,
         model_name=model_name,
+        mining_strategy=mining_strategy,
     )
     symbolic = run_symbolic_experiment(symbolic_config)
 
@@ -235,6 +242,16 @@ def main() -> None:
         default="logreg",
         help="Model to use: logreg, logreg_l1, random_forest, lstm (default: logreg)",
     )
+    parser.add_argument(
+        "--mining-strategy",
+        choices=["cooccurrence", "attribute"],
+        default="cooccurrence",
+        help=(
+            "'cooccurrence' (default, existing Eclat/PrefixSpan cross-signature/"
+            "cross-alert basket mining) or 'attribute' (per-alert-group "
+            "contrast-set + decision-tree rule mining). symbolic and compare only."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -247,10 +264,17 @@ def main() -> None:
         if args.experiment == "baseline":
             run_baseline(scenario)
         elif args.experiment == "symbolic":
-            run_symbolic(scenario, filter_config=args.filter_config)
+            run_symbolic(
+                scenario,
+                filter_config=args.filter_config,
+                mining_strategy=args.mining_strategy,
+            )
         elif args.experiment == "compare":
             run_compare(
-                scenario, filter_config=args.filter_config, model_name=args.model_name
+                scenario,
+                filter_config=args.filter_config,
+                model_name=args.model_name,
+                mining_strategy=args.mining_strategy,
             )
         elif args.experiment == "transfer":
             if len(args.scenarios) != 2:

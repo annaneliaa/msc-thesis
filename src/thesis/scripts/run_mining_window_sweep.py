@@ -51,17 +51,6 @@ Usage:
         --granularities 0.1 0.2 0.33 \
         --modes benign mixed
 
-    # CSCAS grouped by (internal target IP, 1h window) instead of one basket
-    # per signature — baskets can span multiple signatures, so itemset
-    # mining can find real cross-signature co-occurrence and sequence mining
-    # has actual sorted_items to chain. Ingest with the matching method first:
-    #   python src/thesis/scripts/run_ingest_cscas.py \
-    #       --grouping-method cscas_target_window --window-seconds 3600
-    python src/thesis/scripts/run_mining_window_sweep.py cscas \
-        --grouping-method cscas_target_window \
-        --granularities 0.1 0.2 0.33 \
-        --modes benign mixed
-
 Output (under artifacts/experiments/mining_window_sweep/<dataset>/<run_tag>/,
         where <dataset> is looked up per scenario via scenarios.json, e.g.
         'ait-ads' or 'cscas'; falls back to 'unknown'/'mixed' if scenarios
@@ -161,7 +150,7 @@ def _rows_to_mining_format(rows: list[dict]) -> list[dict]:
                 "window_start": r.get("start_ts"),
                 "window_end": r.get("end_ts"),
                 "n_alerts": r.get("n_alerts"),
-                "abs_items": r.get("abs_items", []),
+                "raw_items": r.get("raw_items", []),
                 "sorted_items": r.get("sorted_items", []),
                 "group_label": r.get("group_label"),
                 "alert_labels": r.get("alert_labels"),

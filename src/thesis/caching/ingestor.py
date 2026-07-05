@@ -1,7 +1,6 @@
-from pathlib import Path
-from typing import Iterable, Dict
+from typing import Dict
 
-from thesis.schemas.cache import AlertCacheEntry, GroupCacheEntry
+from thesis.schemas.cache import GroupCacheEntry
 from thesis.schemas.groups import GroupingRecord
 from thesis.schemas.preprocessing import ParsedSuricataGroup, TokenizedAlert
 from thesis.caching.cache import TokenCache
@@ -11,51 +10,14 @@ from thesis.caching.util import label_window_from_alert_labels
 
 class CacheIngestor:
     """
-    Writes tokenized alerts into the alert store of the cache.
-
-    Group ingestion is intentionally left out for now.
+    Builds GroupCacheEntry objects from tokenized alerts and writes them to
+    the cache. GroupCacheEntry already carries everything needed downstream
+    (alert_ids, items, sorted_items, alert_ips, labels), so individual alerts
+    are not separately persisted.
     """
 
     def __init__(self, cache: TokenCache) -> None:
         self.cache = cache
-
-    # -------------------------
-    # alert ingestion
-    # -------------------------
-
-    @staticmethod
-    def _to_alert_cache_entry(alert: TokenizedAlert) -> AlertCacheEntry:
-        """
-        Convert a TokenizedAlert into an AlertCacheEntry.
-        """
-        return AlertCacheEntry(
-            alert_id=alert.alert_id,
-            ts=alert.ts,
-            ip=alert.ip,
-            host=alert.host,
-            short=alert.short,
-            event_label=alert.event_label,
-            label=alert.label,
-        )
-
-    def ingest_alert(self, alert: TokenizedAlert) -> None:
-        """
-        Ingest a single tokenized alert into the alert store.
-        """
-        entry = self._to_alert_cache_entry(alert)
-        self.cache.write_alert_entry(entry)
-
-    def ingest_alert_batch(
-        self,
-        alerts: Iterable[TokenizedAlert],
-        batch_name: str,
-    ) -> Path:
-        """
-        Ingest a batch of tokenized alerts into the alert store.
-        Returns the written batch file path.
-        """
-        entries = [self._to_alert_cache_entry(alert) for alert in alerts]
-        return self.cache.write_alert_batch(entries, batch_name=batch_name)
 
     # -------------------------
     # group ingestion

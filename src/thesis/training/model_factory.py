@@ -1,10 +1,8 @@
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.neural_network import MLPClassifier
-from sklearn.svm import OneClassSVM
 from typing import Callable, Any
 
-from thesis.training.lstm_classifier import LSTMClassifier
 from thesis.training.anomaly_models import BernoulliOneClass, BinaryAutoencoder
 
 MODEL_FACTORIES = {
@@ -19,10 +17,6 @@ MODEL_FACTORIES = {
         penalty="l1",
         C=1.0,
     ),
-    "logreg_sweep": lambda: LogisticRegression(
-        max_iter=1000,
-        class_weight="balanced",
-    ),
     "random_forest": lambda: RandomForestClassifier(
         n_estimators=200,
         class_weight="balanced",
@@ -36,18 +30,12 @@ MODEL_FACTORIES = {
         early_stopping=True,
         validation_fraction=0.1,
     ),
-    "lstm": lambda: LSTMClassifier(),
     "bernoulli_oc": lambda: BernoulliOneClass(contamination=0.05, alpha=1.0),
     "autoencoder_oc": lambda: BinaryAutoencoder(
         hidden_layer_sizes=(64, 32, 64),
         max_iter=500,
         contamination=0.05,
         random_state=42,
-    ),
-    "ocsvm": lambda: OneClassSVM(
-        kernel="rbf",
-        nu=0.1,
-        gamma="scale",
     ),
 }
 

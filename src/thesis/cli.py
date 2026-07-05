@@ -7,8 +7,6 @@ import pandas as pd
 import typer
 
 from thesis.config import (
-    AlertBERTConfig,
-    GroupingConfig,
     load_mining_filter_config,
     load_settings,
 )
@@ -20,7 +18,6 @@ from thesis.mining.sequence_mining_job import run_alert_group_prefixspan_job
 from thesis.paths import ensure_artifact_dirs
 from thesis.pipeline.pipeline import (
     build_encoded_alert_groups_df,
-    build_grouper,
     combine_mining_results,
     load_alert_rows_from_json,
     open_scenario_cache,
@@ -33,8 +30,6 @@ from thesis.pipeline.pipeline import (
 )
 from thesis.registry.encoders import list_all_encoders
 from thesis.registry.models import get_model_path, list_all_models
-from thesis.schemas.dataframe_schemas import SCHEMAS
-from thesis.schemas.validation import validate_dataframe
 from thesis.training.service import train_model_for_schema
 from thesis.utils.runs import create_run_dir
 
@@ -80,23 +75,6 @@ def show_config(config_name: str = "base.yaml") -> None:
 
 
 @app.command()
-def validate(
-    schema: str,
-    path: str,
-) -> None:
-    """
-    Validate a parquet file against a schema.
-    """
-    try:
-        df = pd.read_parquet(path)
-        validate_dataframe(df, schema)
-        typer.echo(f"Schema '{schema}' is valid for {path}")
-    except Exception as e:
-        typer.echo(f"Validation failed: {e}")
-        raise typer.Exit(code=1)
-
-
-@app.command()
 def run(
     config_name: str = "base.yaml",
 ) -> None:
@@ -127,12 +105,6 @@ def list_encoders():
     encoders = list_all_encoders()
     for e in encoders:
         typer.echo(e)
-
-
-@app.command()
-def list_schemas() -> None:
-    for name, schema in SCHEMAS.items():
-        typer.echo(f"{name}: {list(schema.keys())}")
 
 
 @app.command()
@@ -181,26 +153,7 @@ def preprocess_alert_batch(
         "fixed_window",
         "--grouping-mode",
         "-g",
-        help="Grouping method: 'fixed_window' or 'alertbert'.",
-    ),
-    alertbert_model_id: str = typer.Option(
-        "",
-        "--alertbert-model-id",
-        help="AlertBERT model ID (subdirectory under models path).",
-    ),
-    alertbert_models_path: str = typer.Option(
-        "artifacts/alertbert",
-        "--alertbert-models-path",
-        help="Directory containing AlertBERT saved models.",
-    ),
-    alertbert_delta: float = typer.Option(
-        2.0, "--alertbert-delta", help="AlertBERT delta (time threshold)."
-    ),
-    alertbert_theta: float = typer.Option(
-        6.0, "--alertbert-theta", help="AlertBERT theta (cosine scale)."
-    ),
-    alertbert_device: str = typer.Option(
-        "cpu", "--alertbert-device", help="PyTorch device, e.g. 'cpu' or 'cuda'."
+        help="Grouping method: 'fixed_window'.",
     ),
 ) -> None:
     """
@@ -217,24 +170,11 @@ def preprocess_alert_batch(
 
         rows = load_alert_rows_from_json(alerts_path)
 
-        grouping = GroupingConfig(
-            mode=grouping_mode,
-            alertbert=AlertBERTConfig(
-                model_id=alertbert_model_id,
-                models_path=alertbert_models_path,
-                delta=alertbert_delta,
-                theta=alertbert_theta,
-                device=alertbert_device,
-            ),
-        )
-        grouper = build_grouper(grouping)
-
         processed_count = run_preprocess_batch(
             scenario=scenario,
             cache_dir=cache_path,
             rows=rows,
             grouping_mode=grouping_mode,
-            grouper=grouper,
         )
 
         typer.echo(f"Processed {processed_count} alerts.")
@@ -368,6 +308,15 @@ def mine_alert_groups(
         "debug",
         help="MLflow run name.",
     ),
+    mining_strategy: str = typer.Option(
+        "cooccurrence",
+        "--mining-strategy",
+        help=(
+            "'cooccurrence' (default, existing Eclat/PrefixSpan cross-signature/"
+            "cross-alert basket mining) or 'attribute' (per-alert-group "
+            "contrast-set + decision-tree rule mining)."
+        ),
+    ),
     min_support: float = typer.Option(
         0.05,
         help="Minimum support threshold.",
@@ -391,11 +340,50 @@ def mine_alert_groups(
     ),
 ) -> None:
     """
-    Load cached AlertGroups and run alert_group-level Eclat and PrefixSpan mining.
+    Load cached AlertGroups and mine a symbolic feature schema, using either
+    the existing cross-signature/cross-alert co-occurrence approach
+    (Eclat + PrefixSpan) or the per-alert-group attribute mining approach
+    (contrast-set filtering + decision-tree rule extraction).
     """
     alert_groups_path = Path(
         f"artifacts/cache/{scenario}/alert_groups/alert_groups_raw.json"
     )
+
+    if mining_strategy == "attribute":
+        from thesis.mining.attribute_mining_job import (
+            run_alert_group_attribute_mining_job,
+        )
+
+        try:
+            typer.echo(f"Loading alert_groups from {alert_groups_path}...")
+            result = run_alert_group_attribute_mining_job(
+                alert_groups_path=alert_groups_path,
+                scenario_name=scenario,
+                run_name=run_name,
+            )
+            typer.echo(
+                f"Attribute mining complete. Artifacts saved to: {result.run_dir}"
+            )
+
+            schema_path, _ = build_persist_and_register_symbolic_schema(
+                df=result.mined_df,
+                scenario_name=result.scenario_name,
+                source_label="attack",
+                schema_name="symbolic",
+                predicates=result.predicates,
+            )
+            typer.echo(f"Symbolic feature schema written to: {schema_path}")
+        except Exception as e:
+            typer.echo(f"Attribute mining failed: {e}")
+            raise typer.Exit(code=1)
+        return
+
+    if mining_strategy != "cooccurrence":
+        typer.echo(
+            f"Unsupported --mining-strategy: {mining_strategy!r}. "
+            "Expected 'cooccurrence' or 'attribute'."
+        )
+        raise typer.Exit(code=1)
 
     mining_filters = None
     if filter_config is not None:

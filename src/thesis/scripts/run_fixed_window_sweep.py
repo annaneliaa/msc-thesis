@@ -1,7 +1,7 @@
 """
-Sweep over fixed-window sizes for fixed_window and fixed_window_host grouping.
+Sweep over fixed-window sizes for fixed_window grouping.
 
-For each (method, window_size) combination reports:
+For each window_size reports:
   - AlertGroup counts: total, benign, attack, mixed, purity
   - Alert-size distribution: mean, p50, p95, max, % single-alert
   - Token diversity: mean/max unique tokens, unique alert types per alert_group
@@ -30,10 +30,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from thesis.grouping.group_alerts import (
-    group_alerts_fixed_window,
-    group_alerts_fixed_window_host,
-)
+from thesis.grouping.group_alerts import group_alerts_fixed_window
 from thesis.preprocessing.parsing import parse_incoming_alert
 from thesis.preprocessing.tokenization import tokenize_alert
 from thesis.schemas.groups import GroupSnapshot
@@ -568,7 +565,6 @@ def print_all_tables(results: list[dict], train_frac: float = 0.7) -> None:
 
 _C_METHOD = {
     "fixed_window": "#4C72B0",
-    "fixed_window_host": "#55A868",
 }
 _SCENARIO_PALETTE = [
     "#1f77b4",
@@ -584,15 +580,12 @@ _SCENARIO_PALETTE = [
 ]
 _LS_METHOD = {
     "fixed_window": "-",
-    "fixed_window_host": "--",
 }
 _MK_METHOD = {
     "fixed_window": "o",
-    "fixed_window_host": "s",
 }
 _LBL_METHOD = {
     "fixed_window": "Fixed window",
-    "fixed_window_host": "Fixed window (host)",
 }
 
 
@@ -860,17 +853,17 @@ def plot_cross_scenario(
     filter_method: str | None = None,
 ) -> None:
     """
-    Four-panel cross-scenario summary that supports window-size and method selection.
+    Three-panel cross-scenario summary for fixed_window.
 
-      A/B  Heatmaps: attack alert_groups available in the train set for each
-           (scenario × window) cell, one panel per method. Red border = split_ok=False
-           (single-class split). Green = healthy, red/yellow = too few attack examples.
+      A    Heatmap: attack alert_groups available in the train set for each
+           (scenario × window) cell. Red border = split_ok=False (single-class
+           split). Green = healthy, red/yellow = too few attack examples.
 
-      C    Line plot: % attack in the train set per scenario (fixed_window).
+      B    Line plot: % attack in the train set per scenario (fixed_window).
            Flat low lines reveal structurally late-campaign scenarios where window
            size cannot improve the class balance.
 
-      D    Line plot: mean attack / mean benign alert_group size ratio (log scale,
+      C    Line plot: mean attack / mean benign alert_group size ratio (log scale,
            fixed_window). A high ratio means the classifier can trivially use size
            rather than alert-type patterns. Higher window → higher ratio.
     """
@@ -878,77 +871,65 @@ def plot_cross_scenario(
     n_scen = len(scenarios)
     n_win = len(windows)
 
-    # Build (scenario × window) matrices for each method
-    matrices: dict[str, np.ndarray] = {}
-    split_ok_matrices: dict[str, np.ndarray] = {}
-    for m in ("fixed_window", "fixed_window_host"):
-        mat = np.zeros((n_scen, n_win))
-        ok_mat = np.ones((n_scen, n_win), dtype=bool)
-        for i, scen in enumerate(scenarios):
-            rows = [r for r in scenario_results[scen] if r["method"] == m]
-            rows.sort(key=lambda r: r["window_val"])
-            for j, w in enumerate(windows):
-                row = next((r for r in rows if r["window_val"] == w), None)
-                if row:
-                    mat[i, j] = row["n_attack_train"]
-                    ok_mat[i, j] = row["split_ok"]
-        matrices[m] = mat
-        split_ok_matrices[m] = ok_mat
+    # Build (scenario × window) matrix for fixed_window
+    mat = np.zeros((n_scen, n_win))
+    ok_mat = np.ones((n_scen, n_win), dtype=bool)
+    for i, scen in enumerate(scenarios):
+        rows = [r for r in scenario_results[scen] if r["method"] == "fixed_window"]
+        rows.sort(key=lambda r: r["window_val"])
+        for j, w in enumerate(windows):
+            row = next((r for r in rows if r["window_val"] == w), None)
+            if row:
+                mat[i, j] = row["n_attack_train"]
+                ok_mat[i, j] = row["split_ok"]
 
-    vmax = max(m.max() for m in matrices.values())
+    vmax = mat.max()
 
     fig = plt.figure(figsize=(16, 10))
     fig.suptitle("Cross-scenario summary — fixed-window sweep", fontsize=13)
     gs = fig.add_gridspec(2, 2, hspace=0.45, wspace=0.38)
 
-    # ── A & B: heatmaps ───────────────────────────────────────────────────────
-    for ax_col, (method, panel_label) in enumerate(
-        [("fixed_window", "A"), ("fixed_window_host", "B")]
-    ):
-        ax = fig.add_subplot(gs[0, ax_col])
-        mat = matrices[method]
-        ok_mat = split_ok_matrices[method]
+    # ── A: heatmap ──────────────────────────────────────────────────────────
+    ax = fig.add_subplot(gs[0, :])
 
-        im = ax.imshow(mat, aspect="auto", cmap="RdYlGn", vmin=0, vmax=max(vmax, 1))
-        for i in range(n_scen):
-            for j in range(n_win):
-                val = int(mat[i, j])
-                text_color = "white" if mat[i, j] > vmax * 0.6 else "black"
-                ax.text(
-                    j,
-                    i,
-                    str(val),
-                    ha="center",
-                    va="center",
-                    fontsize=8,
-                    color=text_color,
-                )
-                if not ok_mat[i, j]:
-                    ax.add_patch(
-                        plt.Rectangle(
-                            (j - 0.5, i - 0.5),
-                            1,
-                            1,
-                            linewidth=2,
-                            edgecolor="red",
-                            facecolor="none",
-                            zorder=5,
-                        )
+    im = ax.imshow(mat, aspect="auto", cmap="RdYlGn", vmin=0, vmax=max(vmax, 1))
+    for i in range(n_scen):
+        for j in range(n_win):
+            val = int(mat[i, j])
+            text_color = "white" if mat[i, j] > vmax * 0.6 else "black"
+            ax.text(
+                j,
+                i,
+                str(val),
+                ha="center",
+                va="center",
+                fontsize=8,
+                color=text_color,
+            )
+            if not ok_mat[i, j]:
+                ax.add_patch(
+                    plt.Rectangle(
+                        (j - 0.5, i - 0.5),
+                        1,
+                        1,
+                        linewidth=2,
+                        edgecolor="red",
+                        facecolor="none",
+                        zorder=5,
                     )
+                )
 
-        ax.set_xticks(range(n_win))
-        ax.set_xticklabels([f"{w:g}s" for w in windows])
-        ax.set_yticks(range(n_scen))
-        ax.set_yticklabels(scenarios)
-        plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="Attack tx in train")
-        ax.set_title(
-            f"({panel_label}) Attack tx in train — {_LBL_METHOD[method]}", fontsize=10
-        )
-        ax.set_xlabel("Window size")
+    ax.set_xticks(range(n_win))
+    ax.set_xticklabels([f"{w:g}s" for w in windows])
+    ax.set_yticks(range(n_scen))
+    ax.set_yticklabels(scenarios)
+    plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="Attack tx in train")
+    ax.set_title(f"(A) Attack tx in train — {_LBL_METHOD['fixed_window']}", fontsize=10)
+    ax.set_xlabel("Window size")
 
     colors = _SCENARIO_PALETTE[:n_scen]
 
-    # ── C: train attack % per scenario (fixed_window) ─────────────────────────
+    # ── B: train attack % per scenario (fixed_window) ─────────────────────────
     ax_c = fig.add_subplot(gs[1, 0])
     for i, scen in enumerate(scenarios):
         rows = [r for r in scenario_results[scen] if r["method"] == "fixed_window"]
@@ -967,11 +948,11 @@ def plot_cross_scenario(
     _set_window_xticks(ax_c, windows)
     ax_c.set_xlabel("Window size (s)")
     ax_c.set_ylabel("Attack % in train set")
-    ax_c.set_title("(C) Train attack % by scenario  [fixed_window]")
+    ax_c.set_title("(B) Train attack % by scenario  [fixed_window]")
     ax_c.legend(fontsize=7, ncol=2)
     ax_c.grid(alpha=0.3, linewidth=0.5)
 
-    # ── D: attack / benign size ratio per scenario (fixed_window) ─────────────
+    # ── C: attack / benign size ratio per scenario (fixed_window) ─────────────
     ax_d = fig.add_subplot(gs[1, 1])
     for i, scen in enumerate(scenarios):
         rows = [r for r in scenario_results[scen] if r["method"] == "fixed_window"]
@@ -993,7 +974,7 @@ def plot_cross_scenario(
     ax_d.set_yscale("log")
     ax_d.set_xlabel("Window size (s)")
     ax_d.set_ylabel("Mean alerts/tx (attack)  ÷  mean alerts/tx (benign)  [log]")
-    ax_d.set_title("(D) Alert-count ratio: attack tx vs benign tx  [fixed_window]")
+    ax_d.set_title("(C) Alert-count ratio: attack tx vs benign tx  [fixed_window]")
     ax_d.legend(fontsize=7, ncol=2)
     ax_d.grid(alpha=0.3, linewidth=0.5, which="both")
 
@@ -1026,7 +1007,7 @@ def plot_scenario_window_overview(
     Attack count = n_attack + n_mixed (all non-benign alert_groups).
     """
     scenarios = sorted(scenario_results.keys())
-    methods = ["fixed_window", "fixed_window_host"]
+    methods = ["fixed_window"]
     method_labels = [_LBL_METHOD[m] for m in methods]
 
     col_labels = ["Scenario", "Window"]
@@ -1341,7 +1322,6 @@ def _run_scenario_inner(
 
     methods = [
         ("fixed_window", group_alerts_fixed_window),
-        ("fixed_window_host", group_alerts_fixed_window_host),
     ]
 
     results: list[dict] = []
@@ -1473,10 +1453,13 @@ def main() -> None:
         plot_scenario_window_overview(
             all_results, sweep_dir, windows, filter_method=filter_method
         )
-        for m in ("fixed_window", "fixed_window_host"):
-            plot_metrics_heatmap(
-                all_results, sweep_dir, windows, method=m, filter_method=filter_method
-            )
+        plot_metrics_heatmap(
+            all_results,
+            sweep_dir,
+            windows,
+            method="fixed_window",
+            filter_method=filter_method,
+        )
 
     if len(all_results) > 1:
         plot_cross_scenario(

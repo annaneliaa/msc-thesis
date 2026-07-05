@@ -121,6 +121,47 @@ class TokenizedAlert:
     raw: dict[str, Any] = field(default_factory=dict)
 
 
+# Per-application-layer-protocol similarity columns in the CSCAS CSV. A value
+# of -1 means "not applicable" (this alert group's protocol doesn't populate
+# that attribute), not "zero similarity" — kept as a dict rather than one
+# dataclass field each so callers can iterate populated-vs-sentinel entries.
+ATTR_SIMILARITY_COLUMNS: list[str] = [
+    "AppProtoSimilarity",
+    "DnsRrnameSimilarity",
+    "DnsRrtypeSimilarity",
+    "EmailFromSimilarity",
+    "EmailStatusSimilarity",
+    "EmailToSimilarity",
+    "ExtIPSimilarity",
+    "ExtPortSimilarity",
+    "HttpContentTypeSimilarity",
+    "HttpHostnameSimilarity",
+    "HttpMethodSimilarity",
+    "HttpProtocolSimilarity",
+    "HttpRequestBodySimilarity",
+    "HttpResponseBodySimilarity",
+    "HttpStatusSimilarity",
+    "HttpUrlSimilarity",
+    "HttpUserAgentSimilarity",
+    "IntIPSimilarity",
+    "IntPortSimilarity",
+    "ProtoSimilarity",
+    "SmtpHeloSimilarity",
+    "SmtpMailFromSimilarity",
+    "SmtpRcptToSimilarity",
+    "SshClientProtoSimilarity",
+    "SshClientSoftwareSimilarity",
+    "SshServerProtoSimilarity",
+    "SshServerSoftwareSimilarity",
+    "TlsFingerprintSimilarity",
+    "TlsIssuerDnSimilarity",
+    "TlsJa3hashSimilarity",
+    "TlsSniSimilarity",
+    "TlsSubjectSimilarity",
+    "TlsVersionSimilarity",
+]
+
+
 @dataclass(slots=True)
 class IncomingSuricataGroup:
     """
@@ -141,6 +182,11 @@ class IncomingSuricataGroup:
     int_ip: str | None  # anonymised internal IP; None when not available
     int_port: int
     label: int  # 0 = benign, 1 = attack
+    signature_matches_per_day: float
+    similarity: float
+    signature_id_similarity: float
+    scas: int  # the paper's own outlier-cluster id
+    attr_similarities: dict[str, float] = field(default_factory=dict)
 
     @classmethod
     def from_row(cls, row: dict[str, Any]) -> "IncomingSuricataGroup":
@@ -155,6 +201,10 @@ class IncomingSuricataGroup:
             "IntIP",
             "IntPort",
             "Label",
+            "SignatureMatchesPerDay",
+            "Similarity",
+            "SignatureIDSimilarity",
+            "SCAS",
         ]
         missing = [c for c in required if c not in row]
         if missing:
@@ -163,6 +213,9 @@ class IncomingSuricataGroup:
                 f"Available: {list(row.keys())}"
             )
         int_ip_raw = str(row["IntIP"]).strip()
+        attr_similarities = {
+            col: float(row[col]) for col in ATTR_SIMILARITY_COLUMNS if col in row
+        }
         return cls(
             timestamp=str(row["Timestamp"]),
             signature_text=str(row["SignatureText"]),
@@ -174,6 +227,11 @@ class IncomingSuricataGroup:
             int_ip=None if int_ip_raw in ("-1", "") else int_ip_raw,
             int_port=int(row["IntPort"]),
             label=int(row["Label"]),
+            signature_matches_per_day=float(row["SignatureMatchesPerDay"]),
+            similarity=float(row["Similarity"]),
+            signature_id_similarity=float(row["SignatureIDSimilarity"]),
+            scas=int(row["SCAS"]),
+            attr_similarities=attr_similarities,
         )
 
 
@@ -198,3 +256,15 @@ class ParsedSuricataGroup:
     int_ip_is_multiple: bool
     int_port: int
     label: str  # "benign" | "attack"
+    # Per-alert-group attribute-mining fields (see attribute_features.py) --
+    # signature semantics + network context + the paper's own numeric features.
+    category: str = ""  # e.g. "EXPLOIT", "WEB_SERVER"
+    ruleset: str = ""  # "ET" | "ETPRO" | "GPL"
+    cve_refs: set[str] = field(default_factory=set)
+    qualifiers: set[str] = field(default_factory=set)
+    signature_matches_per_day: float = 0.0
+    similarity: float = 0.0
+    signature_id_similarity: float = 0.0
+    attr_similarities: dict[str, float] = field(default_factory=dict)
+    scas: int = -1
+    ext_port_is_multiple: bool = False

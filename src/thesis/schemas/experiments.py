@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from thesis.schemas.mining import FeatureSelectionConfig
+from thesis.schemas.mining import AttributeMiningConfig, FeatureSelectionConfig
 from thesis.paths import CACHE_DIR
 from pathlib import Path
 from thesis.config import GroupingConfig
@@ -8,6 +8,13 @@ from thesis.config import GroupingConfig
 @dataclass
 class SymbolicExperimentConfig:
     scenario: str
+    # mining strategy: "cooccurrence" (default, existing Eclat/PrefixSpan
+    # cross-signature/cross-alert basket mining) or "attribute" (per-alert-group
+    # contrast-set + decision-tree rule mining -- see mining/attribute_mining_job.py)
+    mining_strategy: str = "cooccurrence"
+    attribute_mining_config: AttributeMiningConfig = field(
+        default_factory=AttributeMiningConfig
+    )
     # mining
     min_support: float = 0.05
     max_itemset_size: int = 3

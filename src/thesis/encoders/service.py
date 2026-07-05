@@ -27,9 +27,6 @@ def encode_alert_groups_for_schema(
 
         frames.append(baseline_frame)
 
-    if schema.dynamic is not None:
-        raise NotImplementedError("DynamicFeatureEncoder not implemented yet.")
-
     if schema.symbolic is not None:
         symbolic_encoder = SymbolicFeatureEncoder(
             feature_schema=schema.symbolic,

@@ -3,30 +3,26 @@ from typing import Any, Iterable
 import pandas as pd
 
 from thesis.schemas.groups import AlertGroup
+from thesis.schemas.preprocessing import ATTR_SIMILARITY_COLUMNS
 
-# IANA port ranges: well-known, registered, dynamic/ephemeral.
-_PORT_CLASS_UNKNOWN = 3
-_PORT_CLASS_WELL_KNOWN = 0
-_PORT_CLASS_REGISTERED = 1
-_PORT_CLASS_DYNAMIC = 2
+_ATTR_NOT_APPLICABLE = -1.0
+
+# AlertGroup.method values produced by CSCAS grouping (group_alerts.py); every
+# other method comes from the AIT-ADS alert-level grouping phase.
+_CSCAS_METHOD_PREFIX = "cscas"
 
 
 def _count_items_with_prefix(items: set[str], prefix: str) -> int:
     return sum(1 for item in items if item.startswith(prefix))
 
 
-def _port_class(port: int | None) -> int:
-    if port is None or port < 0:
-        return _PORT_CLASS_UNKNOWN
-    if port <= 1023:
-        return _PORT_CLASS_WELL_KNOWN
-    if port <= 49151:
-        return _PORT_CLASS_REGISTERED
-    return _PORT_CLASS_DYNAMIC
-
-
-def compute_baseline_features(tx: AlertGroup) -> dict[str, Any]:
-    items = set(tx.abs_items or tx.raw_items or [])
+def compute_ait_ads_baseline_features(tx: AlertGroup) -> dict[str, Any]:
+    """
+    Baseline features for AIT-ADS: summary stats over one grouping-phase
+    basket (fixed_window/time_delta/alertbert/...), since a basket there
+    aggregates many individual alerts rather than mirroring one CSV row.
+    """
+    items = set(tx.raw_items or [])
     hour_of_day = datetime.fromtimestamp(int(tx.start_ts), tz=timezone.utc).hour
 
     return {
@@ -35,12 +31,47 @@ def compute_baseline_features(tx: AlertGroup) -> dict[str, Any]:
         "n_hosts": _count_items_with_prefix(items, "host:"),
         "n_shorts": _count_items_with_prefix(items, "short:"),
         "n_sigs": _count_items_with_prefix(items, "sig:"),
-        "proto": tx.proto if tx.proto is not None else -1,
-        "int_port_class": _port_class(tx.int_port),
-        "ext_port_class": _port_class(tx.ext_port),
-        "int_ip_is_multiple": int(tx.int_ip_is_multiple),
-        "ext_ip_is_multiple": int(tx.ext_ip_is_multiple),
     }
+
+
+def compute_cscas_baseline_features(tx: AlertGroup) -> dict[str, Any]:
+    """
+    Baseline features for CSCAS: the paper's own per-row columns, taken as-is
+    off the CSV -- no bucketing, no derived multi_* flags. Those derived
+    features live in mining/attribute_features.py as mining candidates instead.
+    """
+    features: dict[str, Any] = {
+        "proto": tx.proto if tx.proto is not None else -1,
+        "ext_port": tx.ext_port if tx.ext_port is not None else -1,
+        "int_port": tx.int_port if tx.int_port is not None else -1,
+        "scas": tx.scas if tx.scas is not None else -1,
+        "n_alerts": int(tx.n_alerts),
+        "signature_matches_per_day": (
+            tx.signature_matches_per_day
+            if tx.signature_matches_per_day is not None
+            else 0.0
+        ),
+        "similarity": tx.similarity if tx.similarity is not None else 0.0,
+        "signature_id_similarity": (
+            tx.signature_id_similarity
+            if tx.signature_id_similarity is not None
+            else 0.0
+        ),
+    }
+
+    attr_similarities = tx.attr_similarities or {}
+    for name in ATTR_SIMILARITY_COLUMNS:
+        features[f"attr_value:{name}"] = attr_similarities.get(
+            name, _ATTR_NOT_APPLICABLE
+        )
+
+    return features
+
+
+def compute_baseline_features(tx: AlertGroup) -> dict[str, Any]:
+    if tx.method.startswith(_CSCAS_METHOD_PREFIX):
+        return compute_cscas_baseline_features(tx)
+    return compute_ait_ads_baseline_features(tx)
 
 
 class BaselineFeatureEncoder:

@@ -43,9 +43,3 @@ def load_base_features(dataset: str) -> list[str]:
             f"Available: {list(mapping)}"
         )
     return mapping[dataset]
-
-
-def load_dynamic_features() -> list[str]:
-    """Load the dataset-agnostic dynamic feature list."""
-    with (_CONFIGS_DIR / "dynamic_features.json").open() as f:
-        return json.load(f)

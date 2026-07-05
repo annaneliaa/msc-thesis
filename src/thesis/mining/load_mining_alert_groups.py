@@ -36,7 +36,7 @@ def load_mining_alert_groups_from_cache(
             window_start=row.get("window_start"),
             window_end=row.get("window_end"),
             n_alerts=row.get("n_alerts"),
-            items=set(row.get("abs_items", [])),
+            items=set(row.get("raw_items", [])),
             sorted_items=[set(itemset) for itemset in (row.get("sorted_items") or [])],
             group_label=row.get("group_label"),
             alert_labels=(

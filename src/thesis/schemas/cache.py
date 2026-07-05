@@ -3,20 +3,9 @@ from typing import Optional
 
 
 @dataclass(slots=True)
-class AlertCacheEntry:
-    alert_id: str
-    ts: int
-    ip: str | None = None
-    host: str | None = None
-    short: str | None = None
-    event_label: str | None = None
-    label: str | None = None
-
-
-@dataclass(slots=True)
 class GroupCacheEntry:
     group_id: str
-    method: str  # "fixed_window" | "alertbert"
+    method: str  # "fixed_window | cscas_pregrouped | cscas_grouping"
     status: str  # "open" | "stale" | "closed" | "mined"
 
     last_update_ts: int
@@ -45,7 +34,7 @@ class GroupCacheEntry:
 @dataclass(slots=True)
 class CacheQuery:
     # grouping / experiment control
-    allowed_methods: Optional[set[str]] = None  # {"fixed_window", "alertbert"}
+    allowed_methods: Optional[set[str]] = None  # {"fixed_window"}
 
     # lifecycle filtering
     only_closed: bool = True

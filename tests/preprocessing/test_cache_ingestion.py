@@ -5,7 +5,7 @@ from thesis.caching.cache import TokenCache
 from thesis.caching.ingestor import CacheIngestor
 from thesis.schemas.preprocessing import TokenizedAlert
 from thesis.schemas.groups import GroupingRecord
-from thesis.schemas.cache import AlertCacheEntry, GroupCacheEntry
+from thesis.schemas.cache import GroupCacheEntry
 
 SCENARIO = "test_scenario"
 
@@ -47,49 +47,6 @@ def make_grouping_record() -> GroupingRecord:
     )
 
 
-def test_single_alert_ingestion_writes_cache_files(tmp_path):
-    cache = TokenCache(cache_dir=tmp_path / SCENARIO)
-    ingestor = CacheIngestor(cache=cache)
-    alert = make_tokenized_alert()
-
-    ingestor.ingest_alert_batch(
-        alerts=[alert],
-        batch_name=SCENARIO,
-    )
-
-    alert_path = tmp_path / SCENARIO / "alerts" / f"{SCENARIO}.json"
-
-    assert alert_path.exists()
-
-
-def test_single_alert_ingestion_writes_expected_alert_json(tmp_path):
-    cache = TokenCache(cache_dir=tmp_path / SCENARIO)
-    ingestor = CacheIngestor(cache=cache)
-    alert = make_tokenized_alert()
-
-    ingestor.ingest_alert_batch(
-        alerts=[alert],
-        batch_name=SCENARIO,
-    )
-
-    alert_path = tmp_path / SCENARIO / "alerts" / f"{SCENARIO}.json"
-
-    with alert_path.open("r", encoding="utf-8") as f:
-        payload = json.load(f)
-
-    assert isinstance(payload, list)
-    assert len(payload) == 1
-
-    entry = payload[0]
-    assert entry["alert_id"] == alert.alert_id
-    assert entry["ts"] == alert.ts
-    assert entry["ip"] == alert.ip
-    assert entry["host"] == alert.host
-    assert entry["short"] == alert.short
-    assert entry["label"] == alert.label
-    assert entry["event_label"] == alert.event_label
-
-
 def test_group_ingestion_writes_expected_group_json(tmp_path):
     cache = TokenCache(cache_dir=tmp_path / SCENARIO)
     ingestor = CacheIngestor(cache=cache)
@@ -122,32 +79,6 @@ def test_group_ingestion_writes_expected_group_json(tmp_path):
     assert payload["version"] == 1
 
 
-def test_read_alert_batch_reconstructs_alert_cache_entries(tmp_path):
-    cache = TokenCache(cache_dir=tmp_path / SCENARIO)
-    ingestor = CacheIngestor(cache=cache)
-    alert = make_tokenized_alert()
-
-    ingestor.ingest_alert_batch(
-        alerts=[alert],
-        batch_name=SCENARIO,
-    )
-
-    entries = cache.read_alert_batch(SCENARIO)
-
-    assert isinstance(entries, list)
-    assert len(entries) == 1
-
-    entry = entries[0]
-    assert isinstance(entry, AlertCacheEntry)
-    assert entry.alert_id == alert.alert_id
-    assert entry.ts == alert.ts
-    assert entry.ip == alert.ip
-    assert entry.host == alert.host
-    assert entry.short == alert.short
-    assert entry.label == alert.label
-    assert entry.event_label == alert.event_label
-
-
 def test_read_group_entry_reconstructs_group_cache_entry(tmp_path):
     cache = TokenCache(cache_dir=tmp_path / SCENARIO)
     ingestor = CacheIngestor(cache=cache)
@@ -175,14 +106,6 @@ def test_read_group_entry_reconstructs_group_cache_entry(tmp_path):
     assert entry.alert_labels == {"false_positive"}
     assert entry.group_label == "benign"
     assert entry.version == 1
-
-
-def test_read_alert_batch_returns_empty_list_for_missing_file(tmp_path):
-    cache = TokenCache(cache_dir=tmp_path / SCENARIO)
-
-    entries = cache.read_alert_batch("does_not_exist")
-
-    assert entries == []
 
 
 def test_read_group_entry_returns_none_for_missing_file(tmp_path):

@@ -16,8 +16,3 @@ app = FastAPI(title=settings.app.name)
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok"}
-
-
-# @app.post("/predict", response_model=PredictResponse)
-# def predict(req: PredictRequest) -> PredictResponse:
-#     return predict_text(model, req.text)

@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 
 from thesis.schemas.features import (
+    AttributePredicate,
     BaseFeatureSchema,
-    DynamicFeatureSchema,
     FeatureSchema,
     SymbolicFeature,
     SymbolicFeatureSchema,
@@ -14,7 +14,6 @@ from thesis.schemas.features import (
 from thesis.configs import (
     dataset_for_scenario,
     load_base_features,
-    load_dynamic_features,
 )
 
 
@@ -103,17 +102,10 @@ class FeatureSchemaRegistry:
                     )
                 base = BaseFeatureSchema(load_base_features(dataset))
 
-            dynamic = (
-                DynamicFeatureSchema(load_dynamic_features())
-                if spec.get("dynamic")
-                else None
-            )
-
             return FeatureSchema(
                 schema_name=schema_name,
                 schema_version=resolved_schema_version,
                 base=base,
-                dynamic=dynamic,
                 symbolic=symbolic,
             )
 
@@ -184,6 +176,8 @@ class FeatureSchemaRegistry:
         with path.open("r", encoding="utf-8") as f:
             payload = json.load(f)
 
+        predicates = payload.get("predicates")
+
         return SymbolicFeatureSchema(
             schema_name=payload["schema_name"],
             schema_version=payload["schema_version"],
@@ -197,9 +191,28 @@ class FeatureSchemaRegistry:
                     confidence_benign=item.get("confidence_benign"),
                     mining_type=item.get("mining_type"),
                     utility_score=item.get("utility_score", 1.0),
+                    clauses=(
+                        tuple(tuple(c) for c in item["clauses"])
+                        if item.get("clauses") is not None
+                        else None
+                    ),
+                    p_value=item.get("p_value"),
                 )
                 for item in payload["features"]
             ],
+            predicates=(
+                [
+                    AttributePredicate(
+                        token=p["token"],
+                        attribute=p["attribute"],
+                        operator=p["operator"],
+                        value=p["value"],
+                    )
+                    for p in predicates
+                ]
+                if predicates is not None
+                else None
+            ),
         )
 
 

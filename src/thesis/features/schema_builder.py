@@ -1,7 +1,11 @@
 import ast
 import re
 import pandas as pd
-from thesis.schemas.features import SymbolicFeature, SymbolicFeatureSchema
+from thesis.schemas.features import (
+    AttributePredicate,
+    SymbolicFeature,
+    SymbolicFeatureSchema,
+)
 
 
 def _parse_itemset(value: object) -> tuple[str, ...]:
@@ -50,6 +54,7 @@ def build_symbolic_feature_schema(
     source_label: str,
     schema_name: str,
     schema_version: str,
+    predicates: list[AttributePredicate] | None = None,
 ) -> SymbolicFeatureSchema:
     """
     Convert mined itemsets dataframe into a symbolic feature schema.
@@ -133,6 +138,11 @@ def build_symbolic_feature_schema(
                         else None
                     ),
                     utility_score=1.0,
+                    p_value=(
+                        float(row["p_value"])
+                        if "p_value" in row and pd.notna(row["p_value"])
+                        else None
+                    ),
                 )
             )
 
@@ -148,4 +158,5 @@ def build_symbolic_feature_schema(
         schema_name=schema_name,
         schema_version=schema_version,
         features=features,
+        predicates=predicates,
     )

@@ -34,28 +34,11 @@ class EncoderConfig(BaseModel):
     encoder_version: str = "0.1.0"
 
 
-class AlertBERTConfig(BaseModel):
-    """Config for a trained AlertBERT model used at grouping-inference time."""
-
-    model_id: str = ""
-    models_path: str = "artifacts/alertbert"
-    delta: float = 2.0
-    theta: float = 6.0
-    dim_reduction: int = 2
-    # padding + readout control the transformer chunk size (readout + 2*padding alerts
-    # per forward pass). The orignal paper uses readout=2048, padding=1024 for GPU.
-    # For CPU, keep these small to avoid large attention matrices.
-    padding: int = 64
-    readout: int = 256
-    device: str = "cpu"
-
-
 class GroupingConfig(BaseModel):
     """Selects the alert-grouping strategy for preprocessing."""
 
-    mode: str = "fixed_window"  # "fixed_window" | "alertbert"
+    mode: str = "fixed_window"  # "fixed_window"
     window_size: int = 2  # seconds; only used by fixed_window modes
-    alertbert: AlertBERTConfig = AlertBERTConfig()
 
 
 class Settings(BaseSettings):

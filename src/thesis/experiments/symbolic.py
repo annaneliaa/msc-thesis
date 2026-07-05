@@ -63,7 +63,6 @@ import pandas as pd
 from thesis.config import load_mining_filter_config
 from thesis.configs import dataset_for_scenario
 from thesis.experiments.baseline import (
-    ALERTBERT_METHOD,
     _EXPERIMENTS_DIR,
     _ROOT,
 )
@@ -91,6 +90,7 @@ from thesis.mining.util import (
 )
 from thesis.paths import ensure_artifact_dirs
 from thesis.schemas.experiments import SymbolicExperimentConfig, ExperimentResult
+from thesis.schemas.mining import AttributeMiningConfig
 from thesis.registry.models import get_model_path, resolve_model_paths
 from thesis.training.service import train_model_for_schema
 from thesis.utils.runs import create_run_dir
@@ -513,6 +513,44 @@ def _mine_and_register_symbolic_schema(
     return schema_path, run_dir, mining_stats
 
 
+def _mine_and_register_attribute_schema(
+    scenario: str,
+    alert_groups_path: Path,
+    run_name: str,
+    attribute_mining_config: AttributeMiningConfig,
+) -> tuple[Path, Path, dict]:
+    """
+    Per-alert-group attribute mining: Step 1 contrast-set stats over
+    categorical predicates, Step 2 decision-tree rule extraction over the
+    survivors + numeric base features. See mining/attribute_mining_job.py.
+    """
+    from thesis.mining.attribute_mining_job import run_alert_group_attribute_mining_job
+
+    result = run_alert_group_attribute_mining_job(
+        alert_groups_path=alert_groups_path,
+        scenario_name=scenario,
+        run_name=run_name,
+        config=attribute_mining_config,
+    )
+
+    print("--- Building and saving symbolic schema (attribute mining) ---")
+    schema_path, schema_build_stats = build_persist_and_register_symbolic_schema(
+        df=result.mined_df,
+        scenario_name=scenario,
+        source_label="attack",
+        schema_name="symbolic",
+        root_dir=_ROOT / "artifacts" / "features",
+        predicates=result.predicates,
+    )
+    mining_stats = {
+        "n_candidate_features": len(result.mined_df),
+        "n_predicates": len(result.predicates),
+        **schema_build_stats,
+    }
+    print(f"  Symbolic schema registered → {schema_path}")
+    return schema_path, result.run_dir, mining_stats
+
+
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
@@ -661,12 +699,15 @@ def run_symbolic_experiment(
                         "end_ts": t.end_ts,
                         "n_alerts": t.n_alerts,
                         "alert_ids": t.alert_ids,
-                        "abs_items": sorted(list(t.abs_items)),
                         "raw_items": sorted(list(t.raw_items))
                         if t.raw_items is not None
                         else None,
-                        "sorted_items": [sorted(s) for s in t.sorted_items],
-                        "alert_ips": sorted(list(t.alert_ips)),
+                        "sorted_items": [sorted(s) for s in t.sorted_items]
+                        if t.sorted_items is not None
+                        else None,
+                        "alert_ips": sorted(list(t.alert_ips))
+                        if t.alert_ips is not None
+                        else None,
                         "group_label": t.group_label,
                         "alert_labels": sorted(list(t.alert_labels))
                         if t.alert_labels is not None
@@ -709,31 +750,49 @@ def run_symbolic_experiment(
         mining_stats: dict = {"prebuilt": True}
     else:
         run_name = f"symbolic_{config.scenario}"
-        n_attack_in_mine = sum(
-            1 for t in alert_groups[:n_mine] if t.group_label == "attack"
-        )
-        if n_attack_in_mine == 0:
+        if config.mining_strategy == "attribute":
             print(
-                f"  [info] No attack alert_groups in mine window ({n_mine}/{n_total}) — skipping attack mining pass."
+                "  [mining_strategy=attribute] Using per-alert-group attribute mining."
             )
-        has_sequence_data = any(t.sorted_items for t in alert_groups[:n_mine])
-        symbolic_schema_path, mining_run_dir, mining_stats = (
-            _mine_and_register_symbolic_schema(
-                scenario=config.scenario,
-                alert_groups_path=mining_alert_groups_path,
-                run_name=run_name,
-                min_support=config.min_support,
-                max_itemset_size=config.max_itemset_size,
-                max_seq_len=config.max_seq_len,
-                target_label=config.target_label,
-                filter_config=config.filter_config,
-                jaccard_threshold=config.jaccard_threshold,
-                abstraction_map_path=config.abstraction_map_path,
-                abstraction_level=config.abstraction_level,
-                run_attack_pass=n_attack_in_mine > 0,
-                has_sequence_data=has_sequence_data,
+            symbolic_schema_path, mining_run_dir, mining_stats = (
+                _mine_and_register_attribute_schema(
+                    scenario=config.scenario,
+                    alert_groups_path=mining_alert_groups_path,
+                    run_name=run_name,
+                    attribute_mining_config=config.attribute_mining_config,
+                )
             )
-        )
+        elif config.mining_strategy == "cooccurrence":
+            n_attack_in_mine = sum(
+                1 for t in alert_groups[:n_mine] if t.group_label == "attack"
+            )
+            if n_attack_in_mine == 0:
+                print(
+                    f"  [info] No attack alert_groups in mine window ({n_mine}/{n_total}) — skipping attack mining pass."
+                )
+            has_sequence_data = any(t.sorted_items for t in alert_groups[:n_mine])
+            symbolic_schema_path, mining_run_dir, mining_stats = (
+                _mine_and_register_symbolic_schema(
+                    scenario=config.scenario,
+                    alert_groups_path=mining_alert_groups_path,
+                    run_name=run_name,
+                    min_support=config.min_support,
+                    max_itemset_size=config.max_itemset_size,
+                    max_seq_len=config.max_seq_len,
+                    target_label=config.target_label,
+                    filter_config=config.filter_config,
+                    jaccard_threshold=config.jaccard_threshold,
+                    abstraction_map_path=config.abstraction_map_path,
+                    abstraction_level=config.abstraction_level,
+                    run_attack_pass=n_attack_in_mine > 0,
+                    has_sequence_data=has_sequence_data,
+                )
+            )
+        else:
+            raise ValueError(
+                f"Unsupported mining_strategy: {config.mining_strategy!r}. "
+                "Expected 'cooccurrence' or 'attribute'."
+            )
 
     # 6. Encode under base+symbolic schema
     print(f"[6/8] Encoding alert_groups (schema='{config.schema_name}')...")
@@ -818,11 +877,7 @@ def run_symbolic_experiment(
     results_dir.mkdir(parents=True, exist_ok=True)
     results_file = results_dir / f"symbolic_{timestamp}.json"
 
-    grouping_params = (
-        config.grouping.alertbert.model_dump()
-        if config.grouping.mode == ALERTBERT_METHOD
-        else None
-    )
+    grouping_params = None
     with results_file.open("w", encoding="utf-8") as f:
         json.dump(
             {

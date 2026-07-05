@@ -4,7 +4,6 @@ from dataclasses import asdict
 from typing import Iterable, Any
 
 from thesis.schemas.cache import (
-    AlertCacheEntry,
     GroupCacheEntry,
     CacheQuery,
     CacheResponse,
@@ -14,25 +13,13 @@ from thesis.schemas.cache import (
 class TokenCache:
     def __init__(self, cache_dir: Path) -> None:
         self.cache_dir = cache_dir
-        self.alert_store_dir = cache_dir / "alerts"
         self.group_store_dir = cache_dir / "groups"
 
-        self.alert_store_dir.mkdir(parents=True, exist_ok=True)
         self.group_store_dir.mkdir(parents=True, exist_ok=True)
 
     # -------------------------
     # serialization helpers
     # -------------------------
-
-    @staticmethod
-    def _alert_to_payload(entry: AlertCacheEntry) -> dict:
-        payload = asdict(entry)
-        return payload
-
-    @staticmethod
-    def _alert_from_payload(payload: dict) -> AlertCacheEntry:
-        payload = dict(payload)
-        return AlertCacheEntry(**payload)
 
     @staticmethod
     def _group_to_payload(entry: GroupCacheEntry) -> dict:
@@ -144,13 +131,6 @@ class TokenCache:
     # single-entry writes
     # -------------------------
 
-    def write_alert_entry(self, entry: AlertCacheEntry) -> None:
-        path = self.alert_store_dir / f"{entry.alert_id}.json"
-        payload = self._alert_to_payload(entry)
-
-        with path.open("w", encoding="utf-8") as f:
-            json.dump(payload, f, indent=2, sort_keys=True)
-
     def write_group_entry(self, entry: GroupCacheEntry) -> None:
         path = self.group_store_dir / f"{entry.group_id}.json"
         payload = self._group_to_payload(entry)
@@ -161,19 +141,6 @@ class TokenCache:
     # -------------------------
     # batch writes
     # -------------------------
-
-    def write_alert_batch(
-        self,
-        entries: Iterable[AlertCacheEntry],
-        batch_name: str,
-    ) -> Path:
-        path = self.alert_store_dir / f"{batch_name}.json"
-        payload = [self._alert_to_payload(entry) for entry in entries]
-
-        with path.open("w", encoding="utf-8") as f:
-            json.dump(payload, f, indent=2, sort_keys=True)
-
-        return path
 
     def write_group_batch(
         self,
@@ -192,16 +159,6 @@ class TokenCache:
     # single-entry reads
     # -------------------------
 
-    def read_alert_entry(self, alert_id: str) -> AlertCacheEntry | None:
-        path = self.alert_store_dir / f"{alert_id}.json"
-        if not path.exists():
-            return None
-
-        with path.open("r", encoding="utf-8") as f:
-            payload = json.load(f)
-
-        return self._alert_from_payload(payload)
-
     def read_group_entry(self, group_id: str) -> GroupCacheEntry | None:
         path = self.group_store_dir / f"{group_id}.json"
         if not path.exists():
@@ -215,16 +172,6 @@ class TokenCache:
     # -------------------------
     # batch reads
     # -------------------------
-
-    def read_alert_batch(self, batch_name: str) -> list[AlertCacheEntry]:
-        path = self.alert_store_dir / f"{batch_name}.json"
-        if not path.exists():
-            return []
-
-        with path.open("r", encoding="utf-8") as f:
-            payloads = json.load(f)
-
-        return [self._alert_from_payload(payload) for payload in payloads]
 
     def read_group_batch(self, batch_name: str) -> list[GroupCacheEntry]:
         path = self.group_store_dir / f"{batch_name}.json"
@@ -242,9 +189,6 @@ class TokenCache:
 
     def list_group_ids(self) -> list[str]:
         return sorted(path.stem for path in self.group_store_dir.glob("*.json"))
-
-    def list_alert_batch_names(self) -> list[str]:
-        return sorted(path.stem for path in self.alert_store_dir.glob("*.json"))
 
     def list_group_batch_names(self) -> list[str]:
         return sorted(path.stem for path in self.group_store_dir.glob("*.json"))

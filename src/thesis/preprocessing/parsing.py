@@ -102,6 +102,16 @@ def parse_suricata_group_row(row: IncomingSuricataGroup) -> ParsedSuricataGroup:
         int_ip_is_multiple=(row.int_ip is None),
         int_port=row.int_port,
         label="benign" if row.label == 0 else "attack",
+        category=sig.category,
+        ruleset=sig.ruleset,
+        cve_refs=sig.cve_refs,
+        qualifiers=sig.qualifiers,
+        signature_matches_per_day=row.signature_matches_per_day,
+        similarity=row.similarity,
+        signature_id_similarity=row.signature_id_similarity,
+        attr_similarities=row.attr_similarities,
+        scas=row.scas,
+        ext_port_is_multiple=(row.ext_port == -1),
     )
 
 
