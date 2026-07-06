@@ -7,6 +7,7 @@ import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.colors import LogNorm
 from matplotlib.gridspec import GridSpecFromSubplotSpec
 
 from thesis.configs import load_scenarios
@@ -1236,3 +1237,435 @@ def plot_scenario_overview(
     plt.tight_layout()
     _save(fig, out_path)
     return fig, ax
+
+
+# ─── per-scenario alert_group plots (used by data.eda.run_scenario_eda) ──────
+
+
+def plot_alert_group_size_distribution(
+    alert_groups: pd.DataFrame,
+    scenario: str,
+    figsize: tuple = (10, 6),
+    out_path: str | None = None,
+) -> tuple:
+    """Histogram of alert_group size (# items), split benign vs attack."""
+    groups = alert_groups.copy()
+    groups["group_size"] = groups["items"].apply(len)
+
+    fig, ax = plt.subplots(figsize=figsize)
+    for label, color in [("benign", _C_BENIGN), ("attack", _C_ATTACK)]:
+        subset = groups.loc[groups["group_label"] == label, "group_size"]
+        ax.hist(subset, bins=20, alpha=0.7, color=color, label=label)
+    ax.set_title(f"Distribution of alert_group size (scenario={scenario})")
+    ax.set_xlabel("Number of items in alert_group")
+    ax.set_ylabel("Count")
+    ax.set_yscale("log")
+    ax.legend()
+    plt.tight_layout()
+    _save(fig, out_path)
+    return fig, ax
+
+
+def plot_pair_support_scatter(
+    pair_metrics_df: pd.DataFrame,
+    scenario: str,
+    figsize: tuple = (7, 6),
+    out_path: str | None = None,
+) -> tuple:
+    """Scatter of item-pair support: attack vs benign (log-log)."""
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.scatter(
+        pair_metrics_df["support_benign"], pair_metrics_df["support_attack"], alpha=0.5
+    )
+    ax.set_yscale("log")
+    ax.set_xscale("log")
+    ax.set_xlabel("Support (benign)")
+    ax.set_ylabel("Support (attack)")
+    ax.set_title(f"Pair support: attack vs benign (scenario={scenario})")
+    plt.tight_layout()
+    _save(fig, out_path)
+    return fig, ax
+
+
+def plot_label_distribution_table(
+    label_dist_df: pd.DataFrame,
+    out_path: str | None = None,
+) -> tuple:
+    """
+    Table of per-scenario label breakdown (count, % of data, % of attacks).
+
+    `label_dist_df` is the tidy frame from data.eda.compute_label_distribution_table:
+    columns scenario/label/count/pct_of_data/pct_of_attacks, attack labels before
+    'false_positive' within each scenario (row order as given is preserved).
+    """
+    col_labels = ["Scenario", "Label", "Count", "% of data", "% of attacks"]
+    scenarios = label_dist_df["scenario"].drop_duplicates().tolist()
+    sc_bg = ["#EEF3FF", "#FFF8EE"]
+    sc_color = {sc: sc_bg[i % 2] for i, sc in enumerate(scenarios)}
+
+    cell_text = []
+    cell_colors = []
+    seen_scenario = set()
+    for _, row in label_dist_df.iterrows():
+        first = row["scenario"] not in seen_scenario
+        seen_scenario.add(row["scenario"])
+        pct_attacks = (
+            f"{row['pct_of_attacks']:.1f}%" if pd.notna(row["pct_of_attacks"]) else "—"
+        )
+        cell_text.append(
+            [
+                row["scenario"] if first else "",
+                row["label"],
+                f"{int(row['count']):,}",
+                f"{row['pct_of_data']:.1f}%",
+                pct_attacks,
+            ]
+        )
+        cell_colors.append([sc_color[row["scenario"]]] * len(col_labels))
+
+    n_rows = len(cell_text)
+    fig_height = max(5, 0.35 * (n_rows + 2))
+    fig, ax = plt.subplots(figsize=(11, fig_height))
+    ax.axis("off")
+
+    tbl = ax.table(
+        cellText=cell_text,
+        colLabels=col_labels,
+        cellColours=cell_colors,
+        loc="center",
+        cellLoc="center",
+    )
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(9)
+    tbl.scale(1.0, 1.4)
+
+    for j in range(len(col_labels)):
+        tbl[0, j].set_facecolor("#2D2D2D")
+        tbl[0, j].set_text_props(fontweight="bold", color="white")
+
+    ax.set_title("Alert label distribution per scenario", fontsize=12, pad=10)
+    plt.tight_layout()
+    _save(fig, out_path)
+    return fig, ax
+
+
+# ─── per-host plots (used by data.eda.run_host_scenario_eda) ────────────────
+
+
+def plot_host_alert_type_heatmap(
+    df: pd.DataFrame,
+    scenario: str,
+    out_path: str | None = None,
+) -> tuple:
+    """Alert-type x host heatmap (count, log-scale)."""
+    pivot = df.groupby(["host", "short"]).size().unstack(fill_value=0)
+    pivot = pivot.loc[pivot.sum(axis=1).sort_values(ascending=False).index]
+    pivot = pivot[pivot.sum(axis=0).sort_values(ascending=False).index]
+
+    fig, ax = plt.subplots(
+        figsize=(max(12, len(pivot.columns) * 0.55), max(4, len(pivot) * 0.55 + 1.5))
+    )
+    data = pivot.values.astype(float)
+    data_masked = np.ma.masked_where(data == 0, data)
+
+    vmin = max(1, data_masked.min()) if data_masked.count() else 1
+    im = ax.imshow(
+        data_masked,
+        aspect="auto",
+        cmap="YlOrRd",
+        norm=LogNorm(vmin=vmin, vmax=data.max() + 1),
+    )
+    plt.colorbar(im, ax=ax, label="Alert count (log scale)")
+
+    ax.set_xticks(range(len(pivot.columns)))
+    ax.set_xticklabels(pivot.columns, rotation=45, ha="right", fontsize=8)
+    ax.set_yticks(range(len(pivot.index)))
+    ax.set_yticklabels(pivot.index, fontsize=9)
+    ax.set_title(f"{scenario} — Alert types per host", fontsize=12)
+    ax.set_xlabel("Alert type (short code)")
+    ax.set_ylabel("Host")
+
+    for i in range(len(pivot.index)):
+        for j in range(len(pivot.columns)):
+            v = data[i, j]
+            if v > 0:
+                text_color = "white" if v > data.max() / 4 else "black"
+                ax.text(
+                    j,
+                    i,
+                    f"{int(v):,}",
+                    ha="center",
+                    va="center",
+                    fontsize=6,
+                    color=text_color,
+                )
+
+    plt.tight_layout()
+    _save(fig, out_path)
+    return fig, ax
+
+
+def plot_host_timeline(
+    df: pd.DataFrame,
+    scenario: str,
+    bin_minutes: int = 5,
+    out_path: str | None = None,
+) -> tuple:
+    """Per-host alert rate over time (stacked subplots, benign vs attack)."""
+    hosts = df.groupby("host").size().sort_values(ascending=False).index.tolist()
+    n = len(hosts)
+    fig, axes = plt.subplots(n, 1, figsize=(14, 2.2 * n), sharex=True)
+    if n == 1:
+        axes = [axes]
+
+    t_start = df["time"].min()
+    t_end = df["time"].max()
+    bin_s = bin_minutes * 60
+    edges = np.arange(t_start, t_end + bin_s, bin_s)
+    bin_centers = (edges[:-1] + edges[1:]) / 2
+    hours_elapsed = (bin_centers - t_start) / 3600
+
+    for ax, host in zip(axes, hosts):
+        hdf = df[df["host"] == host]
+        benign = hdf[~hdf["is_attack"]]["time"].values
+        attack = hdf[hdf["is_attack"]]["time"].values
+
+        b_counts, _ = np.histogram(benign, bins=edges)
+        a_counts, _ = np.histogram(attack, bins=edges)
+
+        b_rate = np.where(b_counts > 0, b_counts / (bin_s / 60), np.nan)
+        a_rate = np.where(a_counts > 0, a_counts / (bin_s / 60), np.nan)
+
+        ax.fill_between(
+            hours_elapsed,
+            b_rate,
+            alpha=0.6,
+            color=_C_BENIGN,
+            label="benign",
+            step="mid",
+        )
+        ax.fill_between(
+            hours_elapsed,
+            a_rate,
+            alpha=0.8,
+            color=_C_ATTACK,
+            label="attack",
+            step="mid",
+        )
+
+        ax.set_ylabel(host, rotation=0, labelpad=6, ha="right", fontsize=8, va="center")
+        ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{x:.0f}"))
+        ax.tick_params(axis="y", labelsize=7)
+        if ax == axes[0]:
+            ax.legend(loc="upper right", fontsize=7, framealpha=0.7)
+
+    axes[-1].set_xlabel("Elapsed time (h)")
+    fig.suptitle(
+        f"{scenario} — Alert rate per host ({bin_minutes}-min bins, alerts/min)",
+        fontsize=11,
+        y=1.01,
+    )
+    plt.tight_layout()
+    _save(fig, out_path)
+    return fig, axes
+
+
+def plot_host_interarrival_cdf(
+    df: pd.DataFrame,
+    scenario: str,
+    delta: float,
+    figsize: tuple = (9, 5),
+    out_path: str | None = None,
+) -> tuple:
+    """CDF of inter-arrival times per host (log x-axis)."""
+    hosts = df.groupby("host").size().sort_values(ascending=False).index.tolist()
+    fig, ax = plt.subplots(figsize=figsize)
+
+    cmap = plt.get_cmap("tab10")
+    for i, host in enumerate(hosts):
+        hdf = df[df["host"] == host].sort_values("time")
+        times = hdf["time"].values
+        iat = np.diff(np.sort(times)).astype(float) if len(times) >= 2 else np.array([])
+        if len(iat) == 0:
+            continue
+        iat_sorted = np.sort(iat)
+        cdf = np.arange(1, len(iat_sorted) + 1) / len(iat_sorted)
+        ax.plot(iat_sorted, cdf, label=host, color=cmap(i % 10), linewidth=1.5)
+
+    ax.axvline(
+        delta,
+        color="red",
+        linestyle="--",
+        linewidth=1.2,
+        label=f"δ={delta}s",
+    )
+    ax.set_xscale("log")
+    ax.set_xlabel("Inter-arrival time (seconds, log scale)")
+    ax.set_ylabel("CDF")
+    ax.set_title(f"{scenario} — Inter-arrival time CDF per host")
+    ax.legend(fontsize=8, loc="lower right")
+    ax.grid(True, which="both", alpha=0.3)
+    plt.tight_layout()
+    _save(fig, out_path)
+    return fig, ax
+
+
+def plot_host_burst_profile(
+    host_summaries: list[dict],
+    scenario: str,
+    delta: float,
+    figsize: tuple = (10, 6),
+    out_path: str | None = None,
+) -> tuple:
+    """Bar chart: max stream size and % of IATs below delta, per host."""
+    hosts = [s["host"] for s in host_summaries]
+    max_stream = [s["max_stream_alerts"] for s in host_summaries]
+    pct_sub_delta = [s["pct_iat_sub_delta"] for s in host_summaries]
+
+    x = np.arange(len(hosts))
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=figsize, sharex=True)
+
+    bars = ax1.bar(x, max_stream, color=_C_ATTACK, alpha=0.8)
+    ax1.set_ylabel("Max stream size (alerts)")
+    ax1.set_title(f"{scenario} — Per-host burst profile")
+    ax1.set_yscale("log")
+    ax1.yaxis.set_major_formatter(mticker.FuncFormatter(lambda v, _: f"{int(v):,}"))
+    for bar, v in zip(bars, max_stream):
+        if v > 0:
+            ax1.text(
+                bar.get_x() + bar.get_width() / 2,
+                bar.get_height() * 1.05,
+                f"{int(v):,}",
+                ha="center",
+                va="bottom",
+                fontsize=7,
+            )
+
+    ax2.bar(x, pct_sub_delta, color=_C_BENIGN, alpha=0.8)
+    ax2.axhline(50, color="grey", linestyle="--", linewidth=0.8)
+    ax2.set_ylabel(f"% inter-arrival times < δ={delta}s")
+    ax2.set_ylim(0, 105)
+    ax2.set_xticks(x)
+    ax2.set_xticklabels(hosts, rotation=25, ha="right", fontsize=8)
+    ax2.set_xlabel("Host")
+    for i, v in enumerate(pct_sub_delta):
+        ax2.text(i, v + 1.5, f"{v:.0f}%", ha="center", va="bottom", fontsize=7)
+
+    plt.tight_layout()
+    _save(fig, out_path)
+    return fig, (ax1, ax2)
+
+
+def plot_host_type_overlap(
+    df: pd.DataFrame,
+    scenario: str,
+    out_path: str | None = None,
+) -> tuple:
+    """
+    Host x host Jaccard similarity of alert-type sets.
+    Low Jaccard = hosts see different alert types -> per-host grouping
+    separates semantically distinct streams.
+    """
+    hosts = df.groupby("host").size().sort_values(ascending=False).index.tolist()
+    type_sets = {h: set(df[df["host"] == h]["short"].unique()) for h in hosts}
+
+    n = len(hosts)
+    matrix = np.zeros((n, n))
+    for i, h1 in enumerate(hosts):
+        for j, h2 in enumerate(hosts):
+            s1, s2 = type_sets[h1], type_sets[h2]
+            union = s1 | s2
+            matrix[i, j] = len(s1 & s2) / len(union) if union else 0.0
+
+    fig, ax = plt.subplots(figsize=(max(5, n * 0.8), max(4, n * 0.8)))
+    im = ax.imshow(matrix, vmin=0, vmax=1, cmap="Blues")
+    plt.colorbar(im, ax=ax, label="Jaccard similarity of alert-type sets")
+    ax.set_xticks(range(n))
+    ax.set_yticks(range(n))
+    ax.set_xticklabels(hosts, rotation=40, ha="right", fontsize=8)
+    ax.set_yticklabels(hosts, fontsize=8)
+    ax.set_title(
+        f"{scenario} — Alert-type vocabulary overlap between hosts\n"
+        "(low Jaccard → hosts speak different alert languages)"
+    )
+    for i in range(n):
+        for j in range(n):
+            ax.text(
+                j,
+                i,
+                f"{matrix[i, j]:.2f}",
+                ha="center",
+                va="center",
+                fontsize=7,
+                color="white" if matrix[i, j] > 0.6 else "black",
+            )
+    plt.tight_layout()
+    _save(fig, out_path)
+    return fig, ax
+
+
+def plot_host_exclusive_types(
+    df: pd.DataFrame,
+    scenario: str,
+    out_path: str | None = None,
+) -> tuple:
+    """
+    Stacked bar: for each alert type, how many hosts see it?
+    Types seen at exactly 1 host are 'exclusive' — grouping by host keeps them pure.
+    """
+    host_per_type = df.groupby("short")["host"].nunique().sort_values(ascending=False)
+    short_totals = df["short"].value_counts()
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+
+    bucket_labels = ["1 host (exclusive)", "2–3 hosts", "4+ hosts"]
+    buckets = [
+        host_per_type[host_per_type == 1],
+        host_per_type[(host_per_type >= 2) & (host_per_type <= 3)],
+        host_per_type[host_per_type >= 4],
+    ]
+    colors = ["#228833", "#CCBB44", "#CC3311"]
+    sizes = [len(b) for b in buckets]
+    alert_volumes = [short_totals[b.index].sum() for b in buckets]
+
+    ax1.bar(bucket_labels, sizes, color=colors, alpha=0.85)
+    ax1.set_ylabel("Number of distinct alert types")
+    ax1.set_title("Alert type host exclusivity\n(by # distinct types)")
+    for i, (v, av) in enumerate(zip(sizes, alert_volumes)):
+        ax1.text(
+            i,
+            v + 0.3,
+            f"{v} types\n({av:,} alerts)",
+            ha="center",
+            va="bottom",
+            fontsize=8,
+        )
+    ax1.set_ylim(0, max(sizes) * 1.25)
+
+    exclusive = host_per_type[host_per_type == 1]
+    exc_df = pd.DataFrame(
+        {
+            "short": exclusive.index,
+            "host": [df[df["short"] == s]["host"].iloc[0] for s in exclusive.index],
+            "n_alerts": [short_totals.get(s, 0) for s in exclusive.index],
+        }
+    ).sort_values(["host", "n_alerts"], ascending=[True, False])
+
+    host_colors = {
+        h: plt.get_cmap("tab10")(i % 10) for i, h in enumerate(exc_df["host"].unique())
+    }
+    bar_colors = [host_colors[h] for h in exc_df["host"]]
+
+    ax2.barh(range(len(exc_df)), exc_df["n_alerts"], color=bar_colors, alpha=0.85)
+    ax2.set_yticks(range(len(exc_df)))
+    ax2.set_yticklabels(exc_df["short"], fontsize=7)
+    ax2.set_xlabel("Alert count (log scale)")
+    ax2.set_xscale("log")
+    ax2.set_title("Host-exclusive alert types\n(color = host)")
+    patches = [plt.Rectangle((0, 0), 1, 1, color=host_colors[h]) for h in host_colors]
+    ax2.legend(patches, list(host_colors.keys()), fontsize=7, loc="lower right")
+
+    fig.suptitle(f"{scenario} — Alert type host exclusivity", fontsize=11)
+    plt.tight_layout()
+    _save(fig, out_path)
+    return fig, (ax1, ax2)

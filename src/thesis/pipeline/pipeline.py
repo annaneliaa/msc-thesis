@@ -441,6 +441,41 @@ def alert_group_to_dict(t: AlertGroup) -> dict:
     }
 
 
+def resolve_mining_alert_groups_path(
+    alert_groups: list[AlertGroup],
+    alert_groups_path: Path,
+    mine_frac: float,
+    random_split: bool = False,
+    random_seed: int = 42,
+) -> Path:
+    """Return the path a mining job should read from: `alert_groups_path`
+    itself when mine_frac==1.0 (mine on everything), or a freshly serialized
+    subset file covering the first `mine_frac` fraction of `alert_groups`
+    (already sorted or shuffled by the caller) otherwise.
+
+    Uses alert_group_to_dict -- the same serializer alert_groups_path itself
+    is written with -- rather than a hand-picked field list, since a
+    hand-picked list previously covered only the cooccurrence-relevant
+    fields (raw_items/sorted_items/alert_ips) and silently dropped every
+    CSCAS/attribute-mining field (category, proto, similarity,
+    signature_matches_per_day, attr_similarities, etc.), which meant
+    attribute mining on any mine_frac<1.0 window saw every one of those as
+    an all-missing/constant default.
+    """
+    if mine_frac >= 1.0:
+        return alert_groups_path
+
+    n_mine = int(mine_frac * len(alert_groups))
+    mine_path = (
+        alert_groups_path.parent
+        / f"alert_groups_mine_{mine_frac}{'_rs' + str(random_seed) if random_split else ''}.json"
+    )
+    mine_path.write_text(
+        json.dumps([alert_group_to_dict(t) for t in alert_groups[:n_mine]])
+    )
+    return mine_path
+
+
 def save_snapshots_json(snapshots: list[GroupSnapshot], out_path: Path) -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w") as f:

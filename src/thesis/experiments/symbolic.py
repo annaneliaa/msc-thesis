@@ -67,16 +67,17 @@ from thesis.experiments.baseline import (
     _ROOT,
 )
 from thesis.pipeline.pipeline import (
-    alert_group_to_dict,
     convert_ait_alerts_to_json,
     encode_and_cache_alert_groups,
     ensure_feature_manifest,
     ingest_ait_alert_batch,
     ingest_cscas_scenario,
     load_or_build_alert_groups,
+    resolve_mining_alert_groups_path,
 )
 from thesis.pipeline.pipeline import is_single_class_split as _is_single_class_split
 from thesis.features.service import build_persist_and_register_symbolic_schema
+from thesis.mining.attribute_schema_cache import mine_or_reuse_attribute_schema
 from thesis.mining.itemset_mining_job import run_alert_group_eclat_job
 from thesis.mining.sequence_mining_job import run_alert_group_prefixspan_job
 from thesis.mining.token_abstraction import (
@@ -91,7 +92,6 @@ from thesis.mining.util import (
 )
 from thesis.paths import ensure_artifact_dirs
 from thesis.schemas.experiments import SymbolicExperimentConfig, ExperimentResult
-from thesis.schemas.mining import AttributeMiningConfig
 from thesis.registry.models import get_model_path, resolve_model_paths
 from thesis.training.service import train_model_for_schema
 from thesis.training.util import effective_train_start
@@ -515,48 +515,6 @@ def _mine_and_register_symbolic_schema(
     return schema_path, run_dir, mining_stats
 
 
-def _mine_and_register_attribute_schema(
-    scenario: str,
-    alert_groups_path: Path,
-    run_name: str,
-    attribute_mining_config: AttributeMiningConfig,
-) -> tuple[Path, Path, dict]:
-    """
-    Per-alert-group attribute mining: Step 1 contrast-set stats over
-    categorical predicates, Step 2 decision-tree rule extraction over the
-    survivors + numeric base features. See mining/attribute_mining_job.py.
-    """
-    from thesis.mining.attribute_mining_job import run_alert_group_attribute_mining_job
-
-    result = run_alert_group_attribute_mining_job(
-        alert_groups_path=alert_groups_path,
-        scenario_name=scenario,
-        run_name=run_name,
-        config=attribute_mining_config,
-    )
-
-    print("--- Building and saving symbolic schema (attribute mining) ---")
-    # source_label="attack" here is only a fallback for rows missing their own
-    # label; result.mined_df now always carries a real per-row source_label
-    # (attribute_mining_job.py tags each survivor/leaf by its own
-    # confidence_attack vs confidence_benign), so this never actually fires.
-    schema_path, schema_build_stats = build_persist_and_register_symbolic_schema(
-        df=result.mined_df,
-        scenario_name=scenario,
-        source_label="attack",
-        schema_name="symbolic",
-        root_dir=_ROOT / "artifacts" / "features",
-        predicates=result.predicates,
-    )
-    mining_stats = {
-        "n_candidate_features": len(result.mined_df),
-        "n_predicates": len(result.predicates),
-        **schema_build_stats,
-    }
-    print(f"  Symbolic schema registered → {schema_path}")
-    return schema_path, result.run_dir, mining_stats
-
-
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
@@ -688,29 +646,14 @@ def run_symbolic_experiment(
             grouping_mode=config.grouping.mode,
         )
 
-    mining_alert_groups_path = alert_groups_path
+    mining_alert_groups_path = resolve_mining_alert_groups_path(
+        alert_groups,
+        alert_groups_path,
+        mine_frac=config.mine_frac,
+        random_split=config.random_split,
+        random_seed=config.random_seed,
+    )
     if config.mine_frac < 1.0:
-        # Serialize the already-ordered (temporal or shuffled) in-memory list so the
-        # mining job reads the same ordering that train/test will use.
-
-        mine_path = (
-            alert_groups_path.parent
-            / f"alert_groups_mine_{config.mine_frac}{'_rs' + str(config.random_seed) if config.random_split else ''}.json"
-        )
-        # Reuse alert_group_to_dict (the same serializer alert_groups_raw.json
-        # itself is written with) rather than a hand-picked field list here --
-        # a hand-picked list previously covered only the cooccurrence-relevant
-        # fields (raw_items/sorted_items/alert_ips) and silently dropped every
-        # CSCAS/attribute-mining field (category, proto, similarity,
-        # signature_matches_per_day, attr_similarities, etc.), which meant
-        # attribute mining on any mine_frac<1.0 window saw every one of those
-        # as an all-missing/constant default -- Step 1 found zero categorical
-        # survivors and Step 2's tree collapsed onto whichever numeric field
-        # happened to still be populated (n_alerts/alert_count).
-        mine_path.write_text(
-            json.dumps([alert_group_to_dict(t) for t in alert_groups[:n_mine]])
-        )
-        mining_alert_groups_path = mine_path
         split_label = "random" if config.random_split else "first"
         print(
             f"  Mining on {split_label} {n_mine}/{n_total} alert_groups (mine_frac={config.mine_frac:.2f})"
@@ -747,7 +690,7 @@ def run_symbolic_experiment(
                 "  [mining_strategy=attribute] Using per-alert-group attribute mining."
             )
             symbolic_schema_path, mining_run_dir, mining_stats = (
-                _mine_and_register_attribute_schema(
+                mine_or_reuse_attribute_schema(
                     scenario=config.scenario,
                     alert_groups_path=mining_alert_groups_path,
                     run_name=run_name,

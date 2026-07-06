@@ -1,3 +1,5 @@
+import time
+
 import numpy as np
 import pandas as pd
 from sklearn.metrics import (
@@ -51,9 +53,19 @@ def train_eval_holdout(
             "single_class_split": True,
         }
 
-    model = model_factory()
-    model.fit(X_train, y_train)
+    print(
+        f"  [train] X_train={X_train.shape}, X_test={X_test.shape}, "
+        f"n_features={len(feature_names)}",
+        flush=True,
+    )
 
+    model = model_factory()
+    print(f"  [train] fitting {type(model).__name__}...", flush=True)
+    t0 = time.time()
+    model.fit(X_train, y_train)
+    print(f"  [train] fit done in {time.time() - t0:.1f}s", flush=True)
+
+    t0 = time.time()
     proba_test = model.predict_proba(X_test)[:, 1]
     y_pred = (proba_test >= 0.5).astype(int)
     auc = float(roc_auc_score(y_test, proba_test))
@@ -62,6 +74,7 @@ def train_eval_holdout(
 
     proba_train = model.predict_proba(X_train)[:, 1]
     train_auc = float(roc_auc_score(y_train, proba_train))
+    print(f"  [train] predict + metrics done in {time.time() - t0:.1f}s", flush=True)
 
     importances = {}
 
@@ -91,8 +104,19 @@ def train_eval_holdout(
                 "Permutation importance skipped: model flagged as too expensive"
             )
         _n_jobs = 1 if getattr(model, "_skip_shap", False) else -1
+        print(
+            f"  [train] permutation importance: n_repeats=10, n_jobs={_n_jobs}, "
+            f"X_test={X_test.shape} ({len(feature_names)} features x 10 repeats "
+            f"= {len(feature_names) * 10} extra predict passes)...",
+            flush=True,
+        )
+        t0 = time.time()
         perm_result = permutation_importance(
             model, X_test, y_test, n_repeats=10, random_state=42, n_jobs=_n_jobs
+        )
+        print(
+            f"  [train] permutation importance done in {time.time() - t0:.1f}s",
+            flush=True,
         )
         pairs = sorted(
             zip(feature_names, perm_result.importances_mean),
@@ -100,12 +124,15 @@ def train_eval_holdout(
             reverse=True,
         )
         perm_importances = {name: float(imp) for name, imp in pairs[:top_n_importances]}
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"  [train] permutation importance skipped: {e}", flush=True)
 
     shap_importances = {}
     try:
         import shap
+
+        print("  [train] computing SHAP importances...", flush=True)
+        t0 = time.time()
 
         bg = X_train.sample(min(100, len(X_train)), random_state=42)
         x_explain = X_test.iloc[:200] if len(X_test) > 200 else X_test
@@ -144,8 +171,9 @@ def train_eval_holdout(
             reverse=True,
         )
         shap_importances = {name: float(imp) for name, imp in pairs[:top_n_importances]}
-    except Exception:
-        pass
+        print(f"  [train] SHAP done in {time.time() - t0:.1f}s", flush=True)
+    except Exception as e:
+        print(f"  [train] SHAP skipped: {e}", flush=True)
 
     importances = {
         "by_coefficient": coef_importances,
