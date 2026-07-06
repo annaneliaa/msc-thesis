@@ -17,7 +17,7 @@ MODEL_FACTORIES = {
         penalty="l1",
         C=1.0,
     ),
-    "random_forest": lambda: RandomForestClassifier(
+    "rf": lambda: RandomForestClassifier(
         n_estimators=200,
         class_weight="balanced",
         random_state=42,

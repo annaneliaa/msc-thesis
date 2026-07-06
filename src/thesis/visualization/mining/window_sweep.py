@@ -1,49 +1,21 @@
 """
-Visualisation companion for run_mining_window_sweep.py.
+Plots for run_mining_window_sweep.py (the mode-based benign/mixed/smart
+cross-signature/cross-alert co-occurrence sweep).
 
-Usage:
-    # Explicit run directory
-    python src/thesis/scripts/run_mining_window_sweep_plots.py \
-        --run-dir artifacts/experiments/mining_window_sweep/<dataset>/<timestamp>/
-
-    # Or auto-pick the most recent run for a dataset
-    python src/thesis/scripts/run_mining_window_sweep_plots.py --dataset cscas
-    python src/thesis/scripts/run_mining_window_sweep_plots.py --dataset ait-ads
-
-Reads the 7 analysis CSVs produced by the sweep script and saves PNG plots
-under <run_dir>/plots/.
+Reads the analysis CSVs produced by that script and saves PNG plots.
 """
 
 from __future__ import annotations
 
-import argparse
 from pathlib import Path
 
-import matplotlib
-
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import numpy as np
 import pandas as pd
 
-_HERE = Path(__file__).resolve()
-_REPO = next(p for p in _HERE.parents if (p / "pyproject.toml").exists())
-_EXPERIMENTS_DIR = _REPO / "artifacts" / "experiments" / "run_mining_window_sweep"
+from thesis.visualization.mining.common import grans, savefig, scenario_colour_map
 
-# ---------------------------------------------------------------------------
-# Colour conventions
-# ---------------------------------------------------------------------------
-_SCENARIO_PALETTE = [
-    "#4477AA",
-    "#EE6677",
-    "#228833",
-    "#CCBB44",
-    "#66CCEE",
-    "#AA3377",
-    "#BBBBBB",
-    "#332288",
-]
 _MODE_ORDER = ["benign", "mixed", "smart"]
 _CHURN_COLOURS = {
     "n_unchanged": "#4477AA",
@@ -55,14 +27,6 @@ _DELTA_COLOURS = {
     "n_shared": "#AAAAAA",
     "n_mixed_only": "#CC3311",
 }
-_SAVE_KW = dict(dpi=150, bbox_inches="tight")
-
-
-def _scenario_colour_map(scenarios: list[str]) -> dict[str, str]:
-    return {
-        s: _SCENARIO_PALETTE[i % len(_SCENARIO_PALETTE)]
-        for i, s in enumerate(sorted(scenarios))
-    }
 
 
 def _modes_present(df: pd.DataFrame) -> list[str]:
@@ -70,32 +34,21 @@ def _modes_present(df: pd.DataFrame) -> list[str]:
     return [m for m in _MODE_ORDER if m in present]
 
 
-def _grans(df: pd.DataFrame) -> list[float]:
-    return sorted(df["gran"].unique())
-
-
-def _savefig(fig: plt.Figure, path: Path, name: str) -> None:
-    out = path / name
-    fig.savefig(out, **_SAVE_KW)
-    plt.close(fig)
-    print(f"  saved {out.name}")
-
-
 # ---------------------------------------------------------------------------
 # Plot 1 — Jaccard stability (T3)
 # ---------------------------------------------------------------------------
 def plot_jaccard_stability(df: pd.DataFrame, out: Path) -> None:
     modes = _modes_present(df)
-    grans = _grans(df)
+    gran_vals = grans(df)
     scenarios = sorted(df["scenario"].unique())
-    cmap = _scenario_colour_map(scenarios)
+    cmap = scenario_colour_map(scenarios)
 
-    nrows, ncols = len(grans), len(modes)
+    nrows, ncols = len(gran_vals), len(modes)
     fig, axes = plt.subplots(
         nrows, ncols, figsize=(4 * ncols, 3 * nrows), squeeze=False
     )
 
-    for ri, gran in enumerate(grans):
+    for ri, gran in enumerate(gran_vals):
         for ci, mode in enumerate(modes):
             ax = axes[ri][ci]
             sub = df[(df["gran"] == gran) & (df["mode"] == mode)]
@@ -130,7 +83,7 @@ def plot_jaccard_stability(df: pd.DataFrame, out: Path) -> None:
     )
     fig.suptitle("Jaccard similarity between consecutive windows", y=1.01)
     fig.tight_layout()
-    _savefig(fig, out, "jaccard_stability.png")
+    savefig(fig, out, "jaccard_stability.png")
 
 
 # ---------------------------------------------------------------------------
@@ -138,16 +91,16 @@ def plot_jaccard_stability(df: pd.DataFrame, out: Path) -> None:
 # ---------------------------------------------------------------------------
 def plot_feature_count(df: pd.DataFrame, out: Path) -> None:
     modes = _modes_present(df)
-    grans = _grans(df)
+    gran_vals = grans(df)
     scenarios = sorted(df["scenario"].unique())
-    cmap = _scenario_colour_map(scenarios)
+    cmap = scenario_colour_map(scenarios)
 
-    nrows, ncols = len(grans), len(modes)
+    nrows, ncols = len(gran_vals), len(modes)
     fig, axes = plt.subplots(
         nrows, ncols, figsize=(4 * ncols, 3 * nrows), squeeze=False
     )
 
-    for ri, gran in enumerate(grans):
+    for ri, gran in enumerate(gran_vals):
         for ci, mode in enumerate(modes):
             ax = axes[ri][ci]
             sub = df[(df["gran"] == gran) & (df["mode"] == mode)]
@@ -178,7 +131,7 @@ def plot_feature_count(df: pd.DataFrame, out: Path) -> None:
     )
     fig.suptitle("Feature count per window", y=1.01)
     fig.tight_layout()
-    _savefig(fig, out, "feature_count_per_window.png")
+    savefig(fig, out, "feature_count_per_window.png")
 
 
 # ---------------------------------------------------------------------------
@@ -192,10 +145,10 @@ def plot_churn(df: pd.DataFrame, out: Path) -> None:
     Layout: rows = scenarios, columns = modes.  One figure per granularity.
     """
     modes = _modes_present(df)
-    grans = _grans(df)
+    gran_vals = grans(df)
     scenarios = sorted(df["scenario"].unique())
 
-    for gran in grans:
+    for gran in gran_vals:
         nrows, ncols = len(scenarios), len(modes)
         fig, axes = plt.subplots(
             nrows, ncols, figsize=(4.5 * ncols, 2.8 * nrows), squeeze=False
@@ -269,7 +222,7 @@ def plot_churn(df: pd.DataFrame, out: Path) -> None:
         fig.suptitle(f"Feature set changes per window  (gran={gran:.0%})", y=1.01)
         fig.tight_layout()
         gran_tag = f"{int(gran * 100):02d}"
-        _savefig(fig, out, f"feature_set_changes_gran{gran_tag}.png")
+        savefig(fig, out, f"feature_set_changes_gran{gran_tag}.png")
 
 
 # ---------------------------------------------------------------------------
@@ -277,18 +230,18 @@ def plot_churn(df: pd.DataFrame, out: Path) -> None:
 # ---------------------------------------------------------------------------
 def plot_persistence(df: pd.DataFrame, out: Path) -> None:
     modes = _modes_present(df)
-    grans = _grans(df)
+    gran_vals = grans(df)
     scenarios = sorted(df["scenario"].unique())
-    cmap = _scenario_colour_map(scenarios)
+    cmap = scenario_colour_map(scenarios)
 
-    nrows, ncols = len(grans), len(modes)
+    nrows, ncols = len(gran_vals), len(modes)
     fig, axes = plt.subplots(
         nrows, ncols, figsize=(4 * ncols, 3 * nrows), squeeze=False
     )
 
     bar_w = 0.8 / max(len(scenarios), 1)
 
-    for ri, gran in enumerate(grans):
+    for ri, gran in enumerate(gran_vals):
         for ci, mode in enumerate(modes):
             ax = axes[ri][ci]
             sub = df[(df["gran"] == gran) & (df["mode"] == mode)]
@@ -330,7 +283,7 @@ def plot_persistence(df: pd.DataFrame, out: Path) -> None:
         "Feature persistence (how many windows each feature appears in)", y=1.01
     )
     fig.tight_layout()
-    _savefig(fig, out, "persistence_histogram.png")
+    savefig(fig, out, "persistence_histogram.png")
 
 
 # ---------------------------------------------------------------------------
@@ -343,7 +296,7 @@ def plot_attack_contamination(t5: pd.DataFrame, t1: pd.DataFrame, out: Path) -> 
     Red shading between them = features lost to attack contamination.
     Grey bars (secondary axis) = number of attack alert_groups in that window.
     """
-    grans = _grans(t5)
+    gran_vals = grans(t5)
     scenarios = sorted(t5["scenario"].unique())
 
     # Use per-window attack tx counts from mixed mode (benign mode strips attack tx)
@@ -353,7 +306,7 @@ def plot_attack_contamination(t5: pd.DataFrame, t1: pd.DataFrame, out: Path) -> 
         else None
     )
 
-    for gran in grans:
+    for gran in gran_vals:
         sub5 = t5[t5["gran"] == gran]
         sub_atk = (
             attack_counts[attack_counts["gran"] == gran]
@@ -483,7 +436,7 @@ def plot_attack_contamination(t5: pd.DataFrame, t1: pd.DataFrame, out: Path) -> 
             f"Cost of attack traffic on mined features  (gran={gran:.0%})", y=1.01
         )
         fig.tight_layout()
-        _savefig(fig, out, f"attack_contamination_cost_gran{gran_tag}.png")
+        savefig(fig, out, f"attack_contamination_cost_gran{gran_tag}.png")
 
 
 # ---------------------------------------------------------------------------
@@ -496,7 +449,7 @@ def plot_cross_scenario_sharing(t2: pd.DataFrame, t6: pd.DataFrame, out: Path) -
     share the same robust patterns, not just any transiently mined feature.
     """
     modes = _modes_present(t2)
-    grans = _grans(t2)
+    gran_vals = grans(t2)
     scenarios = sorted(t2["scenario"].unique())
     if len(scenarios) < 2:
         print("  [skip] cross_scenario_sharing_heatmap — only 1 scenario")
@@ -507,13 +460,13 @@ def plot_cross_scenario_sharing(t2: pd.DataFrame, t6: pd.DataFrame, out: Path) -
     max_wins = t2.groupby(["scenario", "mode", "gran"])["n_windows"].transform("max")
     stable = t2[t2["n_windows"] == max_wins][["scenario", "mode", "gran", "feature"]]
 
-    nrows, ncols = len(grans), len(modes)
+    nrows, ncols = len(gran_vals), len(modes)
     cell = max(2.5, 0.6 * len(scenarios))
     fig, axes = plt.subplots(
         nrows, ncols, figsize=(cell * ncols + 1, cell * nrows), squeeze=False
     )
 
-    for ri, gran in enumerate(grans):
+    for ri, gran in enumerate(gran_vals):
         for ci, mode in enumerate(modes):
             ax = axes[ri][ci]
             sub = stable[(stable["gran"] == gran) & (stable["mode"] == mode)]
@@ -570,7 +523,7 @@ def plot_cross_scenario_sharing(t2: pd.DataFrame, t6: pd.DataFrame, out: Path) -
         y=1.02,
     )
     fig.tight_layout()
-    _savefig(fig, out, "cross_scenario_stable_core_heatmap.png")
+    savefig(fig, out, "cross_scenario_stable_core_heatmap.png")
 
 
 # ---------------------------------------------------------------------------
@@ -628,7 +581,7 @@ def plot_dropped_diagnosis(df: pd.DataFrame, out: Path) -> None:
         fontsize=10,
     )
     fig.tight_layout()
-    _savefig(fig, out, "dropped_feature_diagnosis.png")
+    savefig(fig, out, "dropped_feature_diagnosis.png")
 
 
 # ---------------------------------------------------------------------------
@@ -641,7 +594,6 @@ def _load_window_features(
 ) -> dict[int, set[str]]:
     """Return {win_idx: set_of_features} from the per-window CSV files."""
     wf_dir = run_dir / "window_features"
-    # gran_tag = f"{gran:.6f}".rstrip("0").rstrip(".")
     result: dict[int, set[str]] = {}
     if not wf_dir.exists():
         return result
@@ -803,7 +755,7 @@ def plot_feature_lifecycle(
 
     combos = _parse_wf_combos(wf_dir, gran_filter)
     scenarios = sorted({s for s, _, _ in combos})
-    grans = sorted({g for _, _, g in combos})
+    gran_vals = sorted({g for _, _, g in combos})
     modes = [m for m in _MODE_ORDER if any(m == md for _, md, _ in combos)]
 
     legend_handles = [
@@ -837,7 +789,7 @@ def plot_feature_lifecycle(
     ]
 
     for scenario in scenarios:
-        for gran in grans:
+        for gran in gran_vals:
             # Load per-mode data for this (scenario, gran)
             gran_data: dict[str, dict[int, set[str]]] = {}
             for mode in modes:
@@ -886,7 +838,6 @@ def plot_feature_lifecycle(
 
             # Detect attack windows (any window containing attack alert_groups)
             # using the mixed mode data (most complete alert_group set)
-            # ref_wf_any = next(iter(gran_data.values()))
             attack_wins: set[int] = set()
             for mode in ("mixed", "smart", "benign"):
                 if mode in gran_data:
@@ -947,118 +898,4 @@ def plot_feature_lifecycle(
                 f"{scenario}  —  feature lifecycle  |  gran={gran:.0%}", y=1.01
             )
             fig.tight_layout()
-            _savefig(fig, out, f"feature_lifecycle_{scenario}_gran{gran:.0%}.png")
-
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-def _latest_run_dir(dataset: str) -> Path:
-    """Most recent timestamped run directory under mining_window_sweep/<dataset>/.
-
-    Run directories are named %Y%m%d_%H%M%S, so lexicographic sort == chronological.
-    """
-    dataset_dir = _EXPERIMENTS_DIR / dataset
-    if not dataset_dir.exists():
-        raise FileNotFoundError(
-            f"No runs found for dataset '{dataset}' at {dataset_dir}\n"
-            "Run run_mining_window_sweep.py for this dataset first."
-        )
-    run_dirs = sorted(d for d in dataset_dir.iterdir() if d.is_dir())
-    if not run_dirs:
-        raise FileNotFoundError(f"No run directories found under {dataset_dir}")
-    return run_dirs[-1]
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Plot mining window sweep results")
-    parser.add_argument(
-        "--run-dir",
-        type=Path,
-        default=None,
-        help="Path to a specific mining_window_sweep run directory. "
-        "Mutually exclusive with --dataset.",
-    )
-    parser.add_argument(
-        "--dataset",
-        type=str,
-        default=None,
-        help="Dataset name (e.g. 'ait-ads', 'cscas') — auto-selects the most "
-        "recent run under artifacts/experiments/mining_window_sweep/<dataset>/. "
-        "Mutually exclusive with --run-dir.",
-    )
-    parser.add_argument(
-        "--gran",
-        type=float,
-        nargs="*",
-        default=None,
-        help="Restrict to specific granularity values (e.g. --gran 0.1 0.2)",
-    )
-    args = parser.parse_args()
-
-    if args.run_dir is None and args.dataset is None:
-        parser.error("Provide --run-dir or --dataset.")
-    if args.run_dir is not None and args.dataset is not None:
-        parser.error("Provide only one of --run-dir or --dataset, not both.")
-
-    if args.dataset is not None:
-        run_dir = _latest_run_dir(args.dataset)
-        print(f"[dataset={args.dataset}] Using latest run: {run_dir}")
-    else:
-        run_dir = args.run_dir
-        if not run_dir.exists():
-            raise FileNotFoundError(f"Run directory not found: {run_dir}")
-
-    plots_dir = run_dir / "plots"
-    plots_dir.mkdir(exist_ok=True)
-
-    def _load(name: str) -> pd.DataFrame | None:
-        p = run_dir / name
-        if not p.exists():
-            print(f"  [skip] {name} not found")
-            return None
-        try:
-            df = pd.read_csv(p)
-        except pd.errors.EmptyDataError:
-            print(f"  [skip] {name} is empty (no rows to diagnose)")
-            return None
-        if args.gran is not None and "gran" in df.columns:
-            df = df[df["gran"].isin(args.gran)]
-        return df
-
-    print(f"Reading CSVs from {run_dir}")
-    t1 = _load("table1_stability.csv")
-    t2 = _load("table2_sharing.csv")
-    t3 = _load("table3_convergence.csv")
-    t4 = _load("table4_dropped_diagnosis.csv")
-    t5 = _load("table5_benign_vs_mixed.csv")
-    t6 = _load("table6_persistence.csv")
-
-    print(f"\nGenerating plots → {plots_dir}")
-
-    if t3 is not None and not t3.empty:
-        plot_jaccard_stability(t3, plots_dir)
-
-    if t1 is not None and not t1.empty:
-        plot_feature_count(t1, plots_dir)
-        plot_churn(t1, plots_dir)
-
-    if t6 is not None and not t6.empty:
-        plot_persistence(t6, plots_dir)
-
-    if t5 is not None and not t5.empty and t1 is not None and not t1.empty:
-        plot_attack_contamination(t5, t1, plots_dir)
-
-    if t2 is not None and not t2.empty and t6 is not None and not t6.empty:
-        plot_cross_scenario_sharing(t2, t6, plots_dir)
-
-    if t4 is not None and not t4.empty:
-        plot_dropped_diagnosis(t4, plots_dir)
-
-    plot_feature_lifecycle(run_dir, plots_dir, gran_filter=args.gran)
-
-    print("\nDone.")
-
-
-if __name__ == "__main__":
-    main()
+            savefig(fig, out, f"feature_lifecycle_{scenario}_gran{gran:.0%}.png")

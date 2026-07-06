@@ -2,7 +2,7 @@
 Symbolic experiment: full pipeline for a given scenario, including mining.
 
 Steps:
-  1. Convert raw alerts CSV to JSON
+  1. Convert raw alerts CSV to JSON format
   2. Process alert batch (tokenise + ingest into cache)
   3. Ensure feature manifest (creates base schemas if missing)
   4. Build alert_groups from closed groups and save raw JSON
@@ -67,6 +67,7 @@ from thesis.experiments.baseline import (
     _ROOT,
 )
 from thesis.pipeline.pipeline import (
+    alert_group_to_dict,
     convert_ait_alerts_to_json,
     encode_and_cache_alert_groups,
     ensure_feature_manifest,
@@ -93,6 +94,7 @@ from thesis.schemas.experiments import SymbolicExperimentConfig, ExperimentResul
 from thesis.schemas.mining import AttributeMiningConfig
 from thesis.registry.models import get_model_path, resolve_model_paths
 from thesis.training.service import train_model_for_schema
+from thesis.training.util import effective_train_start
 from thesis.utils.runs import create_run_dir
 
 
@@ -534,6 +536,10 @@ def _mine_and_register_attribute_schema(
     )
 
     print("--- Building and saving symbolic schema (attribute mining) ---")
+    # source_label="attack" here is only a fallback for rows missing their own
+    # label; result.mined_df now always carries a real per-row source_label
+    # (attribute_mining_job.py tags each survivor/leaf by its own
+    # confidence_attack vs confidence_benign), so this never actually fires.
     schema_path, schema_build_stats = build_persist_and_register_symbolic_schema(
         df=result.mined_df,
         scenario_name=scenario,
@@ -634,6 +640,7 @@ def run_symbolic_experiment(
         train_start,
         random_split=config.random_split,
         random_seed=config.random_seed,
+        train_frac=config.train_frac,
     ):
         n_train = int((1 - config.test_frac) * n_total) - train_start
         n_test = n_total - int((1 - config.test_frac) * n_total)
@@ -659,7 +666,9 @@ def run_symbolic_experiment(
                     "mine_frac": config.mine_frac,
                     "no_overlap": config.no_overlap,
                     "test_frac": config.test_frac,
-                    "train_frac": 1.0 - config.test_frac,
+                    "train_frac": config.train_frac
+                    if config.train_frac is not None
+                    else 1.0 - config.test_frac,
                     "metrics": {"single_class_split": True},
                 },
                 f,
@@ -688,35 +697,18 @@ def run_symbolic_experiment(
             alert_groups_path.parent
             / f"alert_groups_mine_{config.mine_frac}{'_rs' + str(config.random_seed) if config.random_split else ''}.json"
         )
+        # Reuse alert_group_to_dict (the same serializer alert_groups_raw.json
+        # itself is written with) rather than a hand-picked field list here --
+        # a hand-picked list previously covered only the cooccurrence-relevant
+        # fields (raw_items/sorted_items/alert_ips) and silently dropped every
+        # CSCAS/attribute-mining field (category, proto, similarity,
+        # signature_matches_per_day, attr_similarities, etc.), which meant
+        # attribute mining on any mine_frac<1.0 window saw every one of those
+        # as an all-missing/constant default -- Step 1 found zero categorical
+        # survivors and Step 2's tree collapsed onto whichever numeric field
+        # happened to still be populated (n_alerts/alert_count).
         mine_path.write_text(
-            json.dumps(
-                [
-                    {
-                        "alert_group_id": t.alert_group_id,
-                        "group_id": t.group_id,
-                        "method": t.method,
-                        "start_ts": t.start_ts,
-                        "end_ts": t.end_ts,
-                        "n_alerts": t.n_alerts,
-                        "alert_ids": t.alert_ids,
-                        "raw_items": sorted(list(t.raw_items))
-                        if t.raw_items is not None
-                        else None,
-                        "sorted_items": [sorted(s) for s in t.sorted_items]
-                        if t.sorted_items is not None
-                        else None,
-                        "alert_ips": sorted(list(t.alert_ips))
-                        if t.alert_ips is not None
-                        else None,
-                        "group_label": t.group_label,
-                        "alert_labels": sorted(list(t.alert_labels))
-                        if t.alert_labels is not None
-                        else None,
-                        "weight": t.weight,
-                    }
-                    for t in alert_groups[:n_mine]
-                ]
-            )
+            json.dumps([alert_group_to_dict(t) for t in alert_groups[:n_mine]])
         )
         mining_alert_groups_path = mine_path
         split_label = "random" if config.random_split else "first"
@@ -830,6 +822,7 @@ def run_symbolic_experiment(
         output_dir=output_dir,
         test_frac=config.test_frac,
         train_start=train_start,
+        train_frac=config.train_frac,
         random_split=config.random_split,
         random_seed=config.random_seed,
     )
@@ -912,8 +905,13 @@ def run_symbolic_experiment(
                 "n_mixed_dropped": n_mixed,
                 "n_features": summary.n_features,
                 "test_frac": config.test_frac,
-                "train_frac": 1.0 - config.test_frac,
-                "n_train": summary.test_idx_start - train_start,
+                "train_frac": config.train_frac
+                if config.train_frac is not None
+                else 1.0 - config.test_frac,
+                "n_train": summary.test_idx_start
+                - effective_train_start(
+                    train_start, config.train_frac, n_total, summary.test_idx_start
+                ),
                 "n_test": summary.test_size,
                 "metrics": full_metrics,
             },

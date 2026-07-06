@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from thesis.paths import ensure_artifact_dirs
@@ -124,7 +125,9 @@ def run_alert_group_attribute_mining_job(
         X_cat, X_num, y, column_predicate_map = build_categorical_predicate_matrix(
             alert_groups
         )
-        contrast_stats_df = compute_predicate_contrast_stats(X_cat, y)
+        contrast_stats_df = compute_predicate_contrast_stats(
+            X_cat, y, column_predicate_map
+        )
         save_dataframe_artifact(contrast_stats_df, run_dir, "contrast_stats_all")
 
         survivors_df = filter_contrast_survivors(
@@ -153,6 +156,7 @@ def run_alert_group_attribute_mining_job(
             min_samples_leaf=config.tree.min_samples_leaf,
             class_weight=config.tree.class_weight,
             random_state=config.tree.random_state,
+            min_impurity_decrease=config.tree.min_impurity_decrease,
         )
         leaf_rules_df, predicates = extract_leaf_rules(
             tree, X_train, y, kept_predicate_map
@@ -161,6 +165,22 @@ def run_alert_group_attribute_mining_job(
         print(
             f"  Step 2: extracted {len(leaf_rules_df)} leaf rules from the fitted tree."
         )
+
+        # Unlike the cooccurrence pipeline (separate benign-mining and
+        # attack-mining passes, each explicitly tagged before concatenation),
+        # this pipeline mines both classes jointly in one pass -- a survivor
+        # or leaf can lean either way. Tag each row from its own
+        # confidence_attack vs confidence_benign rather than assuming
+        # everything is attack-leaning (the caller previously passed a single
+        # hardcoded source_label="attack" for the whole combined set,
+        # mislabeling every benign-leaning row).
+        for df in (survivors_df, leaf_rules_df):
+            if not df.empty:
+                df["source_label"] = np.where(
+                    df["confidence_attack"] > df["confidence_benign"],
+                    "attack",
+                    "benign",
+                )
 
         mined_df = pd.concat(
             [survivors_df, leaf_rules_df], ignore_index=True, sort=False

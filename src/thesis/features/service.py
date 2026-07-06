@@ -21,7 +21,7 @@ def build_persist_and_register_symbolic_schema(
     predicates: list[AttributePredicate] | None = None,
 ) -> tuple[Path, dict]:
     """
-    Build symbolic features from mined itemsets, persist them versioned,
+    Build symbolic features from mining module output, persist them versioned,
     and register them in the scenario manifest.
 
     Writes to:
@@ -30,7 +30,6 @@ def build_persist_and_register_symbolic_schema(
     Updates manifest entries:
         symbolic
         base+symbolic
-        base+dynamic+symbolic
     """
     manifest_path = root_dir / scenario_name / "manifest.json"
 

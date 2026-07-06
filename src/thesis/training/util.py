@@ -42,11 +42,33 @@ def prepare_training_frame(
     return X, y_arr
 
 
+def effective_train_start(
+    train_start: int, train_frac: float | None, n: int, split: int
+) -> int:
+    """
+    Compose the mine_frac/no_overlap exclusion (train_start) with an explicit
+    train_frac cap. train_frac is a fraction of the *full* dataset (n), same
+    units as test_frac, so e.g. train_frac=0.1 + test_frac=0.9 reproduces a
+    published "first N / rest" split (CSCAS's paper: 6 of 60 days train,
+    remainder test) directly as fractions of the full timeline: it keeps only
+    the last train_frac*n rows immediately preceding the test window.
+
+    The two never conflict: train_frac can only push the start forward (more
+    exclusion), never before train_start, and if train_frac is larger than
+    what's available before the split it just saturates back to train_start
+    with no error.
+    """
+    if train_frac is None:
+        return train_start
+    return max(train_start, split - int(train_frac * n))
+
+
 def make_holdout_split(
     X: pd.DataFrame,
     y: np.ndarray,
     test_frac: float = 0.3,
     train_start: int = 0,
+    train_frac: float | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, np.ndarray, np.ndarray, int]:
     n = len(X)
     split = int((1 - test_frac) * n)
@@ -54,7 +76,14 @@ def make_holdout_split(
     if split <= 0 or split >= n:
         raise ValueError(f"Invalid split index {split} for dataset of size {n}.")
 
-    X_train, X_test = X.iloc[train_start:split], X.iloc[split:]
-    y_train, y_test = y[train_start:split], y[split:]
+    start = effective_train_start(train_start, train_frac, n, split)
+    if start >= split:
+        raise ValueError(
+            f"No training rows before the test split (train_start={train_start}, "
+            f"train_frac={train_frac}, resolved start={start}, split={split})."
+        )
+
+    X_train, X_test = X.iloc[start:split], X.iloc[split:]
+    y_train, y_test = y[start:split], y[split:]
 
     return X_train, X_test, y_train, y_test, split

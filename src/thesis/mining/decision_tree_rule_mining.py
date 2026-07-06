@@ -40,12 +40,29 @@ def fit_rule_tree(
     min_samples_leaf: int = 20,
     class_weight: str | dict | None = "balanced",
     random_state: int = 0,
+    min_impurity_decrease: float = 1e-9,
 ) -> DecisionTreeClassifier:
+    """
+    min_impurity_decrease guards against a specific class_weight="balanced"
+    artifact: a node that is truly 100% pure (e.g. 0 attack samples) can still
+    report impurity ~1e-13 instead of exactly 0, because weighted Gini
+    accumulates floating-point rounding error across many reweighted samples.
+    That's above sklearn's internal near-zero cutoff (~2.22e-16) that would
+    otherwise auto-stop a pure node, so without this the tree "splits" that
+    residual noise down to 0 and reports it as a rule with two children that
+    are both actually just the same pure class -- zero real discriminative
+    content, despite looking like a legitimate leaf pair. 1e-9 sits far above
+    that float-noise floor but far below any real split's impurity decrease
+    (a genuine split here typically drops impurity by multiple orders of
+    magnitude more, e.g. 0.5 -> 0.02 at the root), so real splits are
+    unaffected.
+    """
     tree = DecisionTreeClassifier(
         max_depth=max_depth,
         min_samples_leaf=min_samples_leaf,
         class_weight=class_weight,
         random_state=random_state,
+        min_impurity_decrease=min_impurity_decrease,
     )
     tree.fit(X, y)
     return tree
@@ -72,6 +89,42 @@ def _split_predicate(
     return AttributePredicate(
         token=token, attribute=name, operator=operator, value=float(threshold)
     )
+
+
+def _merge_predicate_into_path(
+    path: tuple[AttributePredicate, ...], new_pred: AttributePredicate
+) -> tuple[AttributePredicate, ...]:
+    """
+    Add new_pred to path, collapsing it with an earlier bound on the same
+    attribute + direction (">" or "<=") instead of appending a duplicate.
+
+    A root-to-leaf path can split on the same continuous attribute more than
+    once (CART re-selects whichever feature locally maximises impurity
+    reduction at each node independently), e.g. "x <= 173.7" near the root and
+    "x <= 143.7" further down. Keeping both is redundant -- the tighter bound
+    already implies the looser one -- and reads like the rule fit an exact
+    value rather than a threshold. Keep only the tightest bound per
+    (attribute, operator).
+    """
+    if new_pred.operator not in ("<=", ">"):
+        return path + (new_pred,)
+
+    merged = []
+    already_merged = False
+    for pred in path:
+        if pred.attribute == new_pred.attribute and pred.operator == new_pred.operator:
+            tighter = (
+                min(pred, new_pred, key=lambda p: p.value)
+                if new_pred.operator == "<="
+                else max(pred, new_pred, key=lambda p: p.value)
+            )
+            merged.append(tighter)
+            already_merged = True
+        else:
+            merged.append(pred)
+    if not already_merged:
+        merged.append(new_pred)
+    return tuple(merged)
 
 
 def extract_leaf_rules(
@@ -111,8 +164,8 @@ def extract_leaf_rules(
         right_pred = _split_predicate(
             feature_idx, threshold, False, feature_names, column_predicate_map
         )
-        _walk(left, path + (left_pred,))
-        _walk(right, path + (right_pred,))
+        _walk(left, _merge_predicate_into_path(path, left_pred))
+        _walk(right, _merge_predicate_into_path(path, right_pred))
 
     _walk(0, ())
 

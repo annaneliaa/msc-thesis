@@ -2,76 +2,42 @@
 Mining window stability sweep.
 
 Mines features in consecutive temporal windows of a scenario's alert_groups
-(at multiple granularity levels) and analyses:
+(at multiple granularity levels) and analyses stability over time, sharing
+across scenarios, Jaccard convergence, filter-drop diagnosis, benign-vs-mixed
+delta, feature persistence, and cross-granularity consistency (tables 1-7,
+see the analysis functions below for details on each).
 
-  1. Within-scenario stability  — does the mined feature set change over time?
-     Tracks additions, removals, Jaccard similarity between consecutive windows.
-  2. Cross-scenario sharing     — which features are shared across scenarios and
-     at what frequency?
-  3. Cross-scenario convergence — does Jaccard(window_n, window_n-1) plateau?
-  4. Dropped-feature diagnosis  — for features that failed the filter, was
-     support_attack ≈ support_benign × f_attack (uniform noise) or
-     support_attack >> expectation (genuinely attack-correlated)?
-  5. Benign-vs-mixed delta      — what features appear in mixed mode but not
-     benign-only, i.e. what does removing attack traffic cost us?
-  6. Feature persistence        — histogram of how many windows each feature
-     survives (robust vs. ephemeral signals).
-  7. Cross-granularity consistency — does a feature mined at coarse granularity
-     also appear in the fine sub-windows that cover the same range?
+Only the old cross-signature/cross-alert co-occurrence path (Eclat +
+PrefixSpan, via run_alert_group_eclat_job/run_alert_group_prefixspan_job) is
+wired up here. It does not use the newer per-alert-group attribute mining
+pipeline (mining/attribute_mining_job.py) added for CSCAS.
 
 Usage:
+    # AIT-ADS scenarios
     python src/thesis/scripts/run_mining_window_sweep.py fox harrison \\
         --filter-config src/thesis/configs/mining_filters_simple.yaml \\
         --granularities 0.1 0.2 0.33 \\
         --modes benign mixed smart
 
-    # Specific scenarios, one granularity
-    python src/thesis/scripts/run_mining_window_sweep.py fox \\
-        --granularities 0.25 \\
-        --modes benign
-
-    # All AIT-ADS scenarios (fox, harrison, russellmitchell, santos, shaw,
-    # wardbeck, wheeler, wilson — see src/thesis/configs/scenarios.json).
-    # --all sweeps every scenario cached under artifacts/cache/ regardless of
-    # dataset, so list the AIT-ADS scenarios explicitly to scope the run to them:
-    python src/thesis/scripts/run_mining_window_sweep.py \
-        fox harrison russellmitchell santos shaw wardbeck wheeler wilson \
-        --filter-config src/thesis/configs/mining_filters_simple.yaml \
-        --granularities 0.1 0.2 0.33 \
-        --modes benign mixed
-
-    # CSCAS (pre-grouped Suricata scenario) — run once first:
+    # CSCAS (pre-grouped Suricata scenario) -- run once first:
     #   python src/thesis/scripts/run_ingest_cscas.py
-    # then use --grouping-method since CSCAS alert_groups live under
-    # groups/cscas_pregrouped/ rather than groups/fixed_window/. Sequence
-    # mining is skipped automatically for these groups (sorted_items is
-    # always empty — see _run_mining_for_window).
-    python src/thesis/scripts/run_mining_window_sweep.py cscas \
-        --grouping-method cscas_pregrouped \
-        --granularities 0.1 0.2 0.33 \
+    python src/thesis/scripts/run_mining_window_sweep.py cscas \\
+        --grouping-method cscas_pregrouped \\
+        --granularities 0.1 0.2 0.33 \\
         --modes benign mixed
 
-Output (under artifacts/experiments/mining_window_sweep/<dataset>/<run_tag>/,
-        where <dataset> is looked up per scenario via scenarios.json, e.g.
-        'ait-ads' or 'cscas'; falls back to 'unknown'/'mixed' if scenarios
-        aren't listed there or span multiple datasets; <run_tag> is
-        <timestamp>_<filter_config_stem>_<modes>_gran-<granularities>, e.g.
-        20260701_120000_mining_filters_simple_benign-mixed_gran-0.1-0.2-0.33;
-        --output-dir overrides this entirely):
-    window_features_<scenario>_<mode>_<gran>_<win>.csv  — mined features for one
-                                                            window, with pattern,
-                                                            k, support*, confidence*
-    mined_features_overview.csv                    — the above, concatenated across
-                                                       every scenario/mode/gran/window
-                                                       mined this run, for eyeballing
-    table1_stability_<scenario>_<mode>.csv         — within-scenario stability
-    table2_sharing.csv                             — cross-scenario feature sharing
-    table3_convergence.csv                         — Jaccard convergence curves
-    table4_dropped_diagnosis.csv                   — filter-drop analysis
-    table5_benign_vs_mixed.csv                     — benign/mixed delta
-    table6_persistence.csv                         — feature persistence histograms
-    table7_cross_granularity.csv                   — cross-granularity consistency
-    summary.txt                                    — human-readable digest
+Output (under artifacts/experiments/mining_window_sweep/<dataset>/<run_tag>/;
+        --output-dir overrides this):
+    window_features_<scenario>_<mode>_<gran>_<win>.csv  — mined features for one window
+    mined_features_overview.csv    — all of the above, concatenated, for eyeballing
+    table1_stability_<scenario>_<mode>.csv
+    table2_sharing.csv
+    table3_convergence.csv
+    table4_dropped_diagnosis.csv
+    table5_benign_vs_mixed.csv
+    table6_persistence.csv
+    table7_cross_granularity.csv
+    summary.txt                    — human-readable digest
 """
 
 from __future__ import annotations

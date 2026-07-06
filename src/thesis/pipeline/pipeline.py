@@ -302,6 +302,7 @@ def ingest_cscas_scenario(
             attr_similarities=dict(parsed.attr_similarities),
             scas=parsed.scas,
             ext_port_is_multiple=parsed.ext_port_is_multiple,
+            int_port_is_multiple=parsed.int_port_is_multiple,
         )
         for parsed in parsed_rows
     ]
@@ -436,6 +437,7 @@ def alert_group_to_dict(t: AlertGroup) -> dict:
         "attr_similarities": t.attr_similarities,
         "scas": t.scas,
         "ext_port_is_multiple": t.ext_port_is_multiple,
+        "int_port_is_multiple": t.int_port_is_multiple,
     }
 
 
@@ -628,6 +630,7 @@ def alert_group_from_dict(d: dict) -> AlertGroup:
         attr_similarities=d.get("attr_similarities"),
         scas=d.get("scas"),
         ext_port_is_multiple=d.get("ext_port_is_multiple"),
+        int_port_is_multiple=d.get("int_port_is_multiple"),
         int_ip=d.get("int_ip"),
         int_port=d.get("int_port"),
         ext_port=d.get("ext_port"),
@@ -665,9 +668,12 @@ def is_single_class_split(
     train_start: int = 0,
     random_split: bool = False,
     random_seed: int = 42,
+    train_frac: float | None = None,
 ) -> bool:
     """Return True if the train or test split would contain only one class."""
     import random as _random
+
+    from thesis.training.util import effective_train_start
 
     label_map = {"benign": 0, "attack": 1}
     labels = [
@@ -681,7 +687,10 @@ def is_single_class_split(
     split = int((1 - test_frac) * n)
     if split <= 0 or split >= n:
         return True
-    return len(set(labels[train_start:split])) < 2 or len(set(labels[split:])) < 2
+    start = effective_train_start(train_start, train_frac, n, split)
+    if start >= split:
+        return True
+    return len(set(labels[start:split])) < 2 or len(set(labels[split:])) < 2
 
 
 def combine_mining_results(

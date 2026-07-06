@@ -57,7 +57,7 @@ def build_symbolic_feature_schema(
     predicates: list[AttributePredicate] | None = None,
 ) -> SymbolicFeatureSchema:
     """
-    Convert mined itemsets dataframe into a symbolic feature schema.
+    Convert mining output dataframe into a symbolic feature schema.
     Expects at least an 'itemset' column.
     """
     features: list[SymbolicFeature] = []

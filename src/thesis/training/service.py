@@ -25,6 +25,7 @@ def train_model_for_schema(
     output_dir: Path,
     test_frac: float = 0.3,
     train_start: int = 0,
+    train_frac: float | None = None,
     random_split: bool = False,
     random_seed: int = 42,
 ) -> TrainedModelSummary:
@@ -58,6 +59,7 @@ def train_model_for_schema(
         y=y_used,
         test_frac=test_frac,
         train_start=train_start,
+        train_frac=train_frac,
     )
 
     print("Training and evaluating model...")
@@ -105,6 +107,7 @@ def train_model_for_schema(
         training_config={
             "test_frac": test_frac,
             "train_start": train_start,
+            "train_frac": train_frac,
             "schema_name": schema.schema_name,
             "schema_version": schema.schema_version,
             "model_name": model_name,

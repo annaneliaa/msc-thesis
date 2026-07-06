@@ -12,8 +12,7 @@ def initialize_feature_manifest(
 
     Includes:
     - base
-    - base+dynamic
-    (symbolic entries are added later by mining jobs)
+    - symbolic (empty, to be filled by mining jobs)
     """
     scenario_dir = root_dir / scenario_name
     scenario_dir.mkdir(parents=True, exist_ok=True)
@@ -32,13 +31,6 @@ def initialize_feature_manifest(
             "base": {
                 "type": "composite",
                 "base": True,
-                "dynamic": False,
-                "symbolic": None,
-            },
-            "base+dynamic": {
-                "type": "composite",
-                "base": True,
-                "dynamic": True,
                 "symbolic": None,
             },
             "symbolic": {

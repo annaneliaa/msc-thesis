@@ -65,11 +65,16 @@ def test_compute_candidate_attribute_features_basic_fields():
 
 
 def test_compute_candidate_attribute_features_multi_target_and_multi_port():
-    tx = _make_alert_group(int_ip_is_multiple=True, ext_port_is_multiple=True)
+    tx = _make_alert_group(
+        int_ip_is_multiple=True,
+        ext_port_is_multiple=True,
+        int_port_is_multiple=True,
+    )
     features = compute_candidate_attribute_features(tx)
 
     assert features["multi_target"] is True
-    assert features["multi_port"] is True
+    assert features["multi_ext_port"] is True
+    assert features["multi_int_port"] is True
 
 
 def test_compute_candidate_attribute_features_qualifier_flags():

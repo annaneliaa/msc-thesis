@@ -268,3 +268,4 @@ class ParsedSuricataGroup:
     attr_similarities: dict[str, float] = field(default_factory=dict)
     scas: int = -1
     ext_port_is_multiple: bool = False
+    int_port_is_multiple: bool = False

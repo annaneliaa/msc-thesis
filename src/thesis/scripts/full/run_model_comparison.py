@@ -1,6 +1,10 @@
 """
 Compare models (logistic regression vs MLP) across scenarios (baseline + symbolic, optional filtered data).
 
+This script covers the Eclat/PrefixSpan cross-signature co-occurrence mining
+strategy only. For the per-alert-group attribute mining strategy (contrast-set
++ decision-tree rules), see run_model_comparison_attribute.py, which reuses
+this script's Phase 2-4 plotting/analysis code.
 
 For each model (logreg, mlp), runs the full pipeline per scenario:
 each run under two conditions: baseline (base features only) and symbolic (base + mined features from Eclat/PrefixSpan).

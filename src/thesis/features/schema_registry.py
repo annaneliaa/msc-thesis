@@ -53,7 +53,6 @@ class FeatureSchemaRegistry:
                 schema_name=schema_name,
                 schema_version=symbolic_version_spec["schema_version"],
                 base=None,
-                dynamic=None,
                 symbolic=symbolic,
             )
 

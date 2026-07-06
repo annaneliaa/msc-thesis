@@ -80,15 +80,6 @@ def register_symbolic_schema_version(
     schemas["base+symbolic"] = {
         "type": "composite",
         "base": True,
-        "dynamic": False,
-        "symbolic": schema_name,
-        "symbolic_version": schema_version,
-    }
-
-    schemas["base+dynamic+symbolic"] = {
-        "type": "composite",
-        "base": True,
-        "dynamic": True,
         "symbolic": schema_name,
         "symbolic_version": schema_version,
     }
@@ -136,6 +127,5 @@ def select_symbolic_features(
         schema_name=schema.schema_name,
         schema_version=schema.schema_version,
         base=schema.base,
-        dynamic=schema.dynamic,
         symbolic=filtered_symbolic,
     )

@@ -40,6 +40,11 @@ class SymbolicExperimentConfig:
     model_version: str = "0.1.0"
     schema_name: str = "base+symbolic"
     test_frac: float = 0.3
+    # None (default) = train on everything before the test split (old behavior).
+    # Set to reproduce a published "first N / rest" split as a fraction of the
+    # full timeline, e.g. train_frac=0.1 + test_frac=0.9 for CSCAS's paper
+    # (6 of 60 days train, remainder test). See training/util.effective_train_start.
+    train_frac: float | None = None
     cache_dir: Path = field(default_factory=lambda: CACHE_DIR)
     grouping: GroupingConfig = field(default_factory=GroupingConfig)
     results_dir: Path | None = None
@@ -54,6 +59,7 @@ class BaselineExperimentConfig:
     model_version: str = "0.1.0"
     schema_name: str = "base"
     test_frac: float = 0.3
+    train_frac: float | None = None
     # split strategy: False = temporal (default), True = random shuffle before any split
     random_split: bool = False
     random_seed: int = 42

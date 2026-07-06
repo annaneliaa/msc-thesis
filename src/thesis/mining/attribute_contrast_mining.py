@@ -15,6 +15,18 @@ from thesis.schemas.groups import AlertGroup
 
 _EPS = 1e-9
 
+_CONTRAST_STATS_COLUMNS = [
+    "itemset",
+    "support",
+    "support_count",
+    "confidence_attack",
+    "confidence_benign",
+    "growth_rate",
+    "lift",
+    "p_value",
+    "mining_type",
+]
+
 
 def build_categorical_predicate_matrix(
     alert_groups: Sequence[AlertGroup],
@@ -80,13 +92,33 @@ def _chi_square_p_value(
         return None
 
 
-def compute_predicate_contrast_stats(X: pd.DataFrame, y: pd.Series) -> pd.DataFrame:
+def compute_predicate_contrast_stats(
+    X: pd.DataFrame,
+    y: pd.Series,
+    column_predicate_map: dict[str, tuple[str, Any]] | None = None,
+) -> pd.DataFrame:
     """
     For every single categorical predicate column, and every pairwise AND
     combination (enumerated exhaustively -- the candidate space is a few
     dozen columns, so this is cheap and needs no mining library/pruning),
     compute attack_support, benign_support, growth_rate, lift, and the
     chi-square p-value on the 2x2 contingency table.
+
+    Two structurally-uninformative candidate classes are pruned before any
+    stats are computed, since neither can ever survive the downstream
+    contrast-set filter regardless of the data:
+      - Columns that are constant (all-fire or never-fire) within this
+        population have zero variance, so growth_rate/coverage are
+        degenerate for them -- there's nothing to discriminate.
+      - Same-field cross-value pairs, e.g. category=EXPLOIT AND
+        category=WEB_SERVER. These come from one-hot expanding a
+        MULTI_VALUED_CATEGORICAL_FIELDS column (attribute_features.py), and
+        an alert group has exactly one value for that field, so two
+        different values of it can never co-fire -- the pair is always
+        empty. Detected via column_predicate_map (column -> (attribute,
+        value)): two columns sharing the same attribute but a different
+        value are mutually exclusive by construction. Pass None to skip this
+        check (falls back to enumerating every pair, as before).
     """
     base_rate = float(y.mean()) if len(y) else 0.0
     y_arr = y.to_numpy()
@@ -96,9 +128,21 @@ def compute_predicate_contrast_stats(X: pd.DataFrame, y: pd.Series) -> pd.DataFr
     n_benign = int(benign_mask.sum())
     n_total = len(X)
 
-    columns = list(X.columns)
+    columns = [c for c in X.columns if X[c].nunique(dropna=False) > 1]
+
+    def _mutually_exclusive(a: str, b: str) -> bool:
+        if column_predicate_map is None:
+            return False
+        pa = column_predicate_map.get(a)
+        pb = column_predicate_map.get(b)
+        return pa is not None and pb is not None and pa[0] == pb[0] and pa[1] != pb[1]
+
     candidates: list[tuple[str, ...]] = [(c,) for c in columns]
-    candidates += list(itertools.combinations(columns, 2))
+    candidates += [
+        combo
+        for combo in itertools.combinations(columns, 2)
+        if not _mutually_exclusive(combo[0], combo[1])
+    ]
 
     rows = []
     for combo in candidates:
@@ -138,7 +182,13 @@ def compute_predicate_contrast_stats(X: pd.DataFrame, y: pd.Series) -> pd.DataFr
             }
         )
 
-    return pd.DataFrame(rows)
+    # Explicit columns so a window with zero surviving candidates (e.g. every
+    # categorical column happens to be constant in a small enough slice)
+    # still returns a DataFrame with an "itemset" column -- pd.DataFrame([])
+    # on an empty row list otherwise has no columns at all, which crashes
+    # every downstream consumer that indexes by column name (e.g.
+    # surviving_single_columns).
+    return pd.DataFrame(rows, columns=_CONTRAST_STATS_COLUMNS)
 
 
 def filter_contrast_survivors(

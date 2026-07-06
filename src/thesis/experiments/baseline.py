@@ -105,6 +105,7 @@ def run_baseline_experiment(
         config.test_frac,
         random_split=config.random_split,
         random_seed=config.random_seed,
+        train_frac=config.train_frac,
     ):
         print(
             f"  [skip] Single-class split detected for '{config.scenario}' "
@@ -127,7 +128,9 @@ def run_baseline_experiment(
                     "timestamp": timestamp,
                     "skipped": True,
                     "test_frac": config.test_frac,
-                    "train_frac": 1.0 - config.test_frac,
+                    "train_frac": config.train_frac
+                    if config.train_frac is not None
+                    else 1.0 - config.test_frac,
                     "metrics": {"single_class_split": True},
                 },
                 f,
@@ -181,6 +184,7 @@ def run_baseline_experiment(
         model_version=effective_version,
         output_dir=output_dir,
         test_frac=config.test_frac,
+        train_frac=config.train_frac,
         random_split=config.random_split,
         random_seed=config.random_seed,
     )
@@ -224,7 +228,9 @@ def run_baseline_experiment(
                 "n_mixed_dropped": n_mixed,
                 "n_features": summary.n_features,
                 "test_frac": config.test_frac,
-                "train_frac": 1.0 - config.test_frac,
+                "train_frac": config.train_frac
+                if config.train_frac is not None
+                else 1.0 - config.test_frac,
                 "n_train": summary.test_idx_start,
                 "n_test": summary.test_size,
                 "metrics": full_metrics,

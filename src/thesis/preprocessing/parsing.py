@@ -112,6 +112,7 @@ def parse_suricata_group_row(row: IncomingSuricataGroup) -> ParsedSuricataGroup:
         attr_similarities=row.attr_similarities,
         scas=row.scas,
         ext_port_is_multiple=(row.ext_port == -1),
+        int_port_is_multiple=(row.int_port == -1),
     )
 
 

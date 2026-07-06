@@ -63,12 +63,12 @@ class AlertGroup:  # encoding/experiment input (with weight)
     alert_group_id: str
     group_id: str
     method: str  # "fixed_window" | "cscas_pregrouped"
-    group_label: Optional[str] = None
-    weight: float = 1.0
     start_ts: int
     end_ts: Optional[int]
-
     n_alerts: int
+
+    group_label: Optional[str] = None
+    weight: float = 1.0
     raw_items: Optional[set[str]] = None  # mining items (tokens / signature words)
 
     # AIT-ADS only (None for CSCAS)
@@ -99,3 +99,4 @@ class AlertGroup:  # encoding/experiment input (with weight)
     attr_similarities: Optional[dict[str, float]] = None
     scas: Optional[int] = None
     ext_port_is_multiple: Optional[bool] = None
+    int_port_is_multiple: Optional[bool] = None

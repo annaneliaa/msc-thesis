@@ -71,6 +71,15 @@ class DecisionTreeRuleConfig(BaseModel):
     min_samples_leaf: int = 20
     class_weight: str | None = "balanced"
     random_state: int = 0
+    # Guards against class_weight="balanced" floating-point noise: a node that
+    # is truly 100% pure can still show impurity ~1e-13 (rounding error from
+    # weighted Gini over many samples) instead of exactly 0, which sits above
+    # sklearn's internal near-zero cutoff (~2.22e-16) and so isn't auto-stopped
+    # -- the tree then "splits" a zero-information node just to shave that
+    # noise down to 0, producing a rule with no real discriminative content.
+    # 1e-9 is far above that noise floor but far below any real split's
+    # impurity decrease (see decision_tree_rule_mining.fit_rule_tree).
+    min_impurity_decrease: float = 1e-9
 
 
 class AttributeMiningConfig(BaseModel):
