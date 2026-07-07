@@ -26,6 +26,7 @@ def train_eval_holdout(
     model_factory,
     test_idx_start: int | None = None,
     top_n_importances: int = 30,
+    compute_importances: bool = True,
 ) -> dict:
     feature_names = list(X_train.columns)
 
@@ -76,104 +77,110 @@ def train_eval_holdout(
     train_auc = float(roc_auc_score(y_train, proba_train))
     print(f"  [train] predict + metrics done in {time.time() - t0:.1f}s", flush=True)
 
-    importances = {}
-
     coef_importances = {}
-    if hasattr(model, "coef_"):
-        coefs_signed = model.coef_[0]  # preserve sign; negative = benign-correlated
-        pairs = sorted(
-            zip(feature_names, coefs_signed),
-            key=lambda x: abs(x[1]),
-            reverse=True,
-        )
-        coef_importances = {
-            name: float(coef) for name, coef in pairs[:top_n_importances]
-        }
-    elif hasattr(model, "feature_importances_"):
-        pairs = sorted(
-            zip(feature_names, model.feature_importances_),
-            key=lambda x: x[1],
-            reverse=True,
-        )
-        coef_importances = {name: float(imp) for name, imp in pairs[:top_n_importances]}
-
     perm_importances = {}
-    try:
-        if getattr(model, "_skip_permutation", False):
-            raise RuntimeError(
-                "Permutation importance skipped: model flagged as too expensive"
-            )
-        _n_jobs = 1 if getattr(model, "_skip_shap", False) else -1
-        print(
-            f"  [train] permutation importance: n_repeats=10, n_jobs={_n_jobs}, "
-            f"X_test={X_test.shape} ({len(feature_names)} features x 10 repeats "
-            f"= {len(feature_names) * 10} extra predict passes)...",
-            flush=True,
-        )
-        t0 = time.time()
-        perm_result = permutation_importance(
-            model, X_test, y_test, n_repeats=10, random_state=42, n_jobs=_n_jobs
-        )
-        print(
-            f"  [train] permutation importance done in {time.time() - t0:.1f}s",
-            flush=True,
-        )
-        pairs = sorted(
-            zip(feature_names, perm_result.importances_mean),
-            key=lambda x: x[1],
-            reverse=True,
-        )
-        perm_importances = {name: float(imp) for name, imp in pairs[:top_n_importances]}
-    except Exception as e:
-        print(f"  [train] permutation importance skipped: {e}", flush=True)
-
     shap_importances = {}
-    try:
-        import shap
 
-        print("  [train] computing SHAP importances...", flush=True)
-        t0 = time.time()
-
-        bg = X_train.sample(min(100, len(X_train)), random_state=42)
-        x_explain = X_test.iloc[:200] if len(X_test) > 200 else X_test
-
-        if hasattr(model, "get_shap_values"):
-            # model provides its own fast SHAP path (e.g. GradientExplainer for LSTM)
-            bg_arr = bg.values if hasattr(bg, "values") else np.asarray(bg)
-            x_arr = (
-                x_explain.values
-                if hasattr(x_explain, "values")
-                else np.asarray(x_explain)
+    if compute_importances:
+        if hasattr(model, "coef_"):
+            coefs_signed = model.coef_[0]  # preserve sign; negative = benign-correlated
+            pairs = sorted(
+                zip(feature_names, coefs_signed),
+                key=lambda x: abs(x[1]),
+                reverse=True,
             )
-            vals = model.get_shap_values(bg_arr, x_arr)
-        elif getattr(model, "_skip_shap", False):
-            raise RuntimeError("SHAP skipped: model flagged as too expensive")
+            coef_importances = {
+                name: float(coef) for name, coef in pairs[:top_n_importances]
+            }
         elif hasattr(model, "feature_importances_"):
-            # tree models: TreeExplainer is exact and fast
-            sv = shap.TreeExplainer(model).shap_values(x_explain)
-            vals = (
-                sv[:, :, 1]
-                if isinstance(sv, np.ndarray) and sv.ndim == 3
-                else (sv[1] if isinstance(sv, list) else sv)
+            pairs = sorted(
+                zip(feature_names, model.feature_importances_),
+                key=lambda x: x[1],
+                reverse=True,
             )
-        elif hasattr(model, "coef_"):
-            # linear models: LinearExplainer
-            vals = shap.LinearExplainer(model, bg).shap_values(x_explain)
-        else:
-            # fallback: PermutationExplainer via predict_proba
-            sv = shap.Explainer(model.predict_proba, bg)(x_explain)
-            vals = sv.values[:, :, 1] if sv.values.ndim == 3 else sv.values
+            coef_importances = {
+                name: float(imp) for name, imp in pairs[:top_n_importances]
+            }
 
-        mean_signed = vals.mean(axis=0)
-        pairs = sorted(
-            zip(feature_names, mean_signed),
-            key=lambda x: abs(x[1]),
-            reverse=True,
-        )
-        shap_importances = {name: float(imp) for name, imp in pairs[:top_n_importances]}
-        print(f"  [train] SHAP done in {time.time() - t0:.1f}s", flush=True)
-    except Exception as e:
-        print(f"  [train] SHAP skipped: {e}", flush=True)
+        try:
+            if getattr(model, "_skip_permutation", False):
+                raise RuntimeError(
+                    "Permutation importance skipped: model flagged as too expensive"
+                )
+            _n_jobs = 1 if getattr(model, "_skip_shap", False) else -1
+            print(
+                f"  [train] permutation importance: n_repeats=10, n_jobs={_n_jobs}, "
+                f"X_test={X_test.shape} ({len(feature_names)} features x 10 repeats "
+                f"= {len(feature_names) * 10} extra predict passes)...",
+                flush=True,
+            )
+            t0 = time.time()
+            perm_result = permutation_importance(
+                model, X_test, y_test, n_repeats=10, random_state=42, n_jobs=_n_jobs
+            )
+            print(
+                f"  [train] permutation importance done in {time.time() - t0:.1f}s",
+                flush=True,
+            )
+            pairs = sorted(
+                zip(feature_names, perm_result.importances_mean),
+                key=lambda x: x[1],
+                reverse=True,
+            )
+            perm_importances = {
+                name: float(imp) for name, imp in pairs[:top_n_importances]
+            }
+        except Exception as e:
+            print(f"  [train] permutation importance skipped: {e}", flush=True)
+
+        try:
+            import shap
+
+            print("  [train] computing SHAP importances...", flush=True)
+            t0 = time.time()
+
+            bg = X_train.sample(min(100, len(X_train)), random_state=42)
+            x_explain = X_test.iloc[:200] if len(X_test) > 200 else X_test
+
+            if hasattr(model, "get_shap_values"):
+                # model provides its own fast SHAP path (e.g. GradientExplainer for LSTM)
+                bg_arr = bg.values if hasattr(bg, "values") else np.asarray(bg)
+                x_arr = (
+                    x_explain.values
+                    if hasattr(x_explain, "values")
+                    else np.asarray(x_explain)
+                )
+                vals = model.get_shap_values(bg_arr, x_arr)
+            elif getattr(model, "_skip_shap", False):
+                raise RuntimeError("SHAP skipped: model flagged as too expensive")
+            elif hasattr(model, "feature_importances_"):
+                # tree models: TreeExplainer is exact and fast
+                sv = shap.TreeExplainer(model).shap_values(x_explain)
+                vals = (
+                    sv[:, :, 1]
+                    if isinstance(sv, np.ndarray) and sv.ndim == 3
+                    else (sv[1] if isinstance(sv, list) else sv)
+                )
+            elif hasattr(model, "coef_"):
+                # linear models: LinearExplainer
+                vals = shap.LinearExplainer(model, bg).shap_values(x_explain)
+            else:
+                # fallback: PermutationExplainer via predict_proba
+                sv = shap.Explainer(model.predict_proba, bg)(x_explain)
+                vals = sv.values[:, :, 1] if sv.values.ndim == 3 else sv.values
+
+            mean_signed = vals.mean(axis=0)
+            pairs = sorted(
+                zip(feature_names, mean_signed),
+                key=lambda x: abs(x[1]),
+                reverse=True,
+            )
+            shap_importances = {
+                name: float(imp) for name, imp in pairs[:top_n_importances]
+            }
+            print(f"  [train] SHAP done in {time.time() - t0:.1f}s", flush=True)
+        except Exception as e:
+            print(f"  [train] SHAP skipped: {e}", flush=True)
 
     importances = {
         "by_coefficient": coef_importances,

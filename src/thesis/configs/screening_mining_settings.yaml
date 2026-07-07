@@ -1,0 +1,68 @@
+# Named (mining_setting) axis for the in-window screening sweep
+# (src/thesis/experiments/screening_sweep.py). Each entry is one point in
+# the (mining_setting x granularity) grid: a name plus overrides for the
+# two-stage attribute mining pipeline's thresholds (contrast-set filter +
+# decision-tree rule extraction -- see schemas.mining.AttributeMiningConfig).
+# Fields left out fall back to AttributeMiningConfig's defaults.
+#
+# This grid mirrors src/thesis/shell-scripts/sweep_attribute_schema.sh:
+# min_growth_rate x max_depth, with min_samples_leaf left at its default
+# (20) rather than varied as a third axis. Granularity (that script's
+# MINE_FRACS) is the sweep's other, separate axis -- pass it via
+# run_screening_sweep.py's --granularities, not here, e.g.:
+#   --granularities 0.1 0.2 0.33 0.5 1.0
+
+settings:
+  - name: gr3.0_md3
+    contrast:
+      min_growth_rate: 3.0
+    tree:
+      max_depth: 3
+
+  - name: gr3.0_md4
+    contrast:
+      min_growth_rate: 3.0
+    tree:
+      max_depth: 4
+
+  - name: gr3.0_md5
+    contrast:
+      min_growth_rate: 3.0
+    tree:
+      max_depth: 5
+
+  - name: gr4.0_md3
+    contrast:
+      min_growth_rate: 4.0
+    tree:
+      max_depth: 3
+
+  - name: gr4.0_md4
+    contrast:
+      min_growth_rate: 4.0
+    tree:
+      max_depth: 4
+
+  - name: gr4.0_md5
+    contrast:
+      min_growth_rate: 4.0
+    tree:
+      max_depth: 5
+
+  - name: gr5.0_md3
+    contrast:
+      min_growth_rate: 5.0
+    tree:
+      max_depth: 3
+
+  - name: gr5.0_md4
+    contrast:
+      min_growth_rate: 5.0
+    tree:
+      max_depth: 4
+
+  - name: gr5.0_md5
+    contrast:
+      min_growth_rate: 5.0
+    tree:
+      max_depth: 5

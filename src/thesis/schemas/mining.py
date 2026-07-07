@@ -89,6 +89,18 @@ class AttributeMiningConfig(BaseModel):
     tree: DecisionTreeRuleConfig = DecisionTreeRuleConfig()
 
 
+class MiningSettingSpec(BaseModel):
+    """One named point in a (mining_setting x granularity) sweep grid --
+    see experiments/screening_sweep.py."""
+
+    name: str
+    contrast: ContrastSetFilterConfig = ContrastSetFilterConfig()
+    tree: DecisionTreeRuleConfig = DecisionTreeRuleConfig()
+
+    def to_attribute_mining_config(self) -> AttributeMiningConfig:
+        return AttributeMiningConfig(contrast=self.contrast, tree=self.tree)
+
+
 # Pydantic object models used in mining module (API payloads and metadata objects
 
 

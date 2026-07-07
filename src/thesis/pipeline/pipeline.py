@@ -481,6 +481,22 @@ def compute_window_bounds(
     return start, end, n_windows
 
 
+def compute_window_train_end(
+    win_start: int, win_end: int, train_frac: float = 0.7
+) -> int:
+    """Chronological train/test split point inside a single window (see
+    compute_window_bounds): the first `train_frac` of the window's rows are
+    train, the rest are test. Clamped so both sides get at least one row
+    whenever the window has 2+ rows, matching make_holdout_split's spirit but
+    scoped to one window instead of the whole timeline."""
+    win_size = win_end - win_start
+    train_end = win_start + round(train_frac * win_size)
+    train_end = (
+        max(win_start + 1, min(train_end, win_end - 1)) if win_size > 1 else win_end
+    )
+    return train_end
+
+
 def resolve_window_alert_groups_path(
     alert_groups: list[AlertGroup],
     alert_groups_path: Path,
@@ -492,15 +508,24 @@ def resolve_window_alert_groups_path(
     attribute-mining cache fingerprint (thesis.mining.attribute_schema_cache hashes
     alert_groups_path + config). Sibling to resolve_mining_alert_groups_path, which
     always slices the first mine_frac fraction instead of an arbitrary window -- use
-    this one to mine every window across the full timeline instead of just the first."""
+    this one to mine every window across the full timeline instead of just the first.
+
+    Only writes the file if it doesn't already exist: the content is a
+    deterministic function of (alert_groups, gran, win_idx), and
+    mine_or_reuse_attribute_schema's cache fingerprint includes this file's
+    mtime, so unconditionally rewriting it on every call would bump the mtime
+    and silently defeat that cache across separate script runs even when
+    nothing about the mining inputs changed.
+    """
     start, end, _ = compute_window_bounds(len(alert_groups), gran, win_idx)
     gran_tag = f"{gran:.6f}".rstrip("0").rstrip(".")
     win_path = (
         alert_groups_path.parent / f"alert_groups_gran{gran_tag}_win{win_idx}.json"
     )
-    win_path.write_text(
-        json.dumps([alert_group_to_dict(t) for t in alert_groups[start:end]])
-    )
+    if not win_path.exists():
+        win_path.write_text(
+            json.dumps([alert_group_to_dict(t) for t in alert_groups[start:end]])
+        )
     return win_path
 
 

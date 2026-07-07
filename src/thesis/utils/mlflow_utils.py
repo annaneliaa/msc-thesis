@@ -1,26 +1,26 @@
-import mlflow
-from thesis.paths import ARTIFACTS_DIR
+"""Mlflow tracking is disabled -- these are no-ops so every mining job's
+`with start_run(...): log_params(...); log_metrics(...); ...` calls keep
+working unchanged without touching mlflow or its sqlite store at all."""
 
-MLFLOW_DB = ARTIFACTS_DIR / "mlflow.db"
+import contextlib
 
 
+@contextlib.contextmanager
 def start_run(run_name: str):
-    mlflow.set_tracking_uri(f"sqlite:///{MLFLOW_DB.resolve()}")
-    mlflow.set_experiment("thesis")
-    return mlflow.start_run(run_name=run_name)
+    yield None
 
 
-def log_params(params: dict):
-    mlflow.log_params(params)
+def log_params(params: dict) -> None:
+    pass
 
 
-def log_metrics(metrics: dict):
-    mlflow.log_metrics(metrics)
+def log_metrics(metrics: dict) -> None:
+    pass
 
 
-def log_artifact(path: str):
-    mlflow.log_artifact(path)
+def log_artifact(path: str) -> None:
+    pass
 
 
 def set_tags(tags: dict) -> None:
-    mlflow.set_tags(tags)
+    pass

@@ -4,7 +4,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from thesis.schemas.mining import MiningFilterConfig
+from thesis.schemas.mining import MiningFilterConfig, MiningSettingSpec
 
 from thesis.paths import CONFIG_DIR
 
@@ -64,3 +64,11 @@ def load_settings(config_name: str = "base.yaml") -> Settings:
 def load_mining_filter_config(path: Path) -> "MiningFilterConfig":
     data = load_yaml_config(path)
     return MiningFilterConfig(**data)
+
+
+def load_mining_settings(path: Path) -> list["MiningSettingSpec"]:
+    """Load a named (mining_setting x granularity) sweep grid axis -- a YAML
+    file with a top-level `settings:` list, each entry a name plus optional
+    contrast/tree overrides (see configs/screening_mining_settings.yaml)."""
+    data = load_yaml_config(path)
+    return [MiningSettingSpec(**entry) for entry in data["settings"]]

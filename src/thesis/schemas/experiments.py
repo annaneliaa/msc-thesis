@@ -92,6 +92,40 @@ class AnomalyExperimentConfig:
 
 
 @dataclass
+class ScreeningSweepConfig:
+    """In-Window Baseline (Screening Sweep): for a grid of
+    (mining_setting x granularity), mine a schema inside every chronological
+    window using only that window's train split, then train/evaluate cheap
+    screening models purely within that window. See
+    experiments/screening_sweep.py."""
+
+    scenario: str
+    granularities: list[float] = field(
+        default_factory=lambda: [0.1, 0.2, 0.33, 0.5, 1.0]
+    )
+    mining_settings_path: Path = field(
+        default_factory=lambda: Path(
+            "src/thesis/configs/screening_mining_settings.yaml"
+        )
+    )
+    models: list[str] = field(default_factory=lambda: ["logreg"])
+    baseline_models: list[str] = field(default_factory=lambda: ["logreg"])
+    # fraction of each window (chronologically first) used for train; the
+    # remaining fraction is the window's held-out test split
+    train_frac_within_window: float = 0.7
+    # None = evaluate every window (default, per the screening sweep spec);
+    # else N evenly-spaced window indices per granularity (documented
+    # fallback for when the full sweep is computationally infeasible)
+    windows_per_gran: int | None = None
+    cache_dir: Path = field(default_factory=lambda: CACHE_DIR)
+    grouping: GroupingConfig = field(default_factory=GroupingConfig)
+    alerts_json_path: Path | None = None
+    results_dir: Path | None = None
+    force_remine: bool = False
+    random_seed: int = 42
+
+
+@dataclass
 class ExperimentResult:
     scenario: str
     model_name: str
