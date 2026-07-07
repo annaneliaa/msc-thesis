@@ -162,10 +162,12 @@ def run_scenario_eda(
     groups_balanced: str | None = None,
     skip_grouping: bool = False,
 ) -> None:
-    """Per-scenario stats, pair-frequency tables, and the two per-scenario
-    plots (alert_group size distribution, pair support scatter). Writes a
-    text summary to summary_path/<scenario>_eda_summary.txt and plots to
-    out_path."""
+    """Per-scenario stats, pair-frequency tables, and the per-scenario plots
+    (signature event raster, short-descriptor event raster [only if `df` has
+    a 'short' column], alert_group size distribution, pair support scatter --
+    the rasters only for datasets with per-alert grouping, i.e.
+    skip_grouping=False). Writes a text summary to
+    summary_path/<scenario>_eda_summary.txt and plots to out_path."""
     from thesis.visualization.eda import (
         plot_alert_group_size_distribution,
         plot_pair_support_scatter,
@@ -202,6 +204,14 @@ def run_scenario_eda(
             annotate_and_save(
                 fig, out_path / f"{scenario}_signature_event_raster.png", label
             )
+
+            if "short" in df.columns:
+                fig, _ = plot_signature_event_raster(
+                    df, group_col="short", time_unit="hours"
+                )
+                annotate_and_save(
+                    fig, out_path / f"{scenario}_short_event_raster.png", label
+                )
 
             alert_groups = build_labeled_window_alert_groups(df, window_size_s=2)
             group_cache_dir = groups_dir(

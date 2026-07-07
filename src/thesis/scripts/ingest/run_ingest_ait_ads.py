@@ -18,9 +18,10 @@ Usage:
     python src/thesis/scripts/run_ingest_ait_ads.py fox harrison
     python src/thesis/scripts/run_ingest_ait_ads.py --all
     python src/thesis/scripts/run_ingest_ait_ads.py --all --window-size 5
+    python src/thesis/scripts/run_ingest_ait_ads.py --all --grouping-mode temporal_grouping
 
 Output (per scenario):
-    artifacts/cache/<scenario>/groups/fixed_window/alert_groups/alert_groups_raw.json
+    artifacts/cache/<scenario>/groups/<grouping-mode>/alert_groups/alert_groups_raw.json
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ import argparse
 
 from thesis.config import GroupingConfig
 from thesis.configs import load_scenarios
+from thesis.grouping import CSCAS_METHOD, FIXED_WINDOW_METHOD, TEMPORAL_METHOD
 from thesis.pipeline.pipeline import ingest_ait_scenario
 
 
@@ -46,11 +48,18 @@ def main() -> None:
         help="Ingest all AIT-ADS scenarios (see src/thesis/configs/scenarios.json).",
     )
     parser.add_argument(
+        "--grouping-mode",
+        default=FIXED_WINDOW_METHOD,
+        choices=[FIXED_WINDOW_METHOD, CSCAS_METHOD, TEMPORAL_METHOD],
+        help=f"Alert-grouping method to use (default: {FIXED_WINDOW_METHOD}).",
+    )
+    parser.add_argument(
         "--window-size",
         type=int,
         default=2,
         metavar="SECONDS",
-        help="Fixed-window size in seconds for alert grouping (default: 2).",
+        help="Fixed-window size in seconds for alert grouping "
+        f"(only used when --grouping-mode={FIXED_WINDOW_METHOD}, default: 2).",
     )
     args = parser.parse_args()
 
@@ -63,7 +72,7 @@ def main() -> None:
     if not scenarios:
         parser.error("Provide at least one scenario name or use --all.")
 
-    grouping = GroupingConfig(window_size=args.window_size)
+    grouping = GroupingConfig(mode=args.grouping_mode, window_size=args.window_size)
 
     for scenario in scenarios:
         print(f"\n[scenario={scenario}]")

@@ -11,20 +11,17 @@ from thesis.paths import FEATURE_DIR, ROOT
 from thesis.schemas.groups import AlertGroup, GroupSnapshot
 from thesis.schemas.mining import FeatureSelectionConfig
 from thesis.schemas.preprocessing import (
-    IncomingAlert,
     IncomingSuricataGroup,
     ParsedSuricataGroup,
-    TokenizedAlert,
 )
-from thesis.preprocessing.parsing import parse_incoming_alert, parse_suricata_group_row
-from thesis.preprocessing.tokenization import tokenize_alert
+from thesis.preprocessing.parsing import parse_suricata_group_row
+from thesis.preprocessing.batch import process_alert_rows
 from thesis.caching.cache import TokenCache
 from thesis.caching.ingestor import CacheIngestor
 from thesis.caching.selector import select_group_snapshots
 from thesis.grouping.group_alerts import (
     FIXED_WINDOW_METHOD,
     CSCAS_PREGROUPED_METHOD,
-    group_alerts,
 )
 
 
@@ -35,22 +32,15 @@ def process_alert_batch(
     grouping_mode: str = FIXED_WINDOW_METHOD,
     window_size: int = 2,
 ) -> int:
-    tokenized_alerts: list[TokenizedAlert] = []
-    for row in rows:
-        try:
-            alert = IncomingAlert.from_row(row)
-            parsed = parse_incoming_alert(alert=alert, scenario=scenario)
-            tokenized = tokenize_alert(parsed)
-            tokenized_alerts.append(tokenized)
-        except Exception as e:
-            print(f"Skipping row due to parsing/tokenization error: {e}")
-            continue
-
     grouping_kwargs: dict = {}
     if grouping_mode == FIXED_WINDOW_METHOD:
         grouping_kwargs["window_size"] = window_size
-    alert_groups = group_alerts(
-        tokenized_alerts, method=grouping_mode, **grouping_kwargs
+
+    tokenized_alerts, alert_groups = process_alert_rows(
+        rows,
+        scenario=scenario,
+        grouping_mode=grouping_mode,
+        **grouping_kwargs,
     )
 
     if alert_groups:
@@ -474,6 +464,44 @@ def resolve_mining_alert_groups_path(
         json.dumps([alert_group_to_dict(t) for t in alert_groups[:n_mine]])
     )
     return mine_path
+
+
+def compute_window_bounds(
+    n_total: int, gran: float, win_idx: int
+) -> tuple[int, int, int]:
+    """Chronological window bounds for `win_idx` at granularity `gran`, over a
+    sequence of `n_total` items -- the same windowing convention used by
+    run_attribute_mining_window_sweep.py: n_windows = n_total // win_size windows of
+    ~win_size items each, with the last window absorbing any remainder so nothing at
+    the end of the timeline is silently dropped. Returns (start, end, n_windows)."""
+    win_size = max(1, int(gran * n_total))
+    n_windows = max(1, n_total // win_size)
+    start = win_idx * win_size
+    end = (win_idx + 1) * win_size if win_idx < n_windows - 1 else n_total
+    return start, end, n_windows
+
+
+def resolve_window_alert_groups_path(
+    alert_groups: list[AlertGroup],
+    alert_groups_path: Path,
+    gran: float,
+    win_idx: int,
+) -> Path:
+    """Serialize the chronological window `win_idx` (see compute_window_bounds) of
+    `alert_groups` at granularity `gran` to its own file, so it gets its own
+    attribute-mining cache fingerprint (thesis.mining.attribute_schema_cache hashes
+    alert_groups_path + config). Sibling to resolve_mining_alert_groups_path, which
+    always slices the first mine_frac fraction instead of an arbitrary window -- use
+    this one to mine every window across the full timeline instead of just the first."""
+    start, end, _ = compute_window_bounds(len(alert_groups), gran, win_idx)
+    gran_tag = f"{gran:.6f}".rstrip("0").rstrip(".")
+    win_path = (
+        alert_groups_path.parent / f"alert_groups_gran{gran_tag}_win{win_idx}.json"
+    )
+    win_path.write_text(
+        json.dumps([alert_group_to_dict(t) for t in alert_groups[start:end]])
+    )
+    return win_path
 
 
 def save_snapshots_json(snapshots: list[GroupSnapshot], out_path: Path) -> None:

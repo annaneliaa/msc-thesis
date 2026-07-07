@@ -1023,6 +1023,7 @@ def plot_temporal_attack_overview(
 
 def plot_signature_event_raster(
     df: pd.DataFrame,
+    group_col: str = "signature",
     time_unit: str = "days",
     marker_size: float = 3.0,
     alpha: float = 0.5,
@@ -1030,27 +1031,30 @@ def plot_signature_event_raster(
     out_path: str | None = None,
 ) -> tuple:
     """
-    Event raster of every alert signature's occurrences over time.
+    Event raster of every unique value of `group_col`'s occurrences over time.
 
-    One row per unique signature (all signatures shown, not just top-K); each
+    One row per unique value (all values shown, not just top-K); each
     occurrence is drawn as a dot at its elapsed time, coloured by whether that
     specific hit was benign or attack. Rows are grouped into a majority-attack
-    block and a majority-benign block (split by which class each signature
-    fires in more often), each block ordered by descending occurrence count.
-    This makes it possible to see, at a glance, which signatures are mostly
-    benign noise, and whether their hits are spread at a constant rate or
-    arrive in recurring bursts.
+    block and a majority-benign block (split by which class each value fires
+    in more often), each block ordered by descending occurrence count. This
+    makes it possible to see, at a glance, which values are mostly benign
+    noise, and whether their hits are spread at a constant rate or arrive in
+    recurring bursts.
 
     Assumes df represents a single continuous timeline (as with CSCAS);
     elapsed time is measured from the global minimum timestamp in df.
 
     Parameters
     ----------
-    df          : DataFrame returned by load_alerts()
+    df          : DataFrame returned by load_alerts() (or with the same
+                  time/is_attack columns and a `group_col` column present)
+    group_col   : column to group occurrences by, e.g. "signature" (full alert
+                  text, CSCAS) or "short" (AIT-ADS's coarser descriptor code)
     time_unit   : "hours" or "days" — unit for the x-axis
     marker_size : scatter marker size (points^2)
     alpha       : marker transparency (lower helps reveal density in bursts)
-    figsize     : optional override; default scales height with signature count
+    figsize     : optional override; default scales height with value count
     out_path    : optional save path
     """
     divisor = 3600.0 if time_unit == "hours" else 86400.0
@@ -1058,7 +1062,7 @@ def plot_signature_event_raster(
     elapsed = (df["time"].astype(float) - t0) / divisor
 
     stats = (
-        df.groupby("signature")["is_attack"]
+        df.groupby(group_col)["is_attack"]
         .agg(["sum", "count"])
         .rename(columns={"sum": "n_attack", "count": "n_total"})
     )
@@ -1070,16 +1074,16 @@ def plot_signature_event_raster(
     benign_block = stats[~stats["majority_attack"]].sort_values(
         "n_total", ascending=False
     )
-    ordered_sigs = attack_block.index.tolist() + benign_block.index.tolist()
-    sig_to_row = {sig: i for i, sig in enumerate(ordered_sigs)}
-    n_sig = len(ordered_sigs)
+    ordered_vals = attack_block.index.tolist() + benign_block.index.tolist()
+    val_to_row = {val: i for i, val in enumerate(ordered_vals)}
+    n_vals = len(ordered_vals)
 
     if figsize is None:
-        figsize = (16, max(8, 0.11 * n_sig))
+        figsize = (16, max(8, 0.11 * n_vals))
 
     fig, ax = plt.subplots(figsize=figsize)
 
-    y = df["signature"].map(sig_to_row).values
+    y = df[group_col].map(val_to_row).values
     colors = np.where(df["is_attack"].values, _C_ATTACK, _C_BENIGN)
 
     ax.scatter(
@@ -1089,12 +1093,15 @@ def plot_signature_event_raster(
     if len(attack_block) and len(benign_block):
         ax.axhline(len(attack_block) - 0.5, color="0.3", linewidth=0.8, linestyle="--")
 
-    ax.set_yticks(range(n_sig))
-    ax.set_yticklabels(ordered_sigs, fontsize=4)
-    ax.set_ylim(n_sig - 0.5, -0.5)
+    ax.set_yticks(range(n_vals))
+    ax.set_yticklabels(ordered_vals, fontsize=4)
+    ax.set_ylim(n_vals - 0.5, -0.5)
     ax.set_xlim(0, float(elapsed.max()))
     ax.set_xlabel(f"Elapsed time ({time_unit})", fontsize=11)
-    ax.set_title(f"Signature occurrence raster ({n_sig} signatures)", fontsize=12)
+    ax.set_title(
+        f"{group_col.capitalize()} occurrence raster ({n_vals} {group_col} values)",
+        fontsize=12,
+    )
     ax.legend(
         handles=[
             mpatches.Patch(color=_C_BENIGN, alpha=0.9, label="Benign hit"),

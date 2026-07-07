@@ -21,7 +21,19 @@ import matplotlib.patches as mpatches
 import numpy as np
 import pandas as pd
 
-from thesis.visualization.mining.common import grans, savefig, scenario_colour_map
+from thesis.visualization.mining.common import (
+    ATTACK_COLOR,
+    BENIGN_COLOR,
+    NEUTRAL_COLOR,
+    base_feature,
+    grans,
+    ordered_value_color_map,
+    parse_summary_params,
+    parse_win_start,
+    savefig,
+    scenario_colour_map,
+    strip_axes,
+)
 
 _REASON_COLOURS = {
     "growth_rate_too_close_to_1": "#4477AA",
@@ -683,3 +695,569 @@ def plot_feature_lifecycle(
         fig.suptitle(f"{scenario}  —  pattern lifecycle  |  gran={gran:.0%}", y=1.02)
         fig.tight_layout()
         savefig(fig, out, f"feature_lifecycle_{scenario}_gran{gran:.0%}.png")
+
+
+# ---------------------------------------------------------------------------
+# Thesis report — stability / discriminativeness / feature-content figures for
+# one run_attribute_mining_window_sweep.py output directory (single scenario).
+#
+# These are a separate, more polished figure set from plot_* above (which are
+# multi-scenario, generated automatically by the sweep CLI itself): every
+# report_* function below assumes a single scenario per run_dir and produces
+# 300dpi figures meant to go straight into the thesis. generate_thesis_report
+# is the single entry point notebooks should call.
+# ---------------------------------------------------------------------------
+
+REQUIRED_REPORT_FILES = [
+    "table1_stability.csv",
+    "table3_contrast_drop_diagnosis.csv",
+    "table4_persistence.csv",
+    "table5_cross_granularity.csv",
+    "table6_rule_drift.csv",
+    "mined_features_overview_step1_raw.csv",
+    "mined_features_overview_step1_survivors.csv",
+    "mined_features_overview_step2_survivors.csv",
+]
+
+
+def run_dir_is_complete(run_dir: Path) -> bool:
+    return all((run_dir / name).exists() for name in REQUIRED_REPORT_FILES)
+
+
+def discover_run_dirs(base_dir: Path) -> list[Path]:
+    """All complete run_attribute_mining_window_sweep.py output dirs directly under
+    base_dir, sorted by name (i.e. chronologically, since dirs are timestamp-prefixed).
+    Incomplete dirs (crashed/partial runs) are silently skipped."""
+    if not base_dir.exists():
+        return []
+    return sorted(
+        p for p in base_dir.iterdir() if p.is_dir() and run_dir_is_complete(p)
+    )
+
+
+def report_stability_jaccard(
+    t1: pd.DataFrame,
+    gran_vals: list[float],
+    gran_colors: dict[float, str],
+    out: Path,
+    dpi: int,
+) -> None:
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+    for g in gran_vals:
+        sub = t1[(t1["gran"] == g) & t1["jaccard"].notna()].sort_values("win_start")
+        ax.plot(
+            sub["win_start"] * 100,
+            sub["jaccard"],
+            marker="o",
+            markersize=5,
+            linewidth=1.8,
+            color=gran_colors[g],
+            label=f"gran={g:.0%}",
+        )
+    ax.set_xlabel("position in timeline (%)")
+    ax.set_ylabel("Jaccard similarity (vs. previous window)")
+    ax.set_ylim(0, 1.05)
+    ax.set_title("Survivor-set stability across consecutive windows")
+    ax.legend(title="Granularity", frameon=False)
+    strip_axes(ax)
+    fig.tight_layout()
+    savefig(fig, out, "stability_jaccard_trajectory.png", dpi=dpi)
+
+
+def _read_csv_or_empty(path: Path) -> pd.DataFrame:
+    """table5_cross_granularity.csv is written blank (no header, sometimes just a
+    trailing newline) by single-granularity sweep runs, since there's nothing to
+    compute cross-granularity agreement against -- pd.read_csv errors on that rather
+    than returning an empty frame, so guard it explicitly."""
+    if not path.read_text().strip():
+        return pd.DataFrame()
+    return pd.read_csv(path)
+
+
+def report_cross_granularity(t5: pd.DataFrame, out: Path, dpi: int) -> None:
+    if t5.empty:
+        print("  [skip] stability_cross_granularity — only one granularity was swept")
+        return
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+    x = np.arange(len(t5))
+    labels = [
+        f"g={r.coarse_gran:.0%} w{r.coarse_win}\n({r.coarse_range})"
+        for r in t5.itertuples()
+    ]
+    ax.bar(
+        x,
+        t5["frac_in_all"],
+        color=BENIGN_COLOR,
+        alpha=0.85,
+        width=0.6,
+        label="in ALL overlapping fine windows",
+    )
+    ax.bar(
+        x,
+        t5["frac_in_any"] - t5["frac_in_all"],
+        bottom=t5["frac_in_all"],
+        color=NEUTRAL_COLOR,
+        alpha=0.6,
+        width=0.6,
+        label="in ANY overlapping fine window (extra)",
+    )
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, fontsize=8)
+    ax.set_ylabel("fraction of coarse-window features")
+    ax.set_ylim(0, 1.05)
+    ax.set_title(
+        "Cross-granularity consistency: do coarse-window features\n"
+        "also show up in the matching fine sub-windows?"
+    )
+    ax.legend(frameon=False, fontsize=8)
+    strip_axes(ax)
+    fig.tight_layout()
+    savefig(fig, out, "stability_cross_granularity.png", dpi=dpi)
+
+
+def report_feature_count_trajectory(
+    t1: pd.DataFrame,
+    gran_vals: list[float],
+    gran_colors: dict[float, str],
+    out: Path,
+    dpi: int,
+) -> None:
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+    for g in gran_vals:
+        sub = t1[t1["gran"] == g].sort_values("win_start")
+        ax.plot(
+            sub["win_start"] * 100,
+            sub["n_features"],
+            marker="o",
+            markersize=5,
+            linewidth=1.8,
+            color=gran_colors[g],
+            label=f"gran={g:.0%}",
+        )
+    ax.set_xlabel("position in timeline (%)")
+    ax.set_ylabel("# surviving predicates")
+    ax.set_title("Survivor-set size over time")
+    ax.legend(title="Granularity", frameon=False)
+    strip_axes(ax)
+    fig.tight_layout()
+    savefig(fig, out, "stability_feature_count.png", dpi=dpi)
+
+
+def report_drop_reasons(t3: pd.DataFrame, out: Path, dpi: int) -> None:
+    reason_order = [
+        "growth_rate_too_close_to_1",
+        "insufficient_attack_coverage",
+        "insufficient_benign_coverage",
+        "other",
+    ]
+    counts = t3["reason"].value_counts().reindex(reason_order).dropna()
+    colors = [NEUTRAL_COLOR, ATTACK_COLOR, BENIGN_COLOR, "#DDCC77"][: len(counts)]
+
+    fig, ax = plt.subplots(figsize=(7, 4))
+    x = np.arange(len(counts))
+    ax.bar(x, counts.values, color=colors, alpha=0.85, width=0.6)
+    for i, v in enumerate(counts.values):
+        ax.text(
+            i,
+            v + counts.values.max() * 0.01,
+            f"{v:,}",
+            ha="center",
+            va="bottom",
+            fontsize=9,
+        )
+    ax.set_ylabel("# Step 1 candidates dropped (summed over all windows)")
+    ax.set_title("Why Step 1 candidates fail the contrast-set filter")
+    ax.set_xticks(x)
+    ax.set_xticklabels(counts.index, rotation=20, ha="right")
+    strip_axes(ax)
+    fig.tight_layout()
+    savefig(fig, out, "discriminativeness_drop_reasons.png", dpi=dpi)
+
+
+def report_rule_drift(
+    t6: pd.DataFrame,
+    gran_vals: list[float],
+    gran_colors: dict[float, str],
+    has_eval_col: bool,
+    out: Path,
+    dpi: int,
+) -> None:
+    fig, axes = plt.subplots(
+        2 if has_eval_col else 1, 1, figsize=(9, 6.5 if has_eval_col else 4)
+    )
+    axes = np.atleast_1d(axes)
+
+    ax = axes[0]
+    for g in gran_vals:
+        sub = t6[(t6["gran"] == g) & t6["confidence_attack"].notna()].sort_values(
+            "win_start"
+        )
+        ax.plot(
+            sub["win_start"] * 100,
+            sub["confidence_attack"],
+            marker="o",
+            markersize=5,
+            linewidth=1.8,
+            color=gran_colors[g],
+            label=f"gran={g:.0%}",
+        )
+    ax.set_ylabel(
+        "confidence_attack\n(top rule" + (", holdout)" if has_eval_col else ")")
+    )
+    ax.set_ylim(0, 1.05)
+    ax.set_title(
+        "Top decision-tree rule per window: attack recall"
+        + (" on chronological holdout" if has_eval_col else "")
+    )
+    ax.legend(title="Granularity", frameon=False, fontsize=8)
+    ax.set_xlabel("position in timeline (%)")
+    strip_axes(ax)
+
+    if has_eval_col:
+        ax2 = axes[1]
+        for g in gran_vals:
+            sub = t6[(t6["gran"] == g) & t6["n_attack_eval"].notna()].sort_values(
+                "win_start"
+            )
+            ax2.bar(
+                sub["win_start"] * 100,
+                sub["n_attack_eval"],
+                width=1.5,
+                color=gran_colors[g],
+                alpha=0.7,
+            )
+        ax2.set_ylabel("# attack alert_groups\nin holdout eval")
+        ax2.set_xlabel("position in timeline (%)")
+        ax2.set_title(
+            "Holdout sample size backing each confidence_attack estimate above"
+        )
+        strip_axes(ax2)
+
+    fig.tight_layout()
+    savefig(fig, out, "discriminativeness_rule_drift.png", dpi=dpi)
+
+
+def _leaf_precision_table(step2_survivors: pd.DataFrame) -> pd.DataFrame:
+    """confidence_attack/confidence_benign are recall, not precision -- with a large
+    class imbalance a leaf can have confidence_attack > confidence_benign (labelled
+    "attack-leaning") while still being majority benign in absolute composition. This
+    recomputes true precision P(class | leaf) from confidence_attack and
+    n_attack_eval."""
+    leaves = step2_survivors.copy()
+    leaves["n_attack_leaf"] = (
+        (leaves["confidence_attack"] * leaves["n_attack_eval"]).round().astype(int)
+    )
+    leaves["precision_attack"] = leaves["n_attack_leaf"] / leaves["support_count"]
+    leaves["precision_benign"] = 1 - leaves["precision_attack"]
+    leaves["leaning"] = np.where(
+        leaves["confidence_attack"] > leaves["confidence_benign"],
+        "attack-leaning",
+        "benign-leaning",
+    )
+    leaves["true_precision"] = np.where(
+        leaves["leaning"] == "attack-leaning",
+        leaves["precision_attack"],
+        leaves["precision_benign"],
+    )
+    return leaves
+
+
+def report_precision_vs_leaning(leaves: pd.DataFrame, out: Path, dpi: int) -> None:
+    fig, ax = plt.subplots(figsize=(7, 4.5))
+    data = [
+        leaves.loc[leaves["leaning"] == "attack-leaning", "true_precision"],
+        leaves.loc[leaves["leaning"] == "benign-leaning", "true_precision"],
+    ]
+    bp = ax.boxplot(
+        data,
+        tick_labels=[
+            "attack-leaning\n(by relative recall)",
+            "benign-leaning\n(by relative recall)",
+        ],
+        patch_artist=True,
+        widths=0.5,
+        medianprops=dict(color="black"),
+    )
+    for patch, color in zip(bp["boxes"], [ATTACK_COLOR, BENIGN_COLOR]):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.6)
+    ax.set_ylabel("true precision  P(class | leaf)")
+    ax.set_ylim(-0.02, 1.05)
+    ax.set_title(
+        'Recall-based "leaning" label vs. actual precision\n'
+        "(a leaf can be labelled attack-leaning while still being majority-benign)"
+    )
+    strip_axes(ax)
+    fig.tight_layout()
+    savefig(fig, out, "discriminativeness_precision_vs_leaning.png", dpi=dpi)
+
+
+def report_support_vs_precision(leaves: pd.DataFrame, out: Path, dpi: int) -> None:
+    fig, ax = plt.subplots(figsize=(7, 5))
+    for label, color in [
+        ("attack-leaning", ATTACK_COLOR),
+        ("benign-leaning", BENIGN_COLOR),
+    ]:
+        sub = leaves[leaves["leaning"] == label]
+        ax.scatter(
+            sub["support"],
+            sub["true_precision"],
+            s=28,
+            alpha=0.7,
+            color=color,
+            label=label,
+            edgecolors="white",
+            linewidths=0.4,
+        )
+    ax.set_xscale("log")
+    ax.set_xlabel("support (fraction of window, log scale)")
+    ax.set_ylabel("true precision")
+    ax.set_ylim(-0.02, 1.05)
+    ax.set_title(
+        "Compactness vs. quality: small, high-precision leaves are the\n"
+        "most valuable workload-reduction candidates"
+    )
+    ax.legend(frameon=False)
+    strip_axes(ax)
+    fig.tight_layout()
+    savefig(fig, out, "discriminativeness_support_vs_precision.png", dpi=dpi)
+
+
+def report_feature_reuse(
+    step2_survivors: pd.DataFrame, out: Path, dpi: int
+) -> pd.Series:
+    """Counts how many decision-tree leaves use each underlying attribute (stripping
+    thresholds/NOT_), across the whole sweep. Returns the full reuse Series (used by
+    the caller to report the distinct-feature count)."""
+    feature_counts: dict[str, int] = {}
+    for pat in step2_survivors["pattern"]:
+        for clause in pat.split(" AND "):
+            feat = base_feature(clause)
+            feature_counts[feat] = feature_counts.get(feat, 0) + 1
+
+    reuse = pd.Series(feature_counts).sort_values(ascending=False)
+    top = reuse.head(15)[::-1]
+
+    fig, ax = plt.subplots(figsize=(8, 5.5))
+    ax.barh(top.index, top.values, color=BENIGN_COLOR, alpha=0.85)
+    for i, v in enumerate(top.values):
+        ax.text(v + top.values.max() * 0.01, i, str(v), va="center", fontsize=8)
+    ax.set_xlabel(
+        f"# decision-tree leaves using this feature (of {len(step2_survivors)} total)"
+    )
+    ax.set_title(
+        f"Feature reuse across all mined rules\n({len(reuse)} distinct features used in total)"
+    )
+    ax.grid(axis="x", alpha=0.25)
+    for spine in ("top", "right"):
+        ax.spines[spine].set_visible(False)
+    fig.tight_layout()
+    savefig(fig, out, "feature_content_reuse.png", dpi=dpi)
+    return reuse
+
+
+def report_rule_complexity(step2_survivors: pd.DataFrame, out: Path, dpi: int) -> None:
+    clause_lengths = step2_survivors["pattern"].apply(lambda p: len(p.split(" AND ")))
+    counts = clause_lengths.value_counts().sort_index()
+
+    fig, ax = plt.subplots(figsize=(6, 4))
+    ax.bar(
+        counts.index.astype(str),
+        counts.values,
+        color=NEUTRAL_COLOR,
+        alpha=0.9,
+        width=0.6,
+    )
+    for i, v in enumerate(counts.values):
+        ax.text(
+            i,
+            v + counts.values.max() * 0.01,
+            str(v),
+            ha="center",
+            va="bottom",
+            fontsize=9,
+        )
+    ax.set_xlabel("# AND-clauses in the rule")
+    ax.set_ylabel("# leaves")
+    ax.set_title("Decision-tree rule complexity")
+    strip_axes(ax)
+    fig.tight_layout()
+    savefig(fig, out, "feature_content_rule_complexity.png", dpi=dpi)
+
+
+def report_benign_attack_ratio(
+    step1_survivors: pd.DataFrame,
+    step2_survivors: pd.DataFrame,
+    min_growth_rate: float,
+    out: Path,
+    dpi: int,
+) -> None:
+    inv = 1.0 / min_growth_rate
+    s1_attack = int((step1_survivors["growth_rate"] >= min_growth_rate).sum())
+    s1_benign = int(
+        (
+            (step1_survivors["confidence_benign"] > 0)
+            & (step1_survivors["growth_rate"] <= inv)
+        ).sum()
+    )
+    s2_attack = int(
+        (
+            step2_survivors["confidence_attack"] > step2_survivors["confidence_benign"]
+        ).sum()
+    )
+    s2_benign = int(
+        (
+            step2_survivors["confidence_benign"] > step2_survivors["confidence_attack"]
+        ).sum()
+    )
+
+    fig, ax = plt.subplots(figsize=(6.5, 4.5))
+    x = np.arange(2)
+    w = 0.32
+    attack_vals = [s1_attack, s2_attack]
+    benign_vals = [s1_benign, s2_benign]
+    ax.bar(
+        x - w / 2,
+        attack_vals,
+        width=w,
+        color=ATTACK_COLOR,
+        alpha=0.85,
+        label="attack-leaning",
+    )
+    ax.bar(
+        x + w / 2,
+        benign_vals,
+        width=w,
+        color=BENIGN_COLOR,
+        alpha=0.85,
+        label="benign-leaning",
+    )
+    y_max = max(attack_vals + benign_vals)
+    for i, (a, b) in enumerate(zip(attack_vals, benign_vals)):
+        ax.text(i - w / 2, a + y_max * 0.01, str(a), ha="center", fontsize=9)
+        ax.text(i + w / 2, b + y_max * 0.01, str(b), ha="center", fontsize=9)
+    ax.set_xticks(x)
+    ax.set_xticklabels(
+        [
+            f"Step 1\ncontrast-set predicates\n(n={len(step1_survivors)})",
+            f"Step 2\ndecision-tree leaves\n(n={len(step2_survivors)})",
+        ]
+    )
+    ax.set_ylabel("# mined features")
+    ax.set_title("Attack- vs. benign-leaning features, by pipeline step")
+    ax.legend(frameon=False)
+    strip_axes(ax)
+    fig.tight_layout()
+    savefig(fig, out, "feature_content_benign_attack_ratio.png", dpi=dpi)
+
+
+def report_persistence(
+    t4: pd.DataFrame,
+    gran_vals: list[float],
+    gran_colors: dict[float, str],
+    out: Path,
+    dpi: int,
+) -> None:
+    fig, axes = plt.subplots(
+        1, len(gran_vals), figsize=(4.2 * len(gran_vals), 4), sharey=False
+    )
+    axes = np.atleast_1d(axes)
+    for ax, g in zip(axes, gran_vals):
+        sub = t4[t4["gran"] == g].sort_values("n_windows_present")
+        ax.bar(
+            sub["n_windows_present"].astype(str),
+            sub["n_features_with_this_persistence"],
+            color=gran_colors[g],
+            alpha=0.85,
+            width=0.6,
+        )
+        ax.set_title(f"gran={g:.0%}")
+        ax.set_xlabel("# windows the feature persists in")
+        strip_axes(ax)
+    axes[0].set_ylabel("# features")
+    fig.suptitle(
+        "Feature persistence: how many windows does each surviving feature keep showing up in?"
+    )
+    fig.tight_layout()
+    savefig(fig, out, "feature_content_persistence.png", dpi=dpi)
+
+
+def generate_thesis_report(run_dir: Path, dpi: int = 300) -> dict:
+    """Load one run_attribute_mining_window_sweep.py output directory (single
+    scenario), generate the full stability / discriminativeness / feature-content
+    figure set under run_dir/thesis_figures/, and return a one-row summary dict for
+    comparing this mining-parameter configuration against others."""
+    figures_dir = run_dir / "thesis_figures"
+    figures_dir.mkdir(exist_ok=True)
+
+    t1 = pd.read_csv(run_dir / "table1_stability.csv")
+    t3 = pd.read_csv(run_dir / "table3_contrast_drop_diagnosis.csv")
+    t4 = pd.read_csv(run_dir / "table4_persistence.csv")
+    t5 = _read_csv_or_empty(run_dir / "table5_cross_granularity.csv")
+    t6 = pd.read_csv(run_dir / "table6_rule_drift.csv")
+    step1_raw = pd.read_csv(run_dir / "mined_features_overview_step1_raw.csv")
+    step1_survivors = pd.read_csv(
+        run_dir / "mined_features_overview_step1_survivors.csv"
+    )
+    step2_survivors = pd.read_csv(
+        run_dir / "mined_features_overview_step2_survivors.csv"
+    )
+
+    t1 = t1.assign(win_start=t1["win_range"].apply(parse_win_start))
+    t6 = t6.assign(win_start=t6["win_range"].apply(parse_win_start))
+
+    gran_vals = grans(t1)
+    gran_colors = ordered_value_color_map(gran_vals)
+    has_eval_col = "n_attack_eval" in step2_survivors.columns
+
+    summary_path = run_dir / "summary.txt"
+    params = (
+        parse_summary_params(summary_path.read_text()) if summary_path.exists() else {}
+    )
+    min_growth_rate = float(params.get("min_growth_rate", 3.0))
+
+    print(
+        f"[{run_dir.name}] {len(gran_vals)} granularities, {len(t1)} windows, has_eval_col={has_eval_col}"
+    )
+
+    report_stability_jaccard(t1, gran_vals, gran_colors, figures_dir, dpi)
+    report_cross_granularity(t5, figures_dir, dpi)
+    report_feature_count_trajectory(t1, gran_vals, gran_colors, figures_dir, dpi)
+    report_drop_reasons(t3, figures_dir, dpi)
+    report_rule_drift(t6, gran_vals, gran_colors, has_eval_col, figures_dir, dpi)
+
+    if has_eval_col:
+        leaves = _leaf_precision_table(step2_survivors)
+        report_precision_vs_leaning(leaves, figures_dir, dpi)
+        report_support_vs_precision(leaves, figures_dir, dpi)
+
+    reuse = report_feature_reuse(step2_survivors, figures_dir, dpi)
+    report_rule_complexity(step2_survivors, figures_dir, dpi)
+    report_benign_attack_ratio(
+        step1_survivors, step2_survivors, min_growth_rate, figures_dir, dpi
+    )
+    report_persistence(t4, gran_vals, gran_colors, figures_dir, dpi)
+
+    return {
+        "run_dir": run_dir.name,
+        "min_growth_rate": min_growth_rate,
+        "max_depth": int(params.get("max_depth", 4)),
+        "granularities": ",".join(f"{g:.0%}" for g in gran_vals),
+        "n_windows": len(t1),
+        "mean_jaccard": round(float(t1["jaccard"].mean()), 4),
+        "min_jaccard": round(float(t1["jaccard"].min()), 4),
+        "step1_raw": len(step1_raw),
+        "step1_survivors": len(step1_survivors),
+        "step1_survival_rate": round(len(step1_survivors) / len(step1_raw), 4)
+        if len(step1_raw)
+        else None,
+        "step2_leaves": len(step2_survivors),
+        "n_distinct_base_features": len(reuse),
+        "mean_top_rule_confidence_attack": round(
+            float(t6["confidence_attack"].mean()), 4
+        ),
+        "min_top_rule_confidence_attack": round(
+            float(t6["confidence_attack"].min()), 4
+        ),
+        "has_holdout_eval": has_eval_col,
+    }

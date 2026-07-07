@@ -23,11 +23,19 @@ Usage:
   python src/thesis/scripts/mining/mine_attribute_schema.py cscas --train-frac 0.1 --test-frac 0.9
   python src/thesis/scripts/mining/mine_attribute_schema.py fox --force  # ignore cache, re-mine
 
+  # Mine every 10% window across the whole timeline (10 schemas), instead of just
+  # the first 10% -- for building a complete grid of pre-mined schemas to analyse
+  # later, rather than a single mine/train split for one experiment run.
+  python src/thesis/scripts/mining/mine_attribute_schema.py cscas --mine-frac 0.1 --windowed
+
 --mine-frac / --random-split / --random-seed / attribute-mining thresholds
 (--min-attack-coverage etc.) behave exactly as in
 run_model_comparison_attribute.py, and must match between this script and a
 later comparison run for the cache to be reused (they're part of the cache
-key -- see thesis.mining.attribute_schema_cache.compute_fingerprint).
+key -- see thesis.mining.attribute_schema_cache.compute_fingerprint). --windowed
+is specific to this script (run_model_comparison_attribute.py has no equivalent);
+it changes what --mine-frac means here, so don't pass it if you want the mined
+schema to double as an experiment's mine/train split.
 """
 
 from __future__ import annotations
@@ -43,11 +51,13 @@ from thesis.grouping.group_alerts import CSCAS_PREGROUPED_METHOD
 from thesis.mining.attribute_schema_cache import mine_or_reuse_attribute_schema
 from thesis.paths import CACHE_DIR
 from thesis.pipeline.pipeline import (
+    compute_window_bounds,
     ensure_feature_manifest,
     ingest_ait_scenario,
     ingest_cscas_scenario,
     load_or_build_alert_groups,
     resolve_mining_alert_groups_path,
+    resolve_window_alert_groups_path,
 )
 from thesis.schemas.mining import AttributeMiningConfig
 from thesis.visualization.eda import SCENARIOS as ALL_SCENARIOS
@@ -67,9 +77,23 @@ def mine_scenario(
     random_split: bool,
     random_seed: int,
     force: bool,
-) -> Path:
-    """Ingest `scenario`'s alert_groups if needed, resolve the mining window,
-    and mine (or reuse a cached) attribute schema. Returns the schema path."""
+    windowed: bool = False,
+) -> list[Path]:
+    """Ingest `scenario`'s alert_groups if needed, resolve the mining window(s), and
+    mine (or reuse cached) attribute schema(s). Returns the schema path(s).
+
+    By default (windowed=False), mine_frac<1.0 mines a single schema from the first
+    mine_frac fraction of the timeline (same as run_model_comparison_attribute.py's
+    mine/train split) -- returns a one-element list.
+
+    windowed=True instead treats mine_frac as a granularity: it mines one schema per
+    chronological window of that size, covering the *entire* timeline (mine_frac=0.1 ->
+    10 windows, mine_frac=0.5 -> 2 windows, mine_frac=1.0 -> 1 window covering
+    everything, same as non-windowed). Each window is cached and schema-registered
+    independently, so a full (growth_rate, max_depth, granularity) sweep run with
+    --windowed leaves every window's schema on disk for later experiments, not just the
+    first one.
+    """
     is_cscas = dataset_for_scenario(scenario) == "cscas"
     window_tag = f"_w{window_size}" if window_size != 2 else ""
     if is_cscas:
@@ -120,6 +144,34 @@ def mine_scenario(
     alert_groups_path = cache_dir / "alert_groups" / "alert_groups_raw.json"
     alert_groups.sort(key=lambda t: t.start_ts or "")
 
+    if windowed:
+        assert not random_split, "--windowed and --random-split are mutually exclusive: windowing needs the timeline in chronological order."
+        _, _, n_windows = compute_window_bounds(len(alert_groups), mine_frac, 0)
+        print(
+            f"  [windowed] granularity={mine_frac:.2f} -> {n_windows} window(s) covering the full timeline"
+        )
+
+        schema_paths = []
+        for win_idx in range(n_windows):
+            start, end, _ = compute_window_bounds(len(alert_groups), mine_frac, win_idx)
+            window_alert_groups_path = resolve_window_alert_groups_path(
+                alert_groups, alert_groups_path, gran=mine_frac, win_idx=win_idx
+            )
+            print(
+                f"  [window {win_idx + 1}/{n_windows}] {end - start} alert_groups ({start}:{end})"
+            )
+            schema_path, _run_dir, mining_stats = mine_or_reuse_attribute_schema(
+                scenario=scenario,
+                alert_groups_path=window_alert_groups_path,
+                run_name=f"symbolic_{scenario}_gran{mine_frac:g}_win{win_idx}",
+                attribute_mining_config=attribute_mining_config,
+                force=force,
+            )
+            status = "cache hit" if mining_stats.get("cache_hit") else "mined fresh"
+            print(f"    [{scenario} win={win_idx}] {status} → {schema_path}")
+            schema_paths.append(schema_path)
+        return schema_paths
+
     if random_split:
         import random as _random
 
@@ -154,7 +206,7 @@ def mine_scenario(
     )
     status = "cache hit" if mining_stats.get("cache_hit") else "mined fresh"
     print(f"  [{scenario}] {status} → {schema_path}")
-    return schema_path
+    return [schema_path]
 
 
 def main() -> None:
@@ -189,6 +241,15 @@ def main() -> None:
     )
     parser.add_argument("--window-size", type=int, default=2, metavar="W")
     parser.add_argument("--mine-frac", type=float, default=1.0, dest="mine_frac")
+    parser.add_argument(
+        "--windowed",
+        action="store_true",
+        help=(
+            "Treat --mine-frac as a granularity and mine one schema per chronological "
+            "window of that size, covering the whole timeline (mine-frac=0.1 -> 10 "
+            "windows) instead of just the first mine-frac fraction."
+        ),
+    )
     parser.add_argument("--random-split", action="store_true", dest="random_split")
     parser.add_argument("--random-seed", type=int, default=42, dest="random_seed")
     parser.add_argument("--min-attack-coverage", type=float, default=0.05)
@@ -217,7 +278,7 @@ def main() -> None:
     method = args.filtered if args.filtered else None
     filtered = args.filtered is not None
 
-    results: dict[str, Path | None] = {}
+    results: dict[str, list[Path] | None] = {}
     for scenario in args.scenarios:
         try:
             results[scenario] = mine_scenario(
@@ -230,6 +291,7 @@ def main() -> None:
                 random_split=args.random_split,
                 random_seed=args.random_seed,
                 force=args.force,
+                windowed=args.windowed,
             )
         except Exception as exc:
             print(f"\n[{scenario}] FAILED: {exc}")
@@ -237,8 +299,15 @@ def main() -> None:
             results[scenario] = None
 
     print(f"\n{'=' * 60}\n  SUMMARY\n{'=' * 60}")
-    for scenario, path in results.items():
-        print(f"  {scenario:<20} {path if path else 'FAILED'}")
+    for scenario, paths in results.items():
+        if not paths:
+            print(f"  {scenario:<20} FAILED")
+        elif len(paths) == 1:
+            print(f"  {scenario:<20} {paths[0]}")
+        else:
+            print(f"  {scenario:<20} {len(paths)} schemas:")
+            for path in paths:
+                print(f"    {path}")
 
 
 if __name__ == "__main__":

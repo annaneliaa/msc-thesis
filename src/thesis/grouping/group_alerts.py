@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from typing import Protocol, runtime_checkable
 from thesis.schemas.groups import GroupingRecord
-from thesis.schemas.preprocessing import TokenizedAlert
 
 
 FIXED_WINDOW_SECONDS = 2
@@ -11,6 +11,23 @@ CSCAS_PREGROUPED_METHOD = "cscas_pregrouped"
 CSCAS_METHOD = "cscas_grouping"
 CSCAS_SESSION_LENGTH_SECONDS = 300.0
 CSCAS_SESSION_TIMEOUT_SECONDS = 2.0
+TEMPORAL_METHOD = "temporal_grouping"
+
+
+@runtime_checkable
+class GroupableAlert(Protocol):
+    """
+    Structural type for whatever alert-like object grouping runs on.
+
+    Grouping only touches identity/timing/host/signature fields, which both
+    ParsedAlert (pre-tokenization) and TokenizedAlert expose, so this module
+    stays independent of thesis.preprocessing's concrete schemas.
+    """
+
+    alert_id: str
+    ts: int | float
+    host: str | None
+    signature: str | None
 
 
 def fixed_window_group_id(ts: int, window_size: int = FIXED_WINDOW_SECONDS) -> str:
@@ -19,7 +36,7 @@ def fixed_window_group_id(ts: int, window_size: int = FIXED_WINDOW_SECONDS) -> s
 
 
 def group_alert_fixed_window(
-    alert: TokenizedAlert,
+    alert: GroupableAlert,
     window_size: int = FIXED_WINDOW_SECONDS,
 ) -> GroupingRecord:
     return GroupingRecord(
@@ -30,7 +47,7 @@ def group_alert_fixed_window(
 
 
 def group_alerts_fixed_window(
-    alerts: list[TokenizedAlert],
+    alerts: list[GroupableAlert],
     window_size: int = FIXED_WINDOW_SECONDS,
 ) -> list[GroupingRecord]:
     return [
@@ -39,10 +56,10 @@ def group_alerts_fixed_window(
 
 
 def group_alerts_fixed_window_by_group(
-    alerts: list[TokenizedAlert],
+    alerts: list[GroupableAlert],
     window_size: int = FIXED_WINDOW_SECONDS,
-) -> dict[str, list[TokenizedAlert]]:
-    groups: dict[str, list[TokenizedAlert]] = defaultdict(list)
+) -> dict[str, list[GroupableAlert]]:
+    groups: dict[str, list[GroupableAlert]] = defaultdict(list)
 
     for alert in alerts:
         group_id = fixed_window_group_id(alert.ts, window_size=window_size)
@@ -52,7 +69,7 @@ def group_alerts_fixed_window_by_group(
 
 
 def group_alerts_cscas(
-    alerts: list[TokenizedAlert],
+    alerts: list[GroupableAlert],
     session_length: float = CSCAS_SESSION_LENGTH_SECONDS,
     session_timeout: float = CSCAS_SESSION_TIMEOUT_SECONDS,
 ) -> list[GroupingRecord]:
@@ -68,7 +85,7 @@ def group_alerts_cscas(
     if not alerts:
         return []
 
-    by_key: dict[tuple[str, str], list[TokenizedAlert]] = defaultdict(list)
+    by_key: dict[tuple[str, str], list[GroupableAlert]] = defaultdict(list)
     for alert in alerts:
         host = alert.host or "_unknown"
         signature = alert.signature or "_unknown"
@@ -97,8 +114,47 @@ def group_alerts_cscas(
     return records
 
 
+def group_alerts_temporal(
+    alerts: list[GroupableAlert],
+    session_length: float = CSCAS_SESSION_LENGTH_SECONDS,
+    session_timeout: float = CSCAS_SESSION_TIMEOUT_SECONDS,
+) -> list[GroupingRecord]:
+    """
+    Like group_alerts_cscas, but chains sessions across the whole alert
+    stream instead of splitting first by host/signature: alerts are sorted
+    by timestamp and grouped purely on temporal proximity. A new session
+    starts whenever the gap to the previous alert exceeds session_timeout
+    seconds, or the session's total span would exceed session_length seconds
+    (whichever comes first).
+    """
+    if not alerts:
+        return []
+
+    sorted_alerts = sorted(alerts, key=lambda a: a.ts)
+    anchor_id = sorted_alerts[0].alert_id
+    anchor_ts: float = sorted_alerts[0].ts
+    prev_ts: float = anchor_ts
+
+    records: list[GroupingRecord] = []
+    for alert in sorted_alerts:
+        if alert.ts - prev_ts > session_timeout or (
+            alert.ts - anchor_ts > session_length
+        ):
+            anchor_id = alert.alert_id
+            anchor_ts = alert.ts
+        prev_ts = alert.ts
+        records.append(
+            GroupingRecord(
+                alert_id=alert.alert_id,
+                group_id=f"{TEMPORAL_METHOD}:{anchor_id}",
+                method=TEMPORAL_METHOD,
+            )
+        )
+    return records
+
+
 def group_alerts(
-    alerts: list[TokenizedAlert],
+    alerts: list[GroupableAlert],
     method: str = FIXED_WINDOW_METHOD,
     **kwargs,
 ) -> list[GroupingRecord]:
@@ -106,5 +162,7 @@ def group_alerts(
         return group_alerts_fixed_window(alerts, **kwargs)
     elif method == CSCAS_METHOD:
         return group_alerts_cscas(alerts, **kwargs)
+    elif method == TEMPORAL_METHOD:
+        return group_alerts_temporal(alerts, **kwargs)
     else:
         raise ValueError(f"Unsupported grouping method: {method}")

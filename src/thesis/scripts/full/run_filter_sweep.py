@@ -57,6 +57,7 @@ import numpy as np
 import yaml
 
 from thesis.config import GroupingConfig
+from thesis.grouping import CSCAS_METHOD, FIXED_WINDOW_METHOD, TEMPORAL_METHOD
 from thesis.experiments.baseline import run_baseline_experiment
 from thesis.experiments.symbolic import (
     SymbolicExperimentConfig,
@@ -1112,9 +1113,9 @@ def main() -> None:
     )
     parser.add_argument(
         "--grouping",
-        default="fixed_window",
-        choices=["fixed_window", "fixed_window_host", "time_delta", "time_delta_host"],
-        help="[presets mode] Grouping method to use (default: fixed_window).",
+        default=FIXED_WINDOW_METHOD,
+        choices=[FIXED_WINDOW_METHOD, CSCAS_METHOD, TEMPORAL_METHOD],
+        help=f"[presets mode] Grouping method to use (default: {FIXED_WINDOW_METHOD}).",
     )
     parser.add_argument(
         "--top-k",
