@@ -19,11 +19,20 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 from pathlib import Path
 
 from thesis.features.service import build_persist_and_register_symbolic_schema
 from thesis.paths import FEATURE_DIR
 from thesis.schemas.mining import AttributeMiningConfig
+
+# Guards the index file's read-modify-write in record() -- now that experiments
+# (e.g. temporal_decay.py) can mine concurrently from a thread pool, two
+# threads both reading the index before either writes back would otherwise
+# race, and whichever writes last would silently drop the other's new entry
+# (the schema file itself would still be on disk, just unindexed, causing a
+# wasted re-mine next time it's needed instead of data loss).
+_INDEX_LOCK = threading.Lock()
 
 
 def _cache_index_path(scenario_name: str, root_dir: Path) -> Path:
@@ -54,12 +63,28 @@ def compute_fingerprint(
     so a regenerated file invalidates the cache without hashing its full
     content -- and the mining thresholds (contrast-set + decision-tree)."""
     stat = alert_groups_path.stat()
-    payload = {
+    identity = {
         "alert_groups_path": str(alert_groups_path.resolve()),
         "alert_groups_size": stat.st_size,
         "alert_groups_mtime": stat.st_mtime,
-        "config": attribute_mining_config.model_dump(),
     }
+    return compute_fingerprint_from_identity(identity, attribute_mining_config)
+
+
+def compute_fingerprint_from_identity(
+    identity: dict,
+    attribute_mining_config: AttributeMiningConfig,
+) -> str:
+    """Fingerprint mining inputs from a caller-supplied identity payload
+    instead of stat-ing a materialized alert_groups file.
+
+    Used by window_schema_cache.py: a window's mining input is a
+    deterministic slice of the raw (unsliced) alert_groups file, so its
+    identity can be expressed as that raw file's stat plus the slicing
+    parameters (gran, win_idx, split bounds) -- without ever requiring the
+    sliced file itself to exist on disk just to answer a cache lookup.
+    """
+    payload = {**identity, "config": attribute_mining_config.model_dump()}
     blob = json.dumps(payload, sort_keys=True).encode("utf-8")
     return hashlib.sha256(blob).hexdigest()[:16]
 
@@ -71,7 +96,8 @@ def lookup(
 ) -> Path | None:
     """Return the cached schema path for this fingerprint, or None if there's
     no matching entry or the schema file it points to no longer exists."""
-    index = _load_cache_index(scenario_name, root_dir)
+    with _INDEX_LOCK:
+        index = _load_cache_index(scenario_name, root_dir)
     entry = index.get(fingerprint)
     if entry is None:
         return None
@@ -85,9 +111,10 @@ def record(
     schema_path: Path,
     root_dir: Path = FEATURE_DIR,
 ) -> None:
-    index = _load_cache_index(scenario_name, root_dir)
-    index[fingerprint] = {"schema_path": str(schema_path)}
-    _save_cache_index(scenario_name, root_dir, index)
+    with _INDEX_LOCK:
+        index = _load_cache_index(scenario_name, root_dir)
+        index[fingerprint] = {"schema_path": str(schema_path)}
+        _save_cache_index(scenario_name, root_dir, index)
 
 
 def mine_or_reuse_attribute_schema(
@@ -97,14 +124,23 @@ def mine_or_reuse_attribute_schema(
     attribute_mining_config: AttributeMiningConfig,
     root_dir: Path = FEATURE_DIR,
     force: bool = False,
+    fingerprint: str | None = None,
 ) -> tuple[Path, Path | None, dict]:
     """Mine an attribute schema for `scenario`, or reuse an already-mined one
     if the inputs (alert_groups file + config) match a previous run.
 
+    `fingerprint`, if given, is used as-is instead of being computed from
+    `alert_groups_path` (which requires that file to exist on disk). Pass
+    one when the caller already has a cheaper way to establish cache
+    identity -- see compute_fingerprint_from_identity and
+    window_schema_cache.py. `alert_groups_path` must still point to real
+    data on a cache miss, since mining reads from it.
+
     Returns (schema_path, mining_run_dir, mining_stats). mining_run_dir is
     None on a cache hit, since no mining actually ran.
     """
-    fingerprint = compute_fingerprint(alert_groups_path, attribute_mining_config)
+    if fingerprint is None:
+        fingerprint = compute_fingerprint(alert_groups_path, attribute_mining_config)
 
     if not force:
         cached = lookup(scenario, fingerprint, root_dir)

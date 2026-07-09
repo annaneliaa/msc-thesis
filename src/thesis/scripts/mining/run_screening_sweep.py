@@ -35,8 +35,8 @@ from thesis.config import GroupingConfig
 from thesis.configs import dataset_for_scenario
 from thesis.experiments.screening_sweep import run_screening_sweep_experiment
 from thesis.grouping.group_alerts import CSCAS_PREGROUPED_METHOD
-from thesis.paths import CACHE_DIR
 from thesis.schemas.experiments import ScreeningSweepConfig
+from thesis.scripts.mining._common import cache_dir_for
 from thesis.training.model_factory import MODEL_FACTORIES
 from thesis.visualization.eda import SCENARIOS as ALL_SCENARIOS
 
@@ -47,25 +47,6 @@ sys.path.insert(0, str(_REPO / "src"))
 _DEFAULT_MINING_SETTINGS = (
     _REPO / "src" / "thesis" / "configs" / "screening_mining_settings.yaml"
 )
-
-
-def _cache_dir_for(
-    scenario: str, filtered: bool, method: str | None, window_size: int
-) -> Path:
-    if dataset_for_scenario(scenario) == "cscas":
-        method_tag = CSCAS_PREGROUPED_METHOD
-    elif filtered:
-        window_tag = f"_w{window_size}" if window_size != 2 else ""
-        method_tag = (
-            f"filtered_{method}{window_tag}" if method else f"filtered{window_tag}"
-        )
-    elif window_size != 2:
-        method_tag = f"w{window_size}"
-    else:
-        method_tag = "fixed_window"
-    cache_dir = CACHE_DIR / scenario / "groups" / method_tag
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    return cache_dir
 
 
 def main() -> None:
@@ -152,6 +133,14 @@ def main() -> None:
         action="store_true",
         help="Ignore any cached mined schema and re-mine.",
     )
+    parser.add_argument(
+        "--n-jobs",
+        type=int,
+        default=4,
+        dest="n_jobs",
+        metavar="N",
+        help="(granularity, window) tasks to run concurrently (thread pool). Default: 4",
+    )
     parser.add_argument("--output-dir", type=Path, default=None, dest="output_dir")
     args = parser.parse_args()
 
@@ -178,7 +167,7 @@ def main() -> None:
             if filtered and not is_cscas
             else None
         )
-        cache_dir = _cache_dir_for(scenario, filtered, method, args.window_size)
+        cache_dir = cache_dir_for(scenario, filtered, method, args.window_size)
         results_dir = (
             args.output_dir / scenario if args.output_dir is not None else None
         )
@@ -196,6 +185,7 @@ def main() -> None:
             alerts_json_path=alerts_path,
             results_dir=results_dir,
             force_remine=args.force,
+            n_jobs=args.n_jobs,
         )
         out_dir = run_screening_sweep_experiment(config)
         print(f"\n[{scenario}] Screening sweep results → {out_dir}")

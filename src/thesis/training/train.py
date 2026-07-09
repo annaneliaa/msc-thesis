@@ -14,6 +14,8 @@ from sklearn.metrics import (
 from sklearn.inspection import permutation_importance
 
 from thesis.schemas.features import FeatureSchema
+from thesis.training.explain import compute_shap_signed_importances
+from thesis.training.model_factory import unwrap_estimator
 from thesis.training.workload import DEFAULT_RECALL_TARGETS, compute_workload_at_recall
 
 
@@ -81,9 +83,16 @@ def train_eval_holdout(
     perm_importances = {}
     shap_importances = {}
 
+    # .coef_/.feature_importances_ live on the fitted estimator itself, not on
+    # a Pipeline wrapping it (e.g. the scaled "logreg"/"logreg_l1" factories)
+    # -- unwrap once and reuse below.
+    estimator = unwrap_estimator(model)
+
     if compute_importances:
-        if hasattr(model, "coef_"):
-            coefs_signed = model.coef_[0]  # preserve sign; negative = benign-correlated
+        if hasattr(estimator, "coef_"):
+            coefs_signed = estimator.coef_[
+                0
+            ]  # preserve sign; negative = benign-correlated
             pairs = sorted(
                 zip(feature_names, coefs_signed),
                 key=lambda x: abs(x[1]),
@@ -92,9 +101,9 @@ def train_eval_holdout(
             coef_importances = {
                 name: float(coef) for name, coef in pairs[:top_n_importances]
             }
-        elif hasattr(model, "feature_importances_"):
+        elif hasattr(estimator, "feature_importances_"):
             pairs = sorted(
-                zip(feature_names, model.feature_importances_),
+                zip(feature_names, estimator.feature_importances_),
                 key=lambda x: x[1],
                 reverse=True,
             )
@@ -134,50 +143,15 @@ def train_eval_holdout(
             print(f"  [train] permutation importance skipped: {e}", flush=True)
 
         try:
-            import shap
-
             print("  [train] computing SHAP importances...", flush=True)
             t0 = time.time()
 
             bg = X_train.sample(min(100, len(X_train)), random_state=42)
             x_explain = X_test.iloc[:200] if len(X_test) > 200 else X_test
 
-            if hasattr(model, "get_shap_values"):
-                # model provides its own fast SHAP path (e.g. GradientExplainer for LSTM)
-                bg_arr = bg.values if hasattr(bg, "values") else np.asarray(bg)
-                x_arr = (
-                    x_explain.values
-                    if hasattr(x_explain, "values")
-                    else np.asarray(x_explain)
-                )
-                vals = model.get_shap_values(bg_arr, x_arr)
-            elif getattr(model, "_skip_shap", False):
-                raise RuntimeError("SHAP skipped: model flagged as too expensive")
-            elif hasattr(model, "feature_importances_"):
-                # tree models: TreeExplainer is exact and fast
-                sv = shap.TreeExplainer(model).shap_values(x_explain)
-                vals = (
-                    sv[:, :, 1]
-                    if isinstance(sv, np.ndarray) and sv.ndim == 3
-                    else (sv[1] if isinstance(sv, list) else sv)
-                )
-            elif hasattr(model, "coef_"):
-                # linear models: LinearExplainer
-                vals = shap.LinearExplainer(model, bg).shap_values(x_explain)
-            else:
-                # fallback: PermutationExplainer via predict_proba
-                sv = shap.Explainer(model.predict_proba, bg)(x_explain)
-                vals = sv.values[:, :, 1] if sv.values.ndim == 3 else sv.values
-
-            mean_signed = vals.mean(axis=0)
-            pairs = sorted(
-                zip(feature_names, mean_signed),
-                key=lambda x: abs(x[1]),
-                reverse=True,
+            shap_importances = compute_shap_signed_importances(
+                model, bg, x_explain, feature_names, top_n=top_n_importances
             )
-            shap_importances = {
-                name: float(imp) for name, imp in pairs[:top_n_importances]
-            }
             print(f"  [train] SHAP done in {time.time() - t0:.1f}s", flush=True)
         except Exception as e:
             print(f"  [train] SHAP skipped: {e}", flush=True)

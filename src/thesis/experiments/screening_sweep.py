@@ -44,6 +44,7 @@ aggregate -- is visible.
 from __future__ import annotations
 
 import traceback
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -148,6 +149,115 @@ def _eval_row(
     }
 
 
+def _run_one_window(
+    scenario: str,
+    alert_groups: list[AlertGroup],
+    alert_groups_path: Path,
+    n_total: int,
+    gran: float,
+    win_idx: int,
+    base_schema: FeatureSchema,
+    mining_settings: list,
+    config: ScreeningSweepConfig,
+) -> list[dict]:
+    """Baseline pass + every mining setting's symbolic pass for one
+    (granularity, window) -- the unit of work run_screening_sweep_experiment
+    parallelizes across, since different windows never share state (each
+    mines/encodes/fits/evaluates entirely on its own window's rows)."""
+    win_start, win_end, _ = compute_window_bounds(n_total, gran, win_idx)
+    win_train_end = compute_window_train_end(
+        win_start, win_end, config.train_frac_within_window
+    )
+    local_train_end = win_train_end - win_start
+    window_rows = alert_groups[win_start:win_end]
+    labels, mask = _labels_and_mask(window_rows)
+    n_attack = int(np.nansum(labels))
+
+    win_meta = {
+        "scenario": scenario,
+        "granularity": gran,
+        "window_id": win_idx,
+        "win_start_frac": win_start / n_total,
+        "win_end_frac": win_end / n_total,
+        "n_alert_groups": len(window_rows),
+        "n_attack": n_attack,
+        "n_train": local_train_end,
+        "n_test": len(window_rows) - local_train_end,
+    }
+    print(
+        f"  [win {win_idx}] [{win_meta['win_start_frac']:.0%},"
+        f"{win_meta['win_end_frac']:.0%})  n={len(window_rows)} "
+        f"attack={n_attack} train={win_meta['n_train']} test={win_meta['n_test']}"
+    )
+
+    rows: list[dict] = []
+
+    # ---- Baseline pass (no symbolic features) ----
+    try:
+        baseline_encoded = encode_alert_groups_for_schema(window_rows, base_schema)
+        X_train, X_test, y_train, y_test = _mask_and_split(
+            baseline_encoded, labels, mask, local_train_end
+        )
+        for model_name in config.baseline_models:
+            row = _eval_row(X_train, X_test, y_train, y_test, base_schema, model_name)
+            rows.append(
+                {
+                    **win_meta,
+                    "feature_set": "baseline",
+                    "mining_setting": None,
+                    **row,
+                }
+            )
+    except Exception as exc:
+        print(f"    [warn] baseline pass failed: {exc}")
+        traceback.print_exc()
+
+    # ---- Symbolic pass, per mining setting ----
+    for spec in mining_settings:
+        try:
+            schema_result = get_or_mine_window_attribute_schema(
+                scenario=scenario,
+                alert_groups=alert_groups,
+                alert_groups_path=alert_groups_path,
+                gran=gran,
+                win_idx=win_idx,
+                attribute_mining_config=spec.to_attribute_mining_config(),
+                train_frac=config.train_frac_within_window,
+                force=config.force_remine,
+            )
+            symbolic = load_symbolic_feature_schema(schema_result.schema_path)
+            schema = FeatureSchema(
+                schema_name="base+symbolic",
+                schema_version=symbolic.schema_version,
+                base=base_schema.base,
+                symbolic=symbolic,
+            )
+            encoded = encode_alert_groups_for_schema(window_rows, schema)
+            X_train, X_test, y_train, y_test = _mask_and_split(
+                encoded, labels, mask, local_train_end
+            )
+            print(
+                f"    [{spec.name}] {'cache hit' if schema_result.cache_hit else 'mined fresh'} "
+                f"({len(symbolic.features)} features) → {schema_result.schema_path.name}"
+            )
+            for model_name in config.models:
+                row = _eval_row(X_train, X_test, y_train, y_test, schema, model_name)
+                rows.append(
+                    {
+                        **win_meta,
+                        "feature_set": "symbolic",
+                        "mining_setting": spec.name,
+                        "mining_cache_hit": schema_result.cache_hit,
+                        **row,
+                    }
+                )
+        except Exception as exc:
+            print(f"    [warn] setting '{spec.name}' failed: {exc}")
+            traceback.print_exc()
+
+    return rows
+
+
 def run_screening_sweep_experiment(config: ScreeningSweepConfig) -> Path:
     ensure_artifact_dirs()
 
@@ -196,111 +306,52 @@ def run_screening_sweep_experiment(config: ScreeningSweepConfig) -> Path:
     print(f"  Mining settings: {[s.name for s in mining_settings]}")
 
     print("[4/4] Running sweep...")
-    rows: list[dict] = []
 
+    # (granularity, window) pairs are independent -- flatten the two nested
+    # loops into one task list and run it on a thread pool (see
+    # ScreeningSweepConfig.n_jobs). Threads, not processes, for the same
+    # reason as temporal_decay.py: the dominant per-window costs (mining's
+    # contrast-set/tree-fit numpy work, BLAS ops inside each LogReg fit,
+    # vectorized pandas/numpy encoding) release the GIL, and threads avoid
+    # re-pickling the multi-million-row alert_groups list per worker under
+    # macOS's spawn-based multiprocessing.
+    window_tasks: list[tuple[float, int]] = []
     for gran in config.granularities:
         _, _, n_windows = compute_window_bounds(n_total, gran, 0)
         win_indices = _select_window_indices(n_windows, config.windows_per_gran)
         print(
-            f"\n[gran={gran:.2f}] {n_windows} windows total, "
+            f"[gran={gran:.2f}] {n_windows} windows total, "
             f"evaluating {len(win_indices)}: {win_indices}"
         )
+        window_tasks.extend((gran, win_idx) for win_idx in win_indices)
 
-        for win_idx in win_indices:
-            win_start, win_end, _ = compute_window_bounds(n_total, gran, win_idx)
-            win_train_end = compute_window_train_end(
-                win_start, win_end, config.train_frac_within_window
-            )
-            local_train_end = win_train_end - win_start
-            window_rows = alert_groups[win_start:win_end]
-            labels, mask = _labels_and_mask(window_rows)
-            n_attack = int(np.nansum(labels))
-
-            win_meta = {
-                "scenario": scenario,
-                "granularity": gran,
-                "window_id": win_idx,
-                "win_start_frac": win_start / n_total,
-                "win_end_frac": win_end / n_total,
-                "n_alert_groups": len(window_rows),
-                "n_attack": n_attack,
-                "n_train": local_train_end,
-                "n_test": len(window_rows) - local_train_end,
-            }
-            print(
-                f"  [win {win_idx}] [{win_meta['win_start_frac']:.0%},"
-                f"{win_meta['win_end_frac']:.0%})  n={len(window_rows)} "
-                f"attack={n_attack} train={win_meta['n_train']} test={win_meta['n_test']}"
-            )
-
-            # ---- Baseline pass (no symbolic features) ----
+    print(
+        f"  Running {len(window_tasks)} (granularity, window) tasks with n_jobs={config.n_jobs}..."
+    )
+    rows: list[dict] = []
+    with ThreadPoolExecutor(max_workers=config.n_jobs) as pool:
+        future_to_task = {
+            pool.submit(
+                _run_one_window,
+                scenario=scenario,
+                alert_groups=alert_groups,
+                alert_groups_path=alert_groups_path,
+                n_total=n_total,
+                gran=gran,
+                win_idx=win_idx,
+                base_schema=base_schema,
+                mining_settings=mining_settings,
+                config=config,
+            ): (gran, win_idx)
+            for gran, win_idx in window_tasks
+        }
+        for future in as_completed(future_to_task):
+            gran, win_idx = future_to_task[future]
             try:
-                baseline_encoded = encode_alert_groups_for_schema(
-                    window_rows, base_schema
-                )
-                X_train, X_test, y_train, y_test = _mask_and_split(
-                    baseline_encoded, labels, mask, local_train_end
-                )
-                for model_name in config.baseline_models:
-                    row = _eval_row(
-                        X_train, X_test, y_train, y_test, base_schema, model_name
-                    )
-                    rows.append(
-                        {
-                            **win_meta,
-                            "feature_set": "baseline",
-                            "mining_setting": None,
-                            **row,
-                        }
-                    )
+                rows.extend(future.result())
             except Exception as exc:
-                print(f"    [warn] baseline pass failed: {exc}")
+                print(f"  [warn] gran={gran:.2f} win={win_idx} failed: {exc}")
                 traceback.print_exc()
-
-            # ---- Symbolic pass, per mining setting ----
-            for spec in mining_settings:
-                try:
-                    schema_result = get_or_mine_window_attribute_schema(
-                        scenario=scenario,
-                        alert_groups=alert_groups,
-                        alert_groups_path=alert_groups_path,
-                        gran=gran,
-                        win_idx=win_idx,
-                        attribute_mining_config=spec.to_attribute_mining_config(),
-                        train_frac=config.train_frac_within_window,
-                        force=config.force_remine,
-                    )
-                    symbolic = load_symbolic_feature_schema(schema_result.schema_path)
-                    schema = FeatureSchema(
-                        schema_name="base+symbolic",
-                        schema_version=symbolic.schema_version,
-                        base=base_schema.base,
-                        symbolic=symbolic,
-                    )
-                    encoded = encode_alert_groups_for_schema(window_rows, schema)
-                    X_train, X_test, y_train, y_test = _mask_and_split(
-                        encoded, labels, mask, local_train_end
-                    )
-                    print(
-                        f"    [{spec.name}] {'cache hit' if schema_result.cache_hit else 'mined fresh'} "
-                        f"({len(symbolic.features)} features) → {schema_result.schema_path.name}"
-                    )
-                    for model_name in config.models:
-                        row = _eval_row(
-                            X_train, X_test, y_train, y_test, schema, model_name
-                        )
-                        rows.append(
-                            {
-                                **win_meta,
-                                "feature_set": "symbolic",
-                                "mining_setting": spec.name,
-                                "mining_cache_hit": schema_result.cache_hit,
-                                **row,
-                            }
-                        )
-                except Exception as exc:
-                    print(f"    [warn] setting '{spec.name}' failed: {exc}")
-                    traceback.print_exc()
 
     results_dir = (
         config.results_dir

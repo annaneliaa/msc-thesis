@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from typing import Literal
 from thesis.schemas.mining import AttributeMiningConfig, FeatureSelectionConfig
 from thesis.paths import CACHE_DIR
 from pathlib import Path
@@ -123,6 +124,110 @@ class ScreeningSweepConfig:
     results_dir: Path | None = None
     force_remine: bool = False
     random_seed: int = 42
+    # (granularity, window) pairs are independent (each mines/fits/evaluates
+    # entirely on its own window), so they run concurrently on a thread pool
+    # -- see TemporalDecayConfig.n_jobs for why threads, not processes.
+    n_jobs: int = 4
+
+
+@dataclass
+class TemporalDecayConfig:
+    """Experiment 2 (Temporal Generalization / Fixed-Horizon Decay): for each
+    shortlisted (feature_set, mining_setting, granularity, model) config,
+    mine a schema and fit a model once on window 0's train split (W_src is
+    always the first window -- no other source-window roles), freeze
+    schema/model/threshold, then walk forward one window at a time to the
+    end of the timeline, evaluating the frozen model on each window in turn
+    (h=0 is W_src's own held-out test split; h=1..n_windows-1 are fully
+    external windows). SHAP + LIME importances are tracked at every horizon
+    step so feature-attribution drift is visible alongside the metric decay.
+    See experiments/temporal_decay.py."""
+
+    scenario: str
+    shortlist_path: Path
+    # W_src's internal train/test split -- mining + fitting only ever see the
+    # train side; h=0 is scored on the held-out test side.
+    train_frac_within_window: float = 0.7
+    mining_settings_path: Path = field(
+        default_factory=lambda: Path(
+            "src/thesis/configs/screening_mining_settings.yaml"
+        )
+    )
+    # how the frozen decision threshold is chosen from W_src's own train-split
+    # data, once, before any horizon is evaluated -- never recalibrated per
+    # horizon
+    threshold_mode: Literal["fixed", "calibrated_recall"] = "fixed"
+    calibrated_recall_target: float = 0.90
+    # SHAP/LIME are expensive (LIME especially -- one perturbed-sample
+    # predict_proba batch per explained row) -- off switch for a metrics-only
+    # run.
+    compute_explanations: bool = True
+    # rows sampled (once, from W_src's train split) as the SHAP/LIME
+    # background/reference set, frozen and reused at every horizon so
+    # attribution drift reflects the target window changing, not the
+    # background.
+    explain_background_n: int = 100
+    # rows sampled from each horizon's window to explain
+    explain_sample_n: int = 50
+    # perturbed samples LIME draws per explained row (LimeTabularExplainer's
+    # own default is 5000; kept lower here since it's paid n_windows x
+    # explain_sample_n times per config)
+    lime_num_samples: int = 1000
+    top_n_importances: int = 30
+    cache_dir: Path = field(default_factory=lambda: CACHE_DIR)
+    grouping: GroupingConfig = field(default_factory=GroupingConfig)
+    alerts_json_path: Path | None = None
+    results_dir: Path | None = None
+    force_remine: bool = False
+    random_seed: int = 42
+    # Shortlisted configs are independent (each mines/fits/evaluates on its own
+    # windows), so they run concurrently on a thread pool -- threads, not
+    # processes, since the dominant per-config cost (BLAS ops inside the LogReg
+    # fit, vectorized pandas/numpy encoding) releases the GIL, and threads avoid
+    # having to re-pickle the multi-million-row alert_groups list per worker
+    # (macOS's default 'spawn' start method would otherwise pay that cost for
+    # every process). Kept modest by default to avoid oversubscribing cores
+    # against BLAS's own internal threading within each fit.
+    n_jobs: int = 4
+
+
+@dataclass
+class RollingWalkForwardConfig:
+    """Experiment 3 (Rolling / Walk-Forward Evaluation): for each shortlisted
+    (feature_set, mining_setting, granularity, model) config, walk i = 0 ..
+    n(g)-2 across the timeline. At each step, mine a schema and fit a model
+    from scratch on the *full* window Wi (no held-out split within Wi --
+    unlike screening_sweep/temporal_decay, the held-out evaluation set here
+    is the disjoint window Wi+1, so there's no reason to withhold part of Wi
+    itself), decide a threshold from Wi's own in-sample scores, evaluate on
+    W(i+1), then discard the schema/model and move on -- no accumulation, no
+    state carried between steps. This is the "always retrain" anchor
+    contrasted against Experiment 2's "never retrain" frozen-model decay
+    curve. See experiments/rolling_walk_forward.py."""
+
+    scenario: str
+    shortlist_path: Path
+    mining_settings_path: Path = field(
+        default_factory=lambda: Path(
+            "src/thesis/configs/screening_mining_settings.yaml"
+        )
+    )
+    # how the decision threshold is chosen from each step's own (in-sample)
+    # training scores -- same method at every step (locked in once, per the
+    # experiment spec), recomputed fresh each step since the model itself is
+    # refit each step; "fixed" makes the recomputation a no-op (always 0.5).
+    threshold_mode: Literal["fixed", "calibrated_recall"] = "fixed"
+    calibrated_recall_target: float = 0.90
+    cache_dir: Path = field(default_factory=lambda: CACHE_DIR)
+    grouping: GroupingConfig = field(default_factory=GroupingConfig)
+    alerts_json_path: Path | None = None
+    results_dir: Path | None = None
+    force_remine: bool = False
+    random_seed: int = 42
+    # Shortlisted configs are independent (each mines/fits/evaluates entirely
+    # on its own windows), so they run concurrently on a thread pool -- see
+    # TemporalDecayConfig.n_jobs for why threads, not processes.
+    n_jobs: int = 4
 
 
 @dataclass

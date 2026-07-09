@@ -8,6 +8,7 @@ import json
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.manifold import TSNE
 from sklearn.metrics.pairwise import cosine_distances
+from thesis.training.model_factory import unwrap_estimator
 
 
 # -------------------------
@@ -203,7 +204,7 @@ def plot_alert_reduction(y_true, proba, d, title_suffix="", out_dir="../plots"):
 def plot_feature_importance(model, X, d, title_suffix="", out_dir="../plots"):
     out_dir = _ensure_dir(out_dir)
 
-    coef = pd.Series(model.coef_[0], index=X.columns)
+    coef = pd.Series(unwrap_estimator(model).coef_[0], index=X.columns)
     coef.sort_values().plot(kind="barh", figsize=(8, 6))
     plt.title(f"Feature Importance. Lookback window {d} days")
 
@@ -290,7 +291,7 @@ def plot_symbolic_performance_delta(
 def plot_symbolic_coefficients(
     model, feature_names, symbolic_features, out_dir="../plots", prefix=""
 ):
-    coef = pd.Series(model.coef_[0], index=feature_names)
+    coef = pd.Series(unwrap_estimator(model).coef_[0], index=feature_names)
     coef_sym = coef[symbolic_features].sort_values()
 
     print("coef_sym: ", coef_sym)

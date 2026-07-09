@@ -52,7 +52,7 @@ from thesis.pipeline.pipeline import (
     ingest_ait_alert_batch,
     load_or_build_alert_groups,
 )
-from thesis.experiments.symbolic import _mine_and_register_symbolic_schema
+from thesis.mining.cooccurrence_schema import mine_and_register_cooccurrence_schema
 from thesis.features.schema_registry import FeatureSchemaRegistry
 from thesis.paths import ensure_artifact_dirs
 from thesis.schemas.experiments import AnomalyExperimentConfig, ExperimentResult
@@ -313,7 +313,7 @@ def run_anomaly_experiment(config: AnomalyExperimentConfig) -> ExperimentResult:
                 )
 
             symbolic_schema_path, mining_run_dir, mining_stats = (
-                _mine_and_register_symbolic_schema(
+                mine_and_register_cooccurrence_schema(
                     scenario=config.scenario,
                     alert_groups_path=mine_path,
                     run_name=f"anomaly_symbolic_{config.scenario}",
