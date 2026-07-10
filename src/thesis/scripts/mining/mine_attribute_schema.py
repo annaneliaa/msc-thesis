@@ -258,8 +258,17 @@ def main() -> None:
     parser.add_argument("--max-p-value", type=float, default=None)
     parser.add_argument("--max-depth", type=int, default=4)
     parser.add_argument("--min-samples-leaf", type=int, default=20)
-    parser.add_argument("--class-weight", type=str, default="balanced")
+    parser.add_argument(
+        "--class-weight",
+        type=str,
+        default="balanced",
+        help='"balanced", or "none"/"None" to disable class weighting '
+        '(mapped to Python None -- passing the literal string "None" '
+        "through to sklearn's DecisionTreeClassifier would raise a ValueError).",
+    )
     args = parser.parse_args()
+    if args.class_weight.lower() == "none":
+        args.class_weight = None
 
     if args.all_scenarios:
         args.scenarios = list(ALL_SCENARIOS)
