@@ -316,6 +316,8 @@ _TREE_DETAIL_COLUMNS = [
     "support_count",
     "confidence_attack",
     "confidence_benign",
+    "n_attack",
+    "n_benign",
     "depth",
     "leaf_id",
     "n_attack_eval",

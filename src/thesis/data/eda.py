@@ -21,6 +21,14 @@ import pandas as pd
 
 from thesis.data.alert_groups import build_labeled_window_alert_groups
 
+from thesis.visualization.eda import (
+    plot_alert_group_size_distribution,
+    plot_pair_support_scatter,
+    plot_signature_event_raster,
+    plot_occurrence_burst_raster,
+)
+
+
 # Gap threshold used by AlertBERT time-delta chaining (seconds); also the
 # default stream/burst-splitting threshold for the per-host analysis.
 ALERTBERT_DELTA = 2.0
@@ -168,11 +176,6 @@ def run_scenario_eda(
     the rasters only for datasets with per-alert grouping, i.e.
     skip_grouping=False). Writes a text summary to
     summary_path/<scenario>_eda_summary.txt and plots to out_path."""
-    from thesis.visualization.eda import (
-        plot_alert_group_size_distribution,
-        plot_pair_support_scatter,
-        plot_signature_event_raster,
-    )
 
     print(f"  Running EDA for scenario '{scenario}' (n={len(df):,} rows)...")
     out_path.mkdir(parents=True, exist_ok=True)
@@ -461,6 +464,11 @@ def build_overview_plots(
                 "signature event raster",
                 "signature_event_raster",
                 lambda: plot_signature_event_raster(all_df, time_unit="days"),
+            ),
+            (
+                "signature_burst_raster",
+                "signature_burst_raster",
+                lambda: plot_occurrence_burst_raster(all_df, time_unit="days"),
             ),
             (
                 "signature purity pie",

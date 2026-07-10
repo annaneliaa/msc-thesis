@@ -142,7 +142,7 @@ def compute_predicate_contrast_stats(
     compute attack_support, benign_support, growth_rate, lift, and the
     chi-square p-value on the 2x2 contingency table.
 
-    Two structurally-uninformative candidate classes are pruned before any
+    Three structurally-uninformative candidate classes are pruned before any
     stats are computed, since neither can ever survive the downstream
     contrast-set filter regardless of the data:
       - Columns that are constant (all-fire or never-fire) within this
@@ -157,6 +157,15 @@ def compute_predicate_contrast_stats(
         value)): two columns sharing the same attribute but a different
         value are mutually exclusive by construction. Pass None to skip this
         check (falls back to enumerating every pair, as before).
+      - Pairwise ANDs of two individually-non-constant columns that just
+        never co-occur in this population (fires.sum() == 0) -- unlike the
+        single-column case, this can't be detected from column_predicate_map
+        alone, so it's checked per-combo right after computing `fires`,
+        before predicate_support_stats()/chi-square are ever called on it.
+        On the CSCAS cscas_pregrouped population this is ~59% of all
+        single+pairwise candidates, so skipping the stats arithmetic for
+        them (rather than computing and then discarding) is a real cost
+        saving, not just a smaller output table.
     """
     base_rate = float(y.mean()) if len(y) else 0.0
     y_arr = y.to_numpy()
@@ -183,6 +192,7 @@ def compute_predicate_contrast_stats(
     ]
 
     rows = []
+    n_dead = 0
     for combo in candidates:
         if len(combo) == 1:
             fires = X[combo[0]].to_numpy().astype(bool)
@@ -190,6 +200,15 @@ def compute_predicate_contrast_stats(
             fires = X[combo[0]].to_numpy().astype(bool) & X[combo[1]].to_numpy().astype(
                 bool
             )
+
+        if not fires.any():
+            # Never fires on either class -- attack_support and
+            # benign_support are both 0, so growth_rate is degenerate (0)
+            # and it can never clear either survivor direction in
+            # filter_contrast_survivors. Drop it here rather than computing
+            # (and later discarding) support stats and a chi-square test for it.
+            n_dead += 1
+            continue
 
         stats = predicate_support_stats(
             fires, attack_mask, benign_mask, n_attack, n_benign
@@ -217,13 +236,26 @@ def compute_predicate_contrast_stats(
             }
         )
 
+    if n_dead:
+        print(
+            f"  compute_predicate_contrast_stats: {n_dead}/{len(candidates)} "
+            "candidates never fire on either class (dropped before stats)"
+        )
+
     # Explicit columns so a window with zero surviving candidates (e.g. every
     # categorical column happens to be constant in a small enough slice)
     # still returns a DataFrame with an "itemset" column -- pd.DataFrame([])
     # on an empty row list otherwise has no columns at all, which crashes
     # every downstream consumer that indexes by column name (e.g.
     # surviving_single_columns).
-    return pd.DataFrame(rows, columns=_CONTRAST_STATS_COLUMNS)
+    result = pd.DataFrame(rows, columns=_CONTRAST_STATS_COLUMNS)
+    # .attrs (not a real column) so EDA/diagnostics -- e.g. a funnel plot of
+    # candidates -> non-dead -> survivors -- can report the pre-drop total
+    # without re-deriving the enumeration logic above; ordinary consumers
+    # that only care about the stats columns are unaffected.
+    result.attrs["n_candidates_total"] = len(candidates)
+    result.attrs["n_dead_dropped"] = n_dead
+    return result
 
 
 def filter_contrast_survivors(

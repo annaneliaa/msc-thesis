@@ -1116,6 +1116,167 @@ def plot_signature_event_raster(
     return fig, ax
 
 
+def plot_occurrence_burst_raster(
+    df: pd.DataFrame,
+    group_col: str = "signature",
+    time_unit: str = "days",
+    min_occurrences: int = 5,
+    top_n: int | None = None,
+    size_by_count: bool = True,
+    marker_size: float = 6.0,
+    alpha: float = 0.5,
+    sort_by: str = "count",  # "count" or "first_seen"
+    figsize: tuple | None = None,
+    out_path: str | None = None,
+) -> tuple:
+    """
+    Two-panel event raster of `group_col`'s occurrences over time, split into
+    a majority-attack panel and a majority-benign panel (by which class each
+    value fires in more often). Each occurrence is drawn as a dot at its
+    elapsed time; dots are bucketed per day/hour and sized by how many hits
+    landed in that bucket, so bursts are visually distinguishable from
+    single hits rather than all rendering as the same-size dot.
+
+    Rows below `min_occurrences` (or outside the top `top_n` by total count)
+    are dropped before plotting -- with hundreds of values, the long tail of
+    1-2-hit signatures adds height without adding readable signal.
+
+    Assumes df represents a single continuous timeline (as with CSCAS);
+    elapsed time is measured from the global minimum timestamp in df.
+
+    Parameters
+    ----------
+    df              : DataFrame returned by load_alerts() (or with the same
+                      time/is_attack columns and a `group_col` column present)
+    group_col       : column to group occurrences by, e.g. "signature" (full
+                      alert text, CSCAS) or "short" (AIT-ADS's coarser
+                      descriptor code)
+    time_unit       : "hours" or "days" -- unit for the x-axis and for the
+                      daily/hourly bucketing used to size markers
+    min_occurrences : drop values with fewer than this many total hits
+    top_n           : if set, keep only the top-N values by total count
+                      (applied after min_occurrences)
+    size_by_count   : if True, scale marker area by log(bucket count) so
+                      bursts read as bigger dots; if False, all dots are
+                      `marker_size` (old behaviour)
+    marker_size     : base scatter marker size (points^2)
+    alpha           : marker transparency (lower helps reveal density in bursts)
+    sort_by         : "count" sorts each block by descending total hits;
+                      "first_seen" sorts by earliest elapsed occurrence,
+                      which lines up rows that start together and makes
+                      simultaneous bursts easier to read as a block
+    figsize         : optional override; default scales height with value count
+    out_path        : optional save path
+    """
+    divisor = 3600.0 if time_unit == "hours" else 86400.0
+    t0 = float(df["time"].min())
+    df = df.copy()
+    df["_elapsed"] = (df["time"].astype(float) - t0) / divisor
+
+    stats = (
+        df.groupby(group_col)["is_attack"]
+        .agg(["sum", "count"])
+        .rename(columns={"sum": "n_attack", "count": "n_total"})
+    )
+    stats["majority_attack"] = 2 * stats["n_attack"] >= stats["n_total"]
+    stats["first_seen"] = df.groupby(group_col)["_elapsed"].min()
+
+    n_before = len(stats)
+    stats = stats[stats["n_total"] >= min_occurrences]
+    if top_n is not None:
+        stats = stats.sort_values("n_total", ascending=False).head(top_n)
+    n_dropped = n_before - len(stats)
+    df = df[df[group_col].isin(stats.index)]
+
+    sort_col = "first_seen" if sort_by == "first_seen" else "n_total"
+    sort_asc = sort_by == "first_seen"
+
+    attack_block = stats[stats["majority_attack"]].sort_values(
+        sort_col, ascending=sort_asc
+    )
+    benign_block = stats[~stats["majority_attack"]].sort_values(
+        sort_col, ascending=sort_asc
+    )
+    n_attack_rows, n_benign_rows = len(attack_block), len(benign_block)
+    n_vals = n_attack_rows + n_benign_rows
+
+    if n_vals == 0:
+        raise ValueError(
+            f"No {group_col} values left after filtering (min_occurrences={min_occurrences}, "
+            f"top_n={top_n}) -- loosen the filter."
+        )
+
+    if figsize is None:
+        figsize = (16, max(6, 0.16 * n_vals))
+
+    height_ratios = [max(n_attack_rows, 1), max(n_benign_rows, 1)]
+    fig, axes = plt.subplots(
+        2,
+        1,
+        figsize=figsize,
+        sharex=True,
+        gridspec_kw={"height_ratios": height_ratios, "hspace": 0.05},
+    )
+
+    x_max = float(df["_elapsed"].max())
+
+    def _draw_panel(ax, block, title):
+        val_to_row = {val: i for i, val in enumerate(block.index)}
+        sub = df[df[group_col].isin(block.index)].copy()
+        sub["_row"] = sub[group_col].map(val_to_row)
+
+        if size_by_count:
+            bucket = np.floor(sub["_elapsed"]).astype(int)
+            counts = sub.groupby([group_col, bucket, "is_attack"])[
+                "_elapsed"
+            ].transform("size")
+            sizes = marker_size * (1 + np.log1p(counts))
+        else:
+            sizes = marker_size
+
+        colors = np.where(sub["is_attack"].values, _C_ATTACK, _C_BENIGN)
+        ax.scatter(
+            sub["_elapsed"],
+            sub["_row"],
+            s=sizes,
+            c=colors,
+            alpha=alpha,
+            linewidths=0,
+            rasterized=True,
+        )
+        ax.set_yticks(range(len(block)))
+        ax.set_yticklabels(block.index, fontsize=5)
+        ax.set_ylim(len(block) - 0.5, -0.5)
+        ax.set_title(title, fontsize=9, loc="left")
+        ax.grid(axis="x", alpha=0.2, linewidth=0.5)
+
+    _draw_panel(axes[0], attack_block, f"Majority-attack ({n_attack_rows})")
+    _draw_panel(axes[1], benign_block, f"Majority-benign ({n_benign_rows})")
+
+    axes[1].set_xlim(0, x_max)
+    axes[1].set_xlabel(f"Elapsed time ({time_unit})", fontsize=11)
+
+    subtitle = f"{n_vals} shown"
+    if n_dropped:
+        subtitle += f", {n_dropped} dropped below {min_occurrences} occurrences"
+    fig.suptitle(
+        f"{group_col.capitalize()} occurrence burst raster ({subtitle})",
+        fontsize=12,
+    )
+    fig.legend(
+        handles=[
+            mpatches.Patch(color=_C_BENIGN, alpha=0.9, label="Benign hit"),
+            mpatches.Patch(color=_C_ATTACK, alpha=0.9, label="Attack hit"),
+        ],
+        loc="upper right",
+        fontsize=9,
+        bbox_to_anchor=(0.99, 0.99),
+    )
+    plt.tight_layout(rect=(0, 0, 1, 0.97))
+    _save(fig, out_path)
+    return fig, axes
+
+
 def plot_signature_purity_pie(
     df: pd.DataFrame,
     figsize: tuple = (7, 7),
