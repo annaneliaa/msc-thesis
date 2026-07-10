@@ -3,6 +3,7 @@ from __future__ import annotations
 import itertools
 from typing import Any, Sequence
 
+import numpy as np
 import pandas as pd
 
 from thesis.mining.attribute_features import (
@@ -25,6 +26,8 @@ _CONTRAST_STATS_COLUMNS = [
     "lift",
     "p_value",
     "mining_type",
+    "n_attack",
+    "n_benign",
 ]
 
 
@@ -92,6 +95,41 @@ def _chi_square_p_value(
         return None
 
 
+def predicate_support_stats(
+    fires: np.ndarray,
+    attack_mask: np.ndarray,
+    benign_mask: np.ndarray,
+    n_attack: int,
+    n_benign: int,
+) -> dict[str, Any]:
+    """
+    Attack/benign support, growth_rate, and chi-square p-value for one
+    boolean "does this predicate fire" mask -- the same per-candidate
+    arithmetic compute_predicate_contrast_stats uses for its categorical
+    columns (lines below), factored out so
+    features.dynamic_schema_builder can compute the identical statistics for
+    numeric-threshold predicates (which this function never mines directly,
+    since it only ever sees one-hot categorical columns).
+    """
+    n_fires_attack = int((fires & attack_mask).sum())
+    n_fires_benign = int((fires & benign_mask).sum())
+
+    attack_support = n_fires_attack / n_attack if n_attack else 0.0
+    benign_support = n_fires_benign / n_benign if n_benign else 0.0
+    growth_rate = attack_support / (benign_support + _EPS)
+
+    p_value = _chi_square_p_value(n_fires_attack, n_attack, n_fires_benign, n_benign)
+
+    return {
+        "n_attack": n_fires_attack,
+        "n_benign": n_fires_benign,
+        "attack_support": attack_support,
+        "benign_support": benign_support,
+        "growth_rate": growth_rate,
+        "p_value": p_value,
+    }
+
+
 def compute_predicate_contrast_stats(
     X: pd.DataFrame,
     y: pd.Series,
@@ -153,19 +191,14 @@ def compute_predicate_contrast_stats(
                 bool
             )
 
-        n_fires_attack = int((fires & attack_mask).sum())
-        n_fires_benign = int((fires & benign_mask).sum())
-
-        attack_support = n_fires_attack / n_attack if n_attack else 0.0
-        benign_support = n_fires_benign / n_benign if n_benign else 0.0
-        growth_rate = attack_support / (benign_support + _EPS)
+        stats = predicate_support_stats(
+            fires, attack_mask, benign_mask, n_attack, n_benign
+        )
+        attack_support = stats["attack_support"]
+        benign_support = stats["benign_support"]
         lift = attack_support / (base_rate + _EPS) if base_rate else 0.0
 
-        p_value = _chi_square_p_value(
-            n_fires_attack, n_attack, n_fires_benign, n_benign
-        )
-
-        support_count = n_fires_attack + n_fires_benign
+        support_count = stats["n_attack"] + stats["n_benign"]
         support = support_count / n_total if n_total else 0.0
 
         rows.append(
@@ -175,10 +208,12 @@ def compute_predicate_contrast_stats(
                 "support_count": support_count,
                 "confidence_attack": attack_support,
                 "confidence_benign": benign_support,
-                "growth_rate": growth_rate,
+                "growth_rate": stats["growth_rate"],
                 "lift": lift,
-                "p_value": p_value,
+                "p_value": stats["p_value"],
                 "mining_type": "contrast_categorical",
+                "n_attack": stats["n_attack"],
+                "n_benign": stats["n_benign"],
             }
         )
 

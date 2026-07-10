@@ -62,11 +62,15 @@ def test_compute_predicate_contrast_stats_categorical_singles():
     assert exploit_row["confidence_attack"] == 0.8
     assert abs(exploit_row["confidence_benign"] - 0.1) < 1e-9
     assert exploit_row["growth_rate"] > 3.0
+    assert exploit_row["n_attack"] == 8
+    assert exploit_row["n_benign"] == 1
 
     snmp_row = stats_df[stats_df["itemset"] == ("category=SNMP",)].iloc[0]
     assert abs(snmp_row["confidence_attack"] - 0.1) < 1e-9
     assert snmp_row["confidence_benign"] == 0.8
     assert snmp_row["growth_rate"] < 0.333
+    assert snmp_row["n_attack"] == 1
+    assert snmp_row["n_benign"] == 8
 
     neutral_row = stats_df[stats_df["itemset"] == ("category=NEUTRAL",)].iloc[0]
     assert abs(neutral_row["growth_rate"] - 1.0) < 1e-6

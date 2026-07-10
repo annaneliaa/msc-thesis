@@ -10,6 +10,7 @@ from thesis.schemas.features import (
 from thesis.mining.attribute_features import compute_candidate_attribute_features
 from thesis.mining.repeat_encoding import encode_sequence_of_itemsets
 from thesis.mining.token_abstraction import abstract_mail_hosts
+from thesis.monitor.predicate_eval import evaluate_condition
 
 
 def _alert_group_items(tx: AlertGroup) -> set[str]:
@@ -35,20 +36,7 @@ def _attribute_predicate_tokens(
     feats = compute_candidate_attribute_features(tx)
     tokens: set[str] = set()
     for pred in predicates:
-        value = feats.get(pred.attribute)
-        if value is None:
-            continue
-        if pred.operator == "==":
-            fires = value == pred.value
-        elif pred.operator == "!=":
-            fires = value != pred.value
-        elif pred.operator == ">":
-            fires = value > pred.value
-        elif pred.operator == "<=":
-            fires = value <= pred.value
-        else:
-            fires = False
-        if fires:
+        if evaluate_condition(feats, pred.attribute, pred.operator, pred.value):
             tokens.add(pred.token)
     return tokens
 

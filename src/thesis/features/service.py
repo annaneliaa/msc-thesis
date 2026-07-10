@@ -1,3 +1,4 @@
+import threading
 from pathlib import Path
 import pandas as pd
 
@@ -7,6 +8,15 @@ from thesis.features.manifest import initialize_feature_manifest
 from thesis.features.util import next_schema_version, register_symbolic_schema_version
 from thesis.schemas.features import AttributePredicate, SymbolicFeatureSchema
 from thesis.schemas.mining import FeatureSelectionConfig
+
+# Guards version allocation (next_schema_version), the schema file write, and
+# the manifest read-modify-write below. Experiments (e.g. rolling_walk_forward.py)
+# mine schemas concurrently from a thread pool, and every step here is a
+# read-then-write against shared on-disk state with no other synchronization:
+# two threads can allocate the same "next" version and then write the same
+# path at the same time, corrupting it (interleaved json.dump calls) for
+# whichever thread reads it next.
+_REGISTER_LOCK = threading.Lock()
 
 
 def build_persist_and_register_symbolic_schema(
@@ -33,68 +43,69 @@ def build_persist_and_register_symbolic_schema(
     """
     manifest_path = root_dir / scenario_name / "manifest.json"
 
-    if not manifest_path.exists():
-        initialize_feature_manifest(
-            scenario_name=scenario_name,
-            root_dir=root_dir,
-            overwrite=False,
+    with _REGISTER_LOCK:
+        if not manifest_path.exists():
+            initialize_feature_manifest(
+                scenario_name=scenario_name,
+                root_dir=root_dir,
+                overwrite=False,
+            )
+
+        if schema_version is None:
+            schema_version = next_schema_version(
+                scenario_name=scenario_name,
+                schema_family=schema_name,
+                root_dir=root_dir,
+                bump=bump,
+            )
+
+        symbolic_schema = build_symbolic_feature_schema(
+            df=df,
+            source_label=source_label,
+            schema_name=schema_name,
+            schema_version=schema_version,
+            predicates=predicates,
         )
 
-    if schema_version is None:
-        schema_version = next_schema_version(
-            scenario_name=scenario_name,
-            schema_family=schema_name,
-            root_dir=root_dir,
-            bump=bump,
+        n_candidates = len(df)
+        n_after_dedup = len(symbolic_schema.features)
+        n_duplicates_dropped = n_candidates - n_after_dedup
+
+        if feature_selection is not None:
+            features = list(symbolic_schema.features)
+            if feature_selection.min_utility_score is not None:
+                features = [
+                    f
+                    for f in features
+                    if f.utility_score >= feature_selection.min_utility_score
+                ]
+            features.sort(key=lambda f: f.utility_score, reverse=True)
+            if feature_selection.top_k is not None:
+                features = features[: feature_selection.top_k]
+            symbolic_schema = SymbolicFeatureSchema(
+                schema_name=symbolic_schema.schema_name,
+                schema_version=symbolic_schema.schema_version,
+                features=features,
+                predicates=symbolic_schema.predicates,
+            )
+
+        schema_filename = f"{schema_name}/{schema_version}.json"
+        schema_path = root_dir / scenario_name / schema_filename
+
+        if schema_path.exists():
+            raise FileExistsError(
+                f"Symbolic schema already exists: {schema_path}. "
+                "Use a new version number or leave schema_version=None."
+            )
+
+        save_symbolic_feature_schema(symbolic_schema, schema_path)
+
+        register_symbolic_schema_version(
+            manifest_path=manifest_path,
+            schema_filename=schema_filename,
+            schema_name=schema_name,
+            schema_version=schema_version,
         )
-
-    symbolic_schema = build_symbolic_feature_schema(
-        df=df,
-        source_label=source_label,
-        schema_name=schema_name,
-        schema_version=schema_version,
-        predicates=predicates,
-    )
-
-    n_candidates = len(df)
-    n_after_dedup = len(symbolic_schema.features)
-    n_duplicates_dropped = n_candidates - n_after_dedup
-
-    if feature_selection is not None:
-        features = list(symbolic_schema.features)
-        if feature_selection.min_utility_score is not None:
-            features = [
-                f
-                for f in features
-                if f.utility_score >= feature_selection.min_utility_score
-            ]
-        features.sort(key=lambda f: f.utility_score, reverse=True)
-        if feature_selection.top_k is not None:
-            features = features[: feature_selection.top_k]
-        symbolic_schema = SymbolicFeatureSchema(
-            schema_name=symbolic_schema.schema_name,
-            schema_version=symbolic_schema.schema_version,
-            features=features,
-            predicates=symbolic_schema.predicates,
-        )
-
-    schema_filename = f"{schema_name}/{schema_version}.json"
-    schema_path = root_dir / scenario_name / schema_filename
-
-    if schema_path.exists():
-        raise FileExistsError(
-            f"Symbolic schema already exists: {schema_path}. "
-            "Use a new version number or leave schema_version=None."
-        )
-
-    save_symbolic_feature_schema(symbolic_schema, schema_path)
-
-    register_symbolic_schema_version(
-        manifest_path=manifest_path,
-        schema_filename=schema_filename,
-        schema_name=schema_name,
-        schema_version=schema_version,
-    )
 
     schema_build_stats = {
         "n_duplicates_dropped": n_duplicates_dropped,

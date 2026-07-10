@@ -136,3 +136,8 @@ def test_extract_leaf_rules_supports_sum_to_one_and_are_mutually_exclusive():
 
     assert leaf_df["support_count"].sum() == len(groups)
     assert leaf_df["leaf_id"].is_unique
+    assert (
+        (leaf_df["n_attack"] + leaf_df["n_benign"]) == leaf_df["support_count"]
+    ).all()
+    assert leaf_df["n_attack"].sum() == 30
+    assert leaf_df["n_benign"].sum() == 30

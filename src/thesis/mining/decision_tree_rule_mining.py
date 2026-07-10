@@ -192,6 +192,8 @@ def extract_leaf_rules(
                 "mining_type": "decision_tree_rule",
                 "leaf_id": int(leaf_id),
                 "depth": len(path),
+                "n_attack": n_attack_leaf,
+                "n_benign": n_benign_leaf,
             }
         )
 

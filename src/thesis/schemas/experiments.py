@@ -231,6 +231,45 @@ class RollingWalkForwardConfig:
 
 
 @dataclass
+class MonitorDriftConfig:
+    """Experiment 4 (Drift-Monitor Evaluation, observe-only): for each
+    shortlisted (feature_set, mining_setting, granularity, model) config,
+    mine a schema and fit a model once on window 0's train split (same
+    freeze-and-decay design as TemporalDecayConfig), plus -- for symbolic
+    configs -- build a deployment-scoped DynamicSchema (Vk) from that same
+    mining pass. Walk the frozen schema/model/threshold forward one window
+    at a time, and at every horizon also run the drift monitor
+    (thesis.monitor.monitor.run_monitor_window) against the frozen Vk over
+    that horizon's raw incoming alert groups, logging every signal and every
+    alarm it raises. The monitor is observe-only here: nothing is ever
+    actually re-mined or retrained, no matter what action it reports. See
+    experiments/monitor_drift.py."""
+
+    scenario: str
+    shortlist_path: Path
+    train_frac_within_window: float = 0.7
+    mining_settings_path: Path = field(
+        default_factory=lambda: Path(
+            "src/thesis/configs/screening_mining_settings.yaml"
+        )
+    )
+    threshold_mode: Literal["fixed", "calibrated_recall"] = "fixed"
+    calibrated_recall_target: float = 0.90
+    cache_dir: Path = field(default_factory=lambda: CACHE_DIR)
+    grouping: GroupingConfig = field(default_factory=GroupingConfig)
+    alerts_json_path: Path | None = None
+    results_dir: Path | None = None
+    random_seed: int = 42
+    # Shortlisted configs are independent, so they run concurrently on a
+    # thread pool -- see TemporalDecayConfig.n_jobs for why threads, not
+    # processes.
+    n_jobs: int = 4
+    # Passed straight through to run_monitor_window at every horizon.
+    monitor_consecutive_windows: int = 3
+    monitor_min_samples_signal_2: int = 30
+
+
+@dataclass
 class ExperimentResult:
     scenario: str
     model_name: str
