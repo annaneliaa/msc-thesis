@@ -23,6 +23,7 @@ _CONTRAST_STATS_COLUMNS = [
     "confidence_attack",
     "confidence_benign",
     "growth_rate",
+    "precision_attack",
     "lift",
     "p_value",
     "mining_type",
@@ -71,7 +72,12 @@ def build_categorical_predicate_matrix(
 
         labels.append(1 if tx.group_label == "attack" else 0)
 
-    X_cat = pd.DataFrame(cat_rows).fillna(0).astype(int)
+    # int8, not the .astype(int) default of int64 -- every value here is a
+    # 0/1 indicator, and every consumer (compute_predicate_contrast_stats's
+    # .astype(bool), sklearn's tree builder in decision_tree_rule_mining)
+    # already casts on use, so this is a straight ~8x memory cut with no
+    # behavior change. Matters at CSCAS's ~1.4M-row scale (int64 was ~970MB).
+    X_cat = pd.DataFrame(cat_rows).fillna(0).astype(np.int8)
     X_num = pd.DataFrame(num_rows)
     y = pd.Series(labels, name="Label")
     return X_cat, X_num, y, column_predicate_map
@@ -103,13 +109,20 @@ def predicate_support_stats(
     n_benign: int,
 ) -> dict[str, Any]:
     """
-    Attack/benign support, growth_rate, and chi-square p-value for one
-    boolean "does this predicate fire" mask -- the same per-candidate
-    arithmetic compute_predicate_contrast_stats uses for its categorical
-    columns (lines below), factored out so
+    Attack/benign support, growth_rate, precision_attack, and chi-square
+    p-value for one boolean "does this predicate fire" mask -- the same
+    per-candidate arithmetic compute_predicate_contrast_stats uses for its
+    categorical columns (lines below), factored out so
     features.dynamic_schema_builder can compute the identical statistics for
     numeric-threshold predicates (which this function never mines directly,
     since it only ever sees one-hot categorical columns).
+
+    attack_support/benign_support (aliased confidence_attack/
+    confidence_benign downstream) are per-class recall: P(fires | class).
+    precision_attack is the classical association-rule confidence instead:
+    P(class=attack | fires) -- how trustworthy a firing is, not how much of
+    a class it covers. It's diagnostic only; filter_contrast_survivors and
+    the dynamic schema still gate on growth_rate/coverage, not on this.
     """
     n_fires_attack = int((fires & attack_mask).sum())
     n_fires_benign = int((fires & benign_mask).sum())
@@ -117,6 +130,9 @@ def predicate_support_stats(
     attack_support = n_fires_attack / n_attack if n_attack else 0.0
     benign_support = n_fires_benign / n_benign if n_benign else 0.0
     growth_rate = attack_support / (benign_support + _EPS)
+
+    n_fires_total = n_fires_attack + n_fires_benign
+    precision_attack = n_fires_attack / n_fires_total if n_fires_total else 0.0
 
     p_value = _chi_square_p_value(n_fires_attack, n_attack, n_fires_benign, n_benign)
 
@@ -126,6 +142,7 @@ def predicate_support_stats(
         "attack_support": attack_support,
         "benign_support": benign_support,
         "growth_rate": growth_rate,
+        "precision_attack": precision_attack,
         "p_value": p_value,
     }
 
@@ -228,6 +245,7 @@ def compute_predicate_contrast_stats(
                 "confidence_attack": attack_support,
                 "confidence_benign": benign_support,
                 "growth_rate": stats["growth_rate"],
+                "precision_attack": stats["precision_attack"],
                 "lift": lift,
                 "p_value": stats["p_value"],
                 "mining_type": "contrast_categorical",
@@ -285,13 +303,21 @@ def filter_contrast_survivors(
         attack_leaning = growth_rate >= min_growth_rate
         benign_leaning = row["confidence_benign"] > 0 and growth_rate <= inv_threshold
 
-        if not (attack_leaning or benign_leaning):
+        if not (
+            attack_leaning or benign_leaning
+        ):  # Drop dead candidates that don't discriminate either way
             return False
-        if attack_leaning and row["confidence_attack"] < min_attack_coverage:
+        if (
+            attack_leaning and row["confidence_attack"] < min_attack_coverage
+        ):  # Drop candidates that lean toward attack but don't cover enough attack instances
             return False
-        if benign_leaning and row["confidence_benign"] < min_benign_coverage:
+        if (
+            benign_leaning and row["confidence_benign"] < min_benign_coverage
+        ):  # Drop candidates that lean toward benign but don't cover enough benign instances
             return False
-        if max_p_value is not None:
+        if (
+            max_p_value is not None
+        ):  # Drop candidates that don't meet the chi-square significance threshold
             p_value = row["p_value"]
             if p_value is None or p_value >= max_p_value:
                 return False
