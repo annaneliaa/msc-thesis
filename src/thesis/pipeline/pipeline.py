@@ -24,6 +24,10 @@ from thesis.grouping.group_alerts import (
     CSCAS_PREGROUPED_METHOD,
 )
 
+from thesis.encoders.service import encode_alert_groups_for_schema
+from thesis.features.schema_registry import FeatureSchemaRegistry
+from thesis.features.util import select_symbolic_features
+
 
 def process_alert_batch(
     rows: list[dict],
@@ -626,10 +630,6 @@ def encode_and_cache_alert_groups(
     it, and cache the result as parquet under cache_dir. Returns the cached
     parquet if it already exists and no feature_selection override is given.
     """
-    from thesis.encoders.service import encode_alert_groups_for_schema
-    from thesis.features.schema_registry import FeatureSchemaRegistry
-    from thesis.features.util import select_symbolic_features
-
     safe_name = schema_name.replace("+", "_").replace("/", "_")
     tx_dir = cache_dir / "alert_groups"
     out_path = tx_dir / f"alert_groups_{safe_name}.parquet"

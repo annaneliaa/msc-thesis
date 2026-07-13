@@ -27,7 +27,7 @@ conda activate thesis
 SCENARIOS=(cscas)
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 MINING_SETTINGS="$REPO_ROOT/src/thesis/configs/screening_mining_settings.yaml"
-GRANULARITIES=(0.1 0.2 0.33 0.5 1.0)
+GRANULARITIES=(0.1 0.2 0.25 0.5 1)
 # Set to a number (e.g. 3) to evaluate only N evenly-spaced windows per
 # granularity instead of all of them; leave empty for the full sweep.
 WINDOWS_PER_GRAN=""

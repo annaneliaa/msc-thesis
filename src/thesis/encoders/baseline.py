@@ -39,6 +39,13 @@ def compute_cscas_baseline_features(tx: AlertGroup) -> dict[str, Any]:
     Baseline features for CSCAS: the paper's own per-row columns, taken as-is
     off the CSV -- no bucketing, no derived multi_* flags. Those derived
     features live in mining/attribute_features.py as mining candidates instead.
+
+    Deliberately excludes the raw SignatureID column that the paper's own
+    FEATURE_COLS includes (see baselines/cscas.py) -- SignatureID is a nominal
+    identifier, not a real signal, and feeding its raw integer value to
+    RF/logreg risks encoding an arbitrary ID ordering rather than anything
+    meaningful. SignatureID is not even carried through the ingestion pipeline
+    past IncomingSuricataGroup as a result (see schemas/preprocessing.py).
     """
     features: dict[str, Any] = {
         "proto": tx.proto if tx.proto is not None else -1,

@@ -1,12 +1,14 @@
 """
-Reproduces the CSCAS paper's own two baselines (Table IV): Baseline 1
-(random undersampling) and Baseline 2 (guided by CSCAS's SCAS outlier
-clusters), using the paper's own 42 raw feature columns and a
-RandomForestClassifier, averaged over 5 seeds.
+Same experimental setup as baselines/cscas.py (split, training-pool
+sampling, classifier, seeds) -- the only thing that changes is
+FEATURE_COLS, swapped from the paper's own 42 raw columns to this
+project's "base" schema (see encoders/baseline.py:
+compute_cscas_baseline_features), which is the paper's feature set minus
+the raw SignatureID column (kept out deliberately -- see docstring there).
 
 Run:
     cd src/thesis/baselines
-    python cscas.py
+    python cscas_base.py
 
 The data path below is relative to the current working directory (not this
 file's location), so it must be run from src/thesis/baselines/.
@@ -39,13 +41,16 @@ assert train["Label"].sum() == 1_765, f"got {train['Label'].sum()}"
 assert test["Label"].sum() == 19_187, f"got {test['Label'].sum()}"
 
 # 4) Define feature columns
-DROP_COLS = ["Timestamp", "SignatureText", "Label", "ExtIP", "IntIP"]
+# Dropped vs. the paper's own DROP_COLS (Timestamp, SignatureText, Label,
+# ExtIP, IntIP): also drop SignatureID, since this project's base schema
+# excludes it as a raw nominal identifier.
+DROP_COLS = ["Timestamp", "SignatureText", "Label", "ExtIP", "IntIP", "SignatureID"]
 FEATURE_COLS = [c for c in df.columns if c not in DROP_COLS]
 
-# Sanity check: should be 42 columns
-# SignatureID, SignatureMatchesPerDay, AlertCount, Proto,
-# ExtPort, IntPort, Similarity, SCAS,
-# + 34 AttrSimilarity columns
+# Sanity check: should be 41 columns (paper's 42 minus SignatureID) --
+# SignatureMatchesPerDay, AlertCount, Proto, ExtPort, IntPort, Similarity,
+# SCAS, SignatureIDSimilarity + 33 AttrSimilarity columns
+assert len(FEATURE_COLS) == 41, f"got {len(FEATURE_COLS)}"
 print(f"Feature count: {len(FEATURE_COLS)}")
 print(FEATURE_COLS)
 
@@ -69,8 +74,10 @@ X_test = test[FEATURE_COLS].values
 y_test = test["Label"].values
 
 # 7) Baseline 1 = random undersampling
-print("=== Baseline 1: Random undersampling ===")
-print("    Paper target: P=0.669, R=0.963, F1=0.789")
+print("=== Baseline 1: Random undersampling (my 41-feature base schema) ===")
+print(
+    "    Paper reference (their 42 features incl. SignatureID): P=0.669, R=0.963, F1=0.789"
+)
 
 results_b1 = []
 irrelevant = train[train["Label"] == 0]
@@ -99,8 +106,10 @@ print(
 
 
 # 8) Run baseline 2 = guided by CSCAS
-print("\n=== Baseline 2: Guided by CSCAS ===")
-print("    Paper target: P=0.868, R=0.952, F1=0.908")
+print("\n=== Baseline 2: Guided by CSCAS (my 41-feature base schema) ===")
+print(
+    "    Paper reference (their 42 features incl. SignatureID): P=0.868, R=0.952, F1=0.908"
+)
 
 results_b2 = []
 
@@ -128,6 +137,14 @@ print(
 )
 
 
-# Scenario                          Expected P      Expected R  Expected F1
-# Baseline 1 (random undersampling) 0.669           0.963       0.789
-# Baseline 2 (Guided by CSCAS)      0.868           0.952       0.908
+print("\n=== Summary: paper (42 features) vs mine (41 features, no SignatureID) ===")
+print(
+    f"{'Baseline 1 (random undersampling)':<40}"
+    f"paper P=0.669 R=0.963 F1=0.789  |  "
+    f"mine P={avg_b1.precision:.3f} R={avg_b1.recall:.3f} F1={avg_b1.f1:.3f}"
+)
+print(
+    f"{'Baseline 2 (guided by CSCAS)':<40}"
+    f"paper P=0.868 R=0.952 F1=0.908  |  "
+    f"mine P={avg_b2.precision:.3f} R={avg_b2.recall:.3f} F1={avg_b2.f1:.3f}"
+)
