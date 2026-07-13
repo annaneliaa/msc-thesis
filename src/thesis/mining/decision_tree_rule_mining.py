@@ -1,11 +1,15 @@
 from __future__ import annotations
 
-from typing import Any, Sequence
+from typing import Any, Sequence, TYPE_CHECKING
 
+import numpy as np
 import pandas as pd
 from sklearn.tree import DecisionTreeClassifier
 
 from thesis.schemas.features import AttributePredicate
+
+if TYPE_CHECKING:
+    from thesis.schemas.mining import DecisionTreeRuleConfig
 
 
 def build_training_matrix(
@@ -198,3 +202,89 @@ def extract_leaf_rules(
         )
 
     return pd.DataFrame(rows), list(predicate_alphabet.values())
+
+
+def _fit_and_tag_leaves(
+    X: pd.DataFrame,
+    y: pd.Series,
+    column_predicate_map: dict[str, tuple[str, Any]],
+    max_depth: int,
+    tree_config: "DecisionTreeRuleConfig",
+) -> tuple[pd.DataFrame, list[AttributePredicate]]:
+    tree = fit_rule_tree(
+        X,
+        y,
+        max_depth=max_depth,
+        min_samples_leaf=tree_config.min_samples_leaf,
+        class_weight=tree_config.class_weight,
+        random_state=tree_config.random_state,
+        min_impurity_decrease=tree_config.min_impurity_decrease,
+    )
+    leaves_df, predicates = extract_leaf_rules(tree, X, y, column_predicate_map)
+    if not leaves_df.empty:
+        leaves_df["source_label"] = np.where(
+            leaves_df["confidence_attack"] > leaves_df["confidence_benign"],
+            "attack",
+            "benign",
+        )
+    return leaves_df, predicates
+
+
+def fit_and_extract_rules(
+    X: pd.DataFrame,
+    y: pd.Series,
+    column_predicate_map: dict[str, tuple[str, Any]],
+    tree_config: "DecisionTreeRuleConfig",
+) -> tuple[pd.DataFrame, list[AttributePredicate]]:
+    """
+    Fit Step 2's decision tree(s) and return leaf rules, already tagged with
+    source_label -- the caller doesn't need to re-derive it the way it still
+    must for Step 1's survivors_df.
+
+    Single-tree mode (tree_config.max_depth_attack is None): one tree fit at
+    max_depth, every leaf kept regardless of class. Identical to calling
+    fit_rule_tree + extract_leaf_rules directly, the behavior every existing
+    caller (attribute_mining_job.py, monitor_drift.py,
+    dynamic_schema_service.py) already relies on -- those callers are
+    unaffected by this function existing since they never set
+    max_depth_attack.
+
+    Two-tree mode (tree_config.max_depth_attack is not None): two trees are
+    fit on the same (X, y) -- one at max_depth (kept for its benign-leaning
+    leaves), one at max_depth_attack (kept for its attack-leaning leaves) --
+    so the two classes' leaf quality can be tuned independently instead of
+    one shared depth trying to serve both at once. See
+    attribute_mining_sweep_eda.ipynb section 5.3 for why a shared max_depth
+    can't do this: mean_tree_precision_attack and mean_tree_recall_benign
+    move in opposite directions as depth increases, so no single depth
+    clears both a precision floor and a recall floor simultaneously. The
+    returned predicate alphabet is the union of both trees' alphabets
+    (deduplicated by token, same rule extract_leaf_rules itself uses),
+    restricted to the predicates that survived onto a *kept* leaf's path --
+    a predicate only used by a discarded leaf (e.g. an attack-leaning split
+    in the benign tree) isn't included.
+    """
+    if tree_config.max_depth_attack is None:
+        return _fit_and_tag_leaves(
+            X, y, column_predicate_map, tree_config.max_depth, tree_config
+        )
+
+    benign_leaves, benign_predicates = _fit_and_tag_leaves(
+        X, y, column_predicate_map, tree_config.max_depth, tree_config
+    )
+    benign_leaves = benign_leaves[benign_leaves["source_label"] == "benign"]
+
+    attack_leaves, attack_predicates = _fit_and_tag_leaves(
+        X, y, column_predicate_map, tree_config.max_depth_attack, tree_config
+    )
+    attack_leaves = attack_leaves[attack_leaves["source_label"] == "attack"]
+
+    leaves_df = pd.concat([benign_leaves, attack_leaves], ignore_index=True)
+
+    kept_tokens = {tok for itemset in leaves_df["itemset"] for tok in itemset}
+    predicate_alphabet: dict[str, AttributePredicate] = {}
+    for pred in benign_predicates + attack_predicates:
+        if pred.token in kept_tokens:
+            predicate_alphabet.setdefault(pred.token, pred)
+
+    return leaves_df, list(predicate_alphabet.values())

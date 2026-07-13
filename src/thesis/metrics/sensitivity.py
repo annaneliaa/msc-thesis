@@ -39,6 +39,7 @@ to the `"gr{X}_md{Y}"` string shape.
 
 from __future__ import annotations
 
+import operator
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -144,6 +145,57 @@ def restrict_to_fixed_levels(
         col = df[param]
         mask &= col.isna() | (col == level)
     return df[mask]
+
+
+_COMPARISONS: dict[str, Any] = {
+    ">=": operator.ge,
+    "<=": operator.le,
+    ">": operator.gt,
+    "<": operator.lt,
+    "==": operator.eq,
+}
+
+
+def feasible_region(
+    df: pd.DataFrame,
+    constraints: dict[str, tuple[str, float]],
+) -> pd.DataFrame:
+    """Flag which rows satisfy several quality/budget constraints at once.
+
+    The multi-constraint counterpart to `restrict_to_fixed_levels`: that one
+    keeps rows matching an exact `param -> level` pin, this one keeps track of
+    which rows clear a `metric -> (op, threshold)` bar, on possibly several
+    metrics simultaneously -- e.g. "does this config's schema stay small
+    enough *and* precise enough *and* stable enough" rather than one metric
+    read in isolation. `constraints` is `{column: (op, threshold)}`, `op` one
+    of `">="`, `"<="`, `">"`, `"<"`, `"=="`, e.g.
+    `{"mean_tree_precision_attack": (">=", 0.7), "n_features": ("<=", 150)}`.
+
+    Adds one `passes_<column>` bool per constraint (same naming spirit as
+    `config_selection.apply_floor_check`'s `passes_floor`, generalized to
+    several columns at once), plus `n_constraints_satisfied` (int) and
+    `feasible` (bool, every constraint met). Rows are never dropped -- a
+    near-miss config's *specific* blocking constraint is often as useful to
+    see as the final pass/fail verdict, so filtering to `df[df["feasible"]]`
+    is left to the caller.
+
+    NaN in a constrained column reads as failing that constraint (every
+    comparison against NaN is `False`), which silently looks the same as
+    "genuinely below the threshold" -- a caller working with a metric that
+    can legitimately be NaN (e.g. a mining stat that's undefined when a
+    config produced zero leaves of some class) should check for that
+    separately rather than trust `feasible == False` to mean "measured and
+    failed".
+    """
+    out = df.copy()
+    passes_cols = []
+    for column, (op, threshold) in constraints.items():
+        passes_col = f"passes_{column}"
+        out[passes_col] = _COMPARISONS[op](out[column], threshold)
+        passes_cols.append(passes_col)
+    out["n_constraints_satisfied"] = out[passes_cols].sum(axis=1)
+    out["feasible"] = out[passes_cols].all(axis=1)
+    return out
 
 
 def parameter_importance(

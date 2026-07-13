@@ -7,10 +7,12 @@ from thesis.mining.attribute_contrast_mining import (
 from thesis.mining.decision_tree_rule_mining import (
     build_training_matrix,
     extract_leaf_rules,
+    fit_and_extract_rules,
     fit_rule_tree,
 )
 from thesis.schemas.features import AttributePredicate
 from thesis.schemas.groups import AlertGroup
+from thesis.schemas.mining import DecisionTreeRuleConfig
 
 
 def _make_alert_group(group_id: str, label: str, **overrides) -> AlertGroup:
@@ -141,3 +143,81 @@ def test_extract_leaf_rules_supports_sum_to_one_and_are_mutually_exclusive():
     ).all()
     assert leaf_df["n_attack"].sum() == 30
     assert leaf_df["n_benign"].sum() == 30
+
+
+def test_fit_and_extract_rules_single_tree_mode_matches_direct_call():
+    groups = _build_numeric_threshold_groups()
+    X_cat, X_num, y, column_predicate_map = build_categorical_predicate_matrix(groups)
+    X, column_predicate_map = build_training_matrix(
+        X_cat, X_num, column_predicate_map, surviving_categorical_columns=[]
+    )
+
+    tree_config = DecisionTreeRuleConfig(max_depth=2, min_samples_leaf=1)
+    leaf_df, predicates = fit_and_extract_rules(X, y, column_predicate_map, tree_config)
+
+    tree = fit_rule_tree(X, y, max_depth=2, min_samples_leaf=1)
+    expected_leaf_df, expected_predicates = extract_leaf_rules(
+        tree, X, y, column_predicate_map
+    )
+
+    assert len(leaf_df) == len(expected_leaf_df)
+    assert leaf_df["support_count"].sum() == expected_leaf_df["support_count"].sum()
+    assert {p.token for p in predicates} == {p.token for p in expected_predicates}
+    # fit_and_extract_rules additionally tags source_label, unlike a bare
+    # extract_leaf_rules call.
+    assert set(leaf_df["source_label"]) <= {"attack", "benign"}
+
+
+def test_fit_and_extract_rules_two_tree_mode_keeps_only_each_trees_own_class():
+    groups = _build_numeric_threshold_groups()
+    X_cat, X_num, y, column_predicate_map = build_categorical_predicate_matrix(groups)
+    X, column_predicate_map = build_training_matrix(
+        X_cat, X_num, column_predicate_map, surviving_categorical_columns=[]
+    )
+
+    # max_depth (benign-facing) shallow, max_depth_attack deeper -- deliberately
+    # different so the two trees are not identical fits.
+    tree_config = DecisionTreeRuleConfig(
+        max_depth=1, max_depth_attack=3, min_samples_leaf=1
+    )
+    leaf_df, predicates = fit_and_extract_rules(X, y, column_predicate_map, tree_config)
+
+    assert not leaf_df.empty
+    # Every kept leaf is either a benign leaf from the max_depth=1 tree or an
+    # attack leaf from the max_depth_attack=3 tree -- never the discarded
+    # opposite-class leaves of either fit.
+    assert set(leaf_df["source_label"]) <= {"attack", "benign"}
+    assert (leaf_df.loc[leaf_df["source_label"] == "benign", "n_attack"] == 0).all()
+    assert (leaf_df.loc[leaf_df["source_label"] == "attack", "n_benign"] == 0).all()
+
+    # The two trees are fit independently -- the attack tree (depth 3) should
+    # be able to find at least as many attack-leaning leaves as the shallow
+    # depth-1 tree could, since depth 1 only has two leaves total.
+    depth1_tree = fit_rule_tree(X, y, max_depth=1, min_samples_leaf=1)
+    depth1_leaf_df, _ = extract_leaf_rules(depth1_tree, X, y, column_predicate_map)
+    depth1_attack_leaves = (
+        depth1_leaf_df["confidence_attack"] > depth1_leaf_df["confidence_benign"]
+    ).sum()
+    n_attack_leaves = (leaf_df["source_label"] == "attack").sum()
+    assert n_attack_leaves >= depth1_attack_leaves
+
+    # Every predicate returned actually appears in a kept leaf's itemset --
+    # tokens that only ever showed up on a discarded leaf's path should be
+    # dropped, not carried through from either tree's full alphabet.
+    kept_tokens = {tok for itemset in leaf_df["itemset"] for tok in itemset}
+    assert {p.token for p in predicates} <= kept_tokens
+
+
+def test_fit_and_extract_rules_two_tree_mode_is_deterministic():
+    groups = _build_numeric_threshold_groups()
+    X_cat, X_num, y, column_predicate_map = build_categorical_predicate_matrix(groups)
+    X, column_predicate_map = build_training_matrix(
+        X_cat, X_num, column_predicate_map, surviving_categorical_columns=[]
+    )
+    tree_config = DecisionTreeRuleConfig(
+        max_depth=1, max_depth_attack=3, min_samples_leaf=1
+    )
+    leaf_df_1, _ = fit_and_extract_rules(X, y, column_predicate_map, tree_config)
+    leaf_df_2, _ = fit_and_extract_rules(X, y, column_predicate_map, tree_config)
+    assert leaf_df_1["itemset"].tolist() == leaf_df_2["itemset"].tolist()
+    assert leaf_df_1["support_count"].tolist() == leaf_df_2["support_count"].tolist()

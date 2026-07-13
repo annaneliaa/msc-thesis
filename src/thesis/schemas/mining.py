@@ -60,7 +60,15 @@ class ContrastSetFilterConfig(BaseModel):
 
     min_attack_coverage: float = 0.05
     min_benign_coverage: float = 0.05
+    # min_growth_rate is the benign-facing threshold (its reciprocal gates
+    # benign-leaning candidates) -- kept as the plain field name, mirroring
+    # DecisionTreeRuleConfig.max_depth staying the benign-facing tree depth,
+    # so a caller that only cares about benign-leaning candidates (e.g. a
+    # future benign-only anomaly-detector mining pass) never needs to touch
+    # min_growth_rate_attack at all. None (default) means "same threshold as
+    # min_growth_rate for both directions" -- today's behavior, unchanged.
     min_growth_rate: float = 3.0
+    min_growth_rate_attack: float | None = None
     max_p_value: float | None = None
 
 
@@ -68,6 +76,19 @@ class DecisionTreeRuleConfig(BaseModel):
     """Step 2 (decision-tree rule extraction) hyperparameters."""
 
     max_depth: int = 4
+    # None (default): single-tree mode -- one tree fit at max_depth, every
+    # leaf kept regardless of class, exactly as this pipeline has always
+    # worked. Set to fit a *second* tree at this depth for attack-leaning
+    # leaves specifically, while max_depth's own tree is kept for its
+    # benign-leaning leaves -- see decision_tree_rule_mining.fit_and_extract_
+    # rules for why (attribute_mining_sweep_eda.ipynb section 5.3: a single
+    # shared max_depth can't simultaneously maximize attack-leaf precision
+    # and benign-leaf recall, since they move in opposite directions as
+    # depth increases). max_depth is the benign-facing knob by default
+    # rather than max_depth_attack being the "normal" one, so a caller that
+    # only ever cares about benign leaves (e.g. a future benign-only
+    # anomaly-detector mining pass) never needs to touch this field at all.
+    max_depth_attack: int | None = None
     min_samples_leaf: int = 20
     class_weight: str | None = "balanced"
     random_state: int = 0

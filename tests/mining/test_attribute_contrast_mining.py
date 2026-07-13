@@ -178,3 +178,39 @@ def test_pairwise_predicate_survives_when_singles_do_not():
     single_cols = surviving_single_columns(survivors)
     assert "cve_present" in single_cols
     assert "multi_target" in single_cols
+
+
+def test_filter_contrast_survivors_min_growth_rate_attack_none_matches_shared_threshold():
+    groups = _build_categorical_survival_groups()
+    X, _X_num, y, _ = build_categorical_predicate_matrix(groups)
+    stats_df = compute_predicate_contrast_stats(X, y)
+
+    baseline = filter_contrast_survivors(stats_df, min_growth_rate=3.0)
+    explicit_none = filter_contrast_survivors(
+        stats_df, min_growth_rate=3.0, min_growth_rate_attack=None
+    )
+    assert set(baseline["itemset"]) == set(explicit_none["itemset"])
+
+
+def test_filter_contrast_survivors_split_growth_rate_gates_attack_side_independently():
+    # category=EXPLOIT: attack_support=0.8, benign_support=0.1 -> growth_rate=8.0.
+    # category=SNMP: attack_support=0.1, benign_support=0.8 -> growth_rate=0.125.
+    groups = _build_categorical_survival_groups()
+    X, _X_num, y, _ = build_categorical_predicate_matrix(groups)
+    stats_df = compute_predicate_contrast_stats(X, y)
+
+    # min_growth_rate (benign-facing) stays at 3.0 -- SNMP (0.125 <= 1/3) still
+    # clears it. min_growth_rate_attack raised to 10.0 -- EXPLOIT (8.0 < 10.0)
+    # no longer clears the attack-facing bar, even though it survived at the
+    # shared 3.0 threshold in the test above.
+    survivors = filter_contrast_survivors(
+        stats_df,
+        min_attack_coverage=0.05,
+        min_benign_coverage=0.05,
+        min_growth_rate=3.0,
+        min_growth_rate_attack=10.0,
+    )
+    survivor_itemsets = set(survivors["itemset"])
+
+    assert ("category=EXPLOIT",) not in survivor_itemsets
+    assert ("category=SNMP",) in survivor_itemsets

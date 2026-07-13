@@ -281,26 +281,40 @@ def filter_contrast_survivors(
     min_attack_coverage: float = 0.05,
     min_benign_coverage: float = 0.05,
     min_growth_rate: float = 3.0,
+    min_growth_rate_attack: float | None = None,
     max_p_value: float | None = None,
 ) -> pd.DataFrame:
     """
     Keep a predicate/pair only if it is both meaningfully discriminative
-    (growth_rate, or its reciprocal direction, clears min_growth_rate) and
-    has enough coverage on the class it discriminates toward -- this is what
-    stops a predicate that fires on a handful of attack groups out of tens
-    of thousands from surviving purely because those few inflate its growth
-    rate. An optional chi-square significance gate can be layered on top,
-    most useful for pairwise predicates where attack-side counts get small
-    fast.
+    (growth_rate, or its reciprocal direction, clears the relevant growth-rate
+    threshold) and has enough coverage on the class it discriminates toward --
+    this is what stops a predicate that fires on a handful of attack groups
+    out of tens of thousands from surviving purely because those few inflate
+    its growth rate. An optional chi-square significance gate can be layered
+    on top, most useful for pairwise predicates where attack-side counts get
+    small fast.
+
+    min_growth_rate gates the benign-leaning direction (via its reciprocal);
+    min_growth_rate_attack, if set, gates the attack-leaning direction
+    independently -- None (default) reuses min_growth_rate for both, exactly
+    today's single-threshold behavior. Split thresholds exist because the two
+    directions don't need the same bar: e.g. attacks are rarer, so a looser
+    attack-side threshold may be needed to keep enough attack-leaning
+    candidates, independent of how strict the benign side is.
     """
     if stats_df.empty:
         return stats_df
 
+    attack_threshold = (
+        min_growth_rate_attack
+        if min_growth_rate_attack is not None
+        else min_growth_rate
+    )
     inv_threshold = 1.0 / min_growth_rate if min_growth_rate > 0 else float("inf")
 
     def _keep(row: pd.Series) -> bool:
         growth_rate = row["growth_rate"]
-        attack_leaning = growth_rate >= min_growth_rate
+        attack_leaning = growth_rate >= attack_threshold
         benign_leaning = row["confidence_benign"] > 0 and growth_rate <= inv_threshold
 
         if not (

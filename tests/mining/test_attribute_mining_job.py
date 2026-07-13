@@ -4,7 +4,7 @@ from pathlib import Path
 from thesis.mining.attribute_mining_job import run_alert_group_attribute_mining_job
 from thesis.pipeline.pipeline import alert_group_to_dict
 from thesis.schemas.groups import AlertGroup
-from thesis.schemas.mining import AttributeMiningConfig
+from thesis.schemas.mining import AttributeMiningConfig, DecisionTreeRuleConfig
 
 
 def _make_alert_group(group_id: str, label: str, **overrides) -> AlertGroup:
@@ -90,3 +90,29 @@ def test_run_alert_group_attribute_mining_job_end_to_end(tmp_path):
     # category=EXPLOIT/category=POLICY are perfectly discriminative here, so
     # at least one predicate should reference the "category" attribute.
     assert any(p.attribute == "category" for p in result.predicates)
+
+
+def test_run_alert_group_attribute_mining_job_two_tree_mode_end_to_end(tmp_path):
+    alert_groups_path = tmp_path / "alert_groups_raw.json"
+    _write_alert_groups_json(alert_groups_path, _build_groups())
+
+    config = AttributeMiningConfig(
+        tree=DecisionTreeRuleConfig(max_depth=1, max_depth_attack=3)
+    )
+    result = run_alert_group_attribute_mining_job(
+        alert_groups_path=alert_groups_path,
+        scenario_name="cscas_test",
+        run_name="pytest_attribute_mining_two_tree",
+        config=config,
+        run_dir=tmp_path / "run_two_tree",
+    )
+
+    assert (result.run_dir / "mined_attribute_features.csv").exists()
+    mined_df = result.mined_df
+    tree_rows = mined_df[mined_df["mining_type"] == "decision_tree_rule"]
+    assert not tree_rows.empty
+    # Every Step-2 row's source_label is consistent with which tree it came
+    # from -- an attack-leaning leaf only exists because the max_depth_attack
+    # tree contributed it, a benign-leaning leaf only from the max_depth tree.
+    assert (tree_rows.loc[tree_rows["source_label"] == "benign", "n_attack"] == 0).all()
+    assert (tree_rows.loc[tree_rows["source_label"] == "attack", "n_benign"] == 0).all()

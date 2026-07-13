@@ -53,14 +53,59 @@ points its own threading.local() slot at its log file for the duration of
 its mining call, and print() (which always targets whatever sys.stdout
 currently is) transparently dispatches to the calling thread's slot.
 
-Same three grids as before (see git history of sweep_attribute_schema.sh
-and this file for the full rationale on each range):
-  1. growth_rate x max_depth x granularity, at the default
-     class_weight=balanced / min_samples_leaf=20.
-  2. class_weight / min_samples_leaf, one axis at a time, growth_rate held
-     at MIN_GROWTH_RATE_FIXED.
-  3. min_attack_coverage / min_benign_coverage, one axis at a time (holding
-     the other at its 0.05 default), same anchor as grid 2.
+Organized by mining stage, matching attribute_mining_sweep_eda.ipynb's section
+2 finding that Step 1 (contrast-set filter: growth_rate, coverage) and Step 2
+(decision tree) are independent -- a Step-1 axis's effect on Step-1 metrics
+doesn't depend on which Step-2 settings are in force, and vice versa,
+confirmed at the raw per-window grain, not just on an averaged view. That
+means each axis's own effect is fully characterized varying it alone against
+a single anchor point in the *other* stage, without paying for a cross
+product with that stage's own axes.
+
+Step 2 fits *two* trees now, not one (thesis.mining.decision_tree_rule_mining
+.fit_and_extract_rules, via DecisionTreeRuleConfig.max_depth /
+.max_depth_attack): a single shared max_depth couldn't simultaneously
+maximize attack-leaf precision and benign-leaf recall, since they move in
+opposite directions as depth increases -- attribute_mining_sweep_eda.ipynb's
+section 5.3 feasible-region plot found *zero* configs in the old single-tree
+grid clearing both a precision floor and a recall floor at once. max_depth
+is the benign-facing tree's depth (kept as the pre-existing field so a
+benign-only caller, e.g. a future anomaly-detector mining pass, never needs
+to touch max_depth_attack at all); max_depth_attack is the attack-facing
+tree's depth, swept more densely below since precision_attack was found
+non-monotonic in the old single-tree data (peaking at depth 3, worse at both
+1 and 5) while recall_benign was cleanly monotonic (best shallow) -- the
+benign axis needs confirming, not searching for a hidden peak.
+
+This is a full re-mine, not an incremental addition: fitting two trees
+instead of one is a different Step-2 algorithm, so none of the old
+single-tree run directories are reused by anything below (they're still on
+disk and still what attribute_mining_sweep_eda.ipynb's historical sections
+read, just not part of what this script generates going forward).
+
+Two grids:
+  1. Step 1 (contrast-set filter): growth_rate swept alone, and
+     min_attack_coverage/min_benign_coverage swept one axis at a time
+     (holding the other at its 0.05 default) -- each x granularity, anchored
+     at STEP2_DEFAULT_MAX_DEPTH / STEP2_DEFAULT_MAX_DEPTH_ATTACK /
+     STEP2_DEFAULT_CLASS_WEIGHT.
+  2. Step 2 (decision tree): max_depth swept alone, max_depth_attack swept
+     alone (each holding the other tree's depth at its default), and
+     class_weight swept alone -- each x granularity, anchored at
+     STEP1_DEFAULT_GROWTH_RATE / STEP1_DEFAULT_ATTACK_COVERAGE /
+     STEP1_DEFAULT_BENIGN_COVERAGE. min_samples_leaf is not swept at all --
+     negligible on every structural metric tracked in the single-tree
+     analysis (attribute_mining_sweep_eda.ipynb section 4.1), no reason to
+     expect that changes under two-tree fitting.
+
+A small growth_rate x max_depth_attack cross-check IS kept this time
+(CROSS_CHECK_GROWTH_RATES x CROSS_CHECK_MAX_DEPTHS_ATTACK, 4 combos) --
+unlike the single-tree script's later revision, which dropped its
+cross-check as redundant with an already-exhaustively-verified grid. Here
+the orthogonality argument is being carried over to a genuinely new
+algorithm variant (two-tree fitting) rather than re-litigated on the same
+one, so a cheap spot-check is worth it before fully trusting the one-axis-
+per-stage design against it.
 
 Every (alert_groups window file, AttributeMiningConfig) combination is
 cached on disk (thesis.mining.attribute_schema_cache) exactly as before, so
@@ -72,16 +117,22 @@ rather than per CLI invocation (which used to bundle every window for a
 given mine_frac into one log). The grids were originally sized at 4900 raw
 mining attempts (11 growth_rates x 4 depths x 6 granularities, plus 16-point
 coverage grids swept per-axis) but that proved infeasible, and ~400 of those
-4900 were exact duplicates anyway -- grids 2/3 hold every axis but one at
-the grid-1 anchor value, and whenever a swept axis's own grid happens to
-still contain that anchor value (e.g. 0.05 in the coverage grid, "balanced"
-in class_weight), the call produces a (mine_frac, win_idx, config) triple
-grid 1 already queued, which is why the same-looking tag could show up
-twice with a "cache hit" the second time -- not a fingerprinting bug, just a
-redundant job. `build_jobs` now dedupes on that key regardless of grid
-sizing, and the grids themselves were trimmed to a coarser, still-covering
-set of points (see MIN_GROWTH_RATES/MAX_DEPTHS/MINE_FRACS/COVERAGE_GRID_NEW
-below), bringing this down to ~816 unique mining attempts.
+4900 were exact duplicates anyway -- every axis's sweep holds every other
+axis at a fixed anchor value, and whenever a swept axis's own grid happens
+to still contain that anchor value (e.g. 0.05 in the coverage grid,
+"balanced" in class_weight), the call produces a (mine_frac, win_idx,
+config) triple another axis's sweep already queued, which is why the
+same-looking tag could show up twice with a "cache hit" the second time --
+not a fingerprinting bug, just a redundant job. `build_jobs` dedupes on that
+key regardless of grid sizing.
+
+This script has been re-scoped three times since: first coarsened to ~816
+attempts while still crossing growth_rate x max_depth directly plus two
+anchored sensitivity sweeps; then reorganized into the single-tree two-stage
+design; now moved to the two-tree Step 2 described above -- see
+STEP1_GROWTH_RATES/STEP1_COVERAGE_GRID/STEP2_MAX_DEPTHS/
+STEP2_MAX_DEPTHS_ATTACK/STEP2_CLASS_WEIGHTS/CROSS_CHECK_GROWTH_RATES/
+CROSS_CHECK_MAX_DEPTHS_ATTACK/MINE_FRACS below for the current grids.
 
 Usage:
   python src/thesis/scripts/mining/sweep_attribute_schema.py
@@ -143,15 +194,58 @@ from thesis.schemas.mining import AttributeMiningConfig
 
 SCENARIO = "cscas"
 
-MIN_GROWTH_RATES = [2.0, 3.0, 5.0, 10.0]
-MAX_DEPTHS = [1, 3, 5]
 MINE_FRACS = [0.1, 0.25, 0.5]
 
-# Grid 2/3 anchor see the module docstring above.
-MIN_GROWTH_RATE_FIXED = 3.0
-CLASS_WEIGHTS_NEW = ["balanced"]
-MIN_SAMPLES_LEAVES_NEW = [5, 10, 20]
-COVERAGE_GRID_NEW = [0.0, 0.05, 0.15, 0.30]
+# Anchors: each stage's fixed default while the *other* stage's axes vary --
+# see the module docstring above for why one anchor point per stage is
+# sufficient rather than a cross product. STEP1_DEFAULT_GROWTH_RATE/coverage/
+# STEP2_DEFAULT_CLASS_WEIGHT/min_samples_leaf match the freeze/vary analysis
+# in summaries/ATTRIBUTE_MINING_PARAMETER_ANALYSIS.md (built on the old
+# single-tree data, but nothing there depended on Step 2 being one tree
+# rather than two -- growth_rate/coverage never touched Step 2 either way).
+# STEP2_DEFAULT_MAX_DEPTH_ATTACK=3 and STEP2_DEFAULT_MAX_DEPTH=1 are the
+# single-tree analysis's best-known points for each class (precision_attack
+# peaked at depth 3; recall_benign was best at the shallowest depth tested,
+# 1) -- starting points for the two-tree search below, not assumed final.
+STEP1_DEFAULT_GROWTH_RATE = 3.0
+STEP1_DEFAULT_ATTACK_COVERAGE = 0.05
+STEP1_DEFAULT_BENIGN_COVERAGE = 0.05
+STEP2_DEFAULT_MAX_DEPTH = 1
+STEP2_DEFAULT_MAX_DEPTH_ATTACK = 3
+STEP2_DEFAULT_CLASS_WEIGHT = "balanced"
+STEP2_DEFAULT_MIN_SAMPLES_LEAF = 20
+
+# Step 1 grid (contrast-set filter).
+STEP1_GROWTH_RATES = [2.0, 3.0, 5.0, 10.0]
+STEP1_COVERAGE_GRID = [0.0, 0.05, 0.15, 0.30]
+# min_growth_rate_attack, swept alone at the min_growth_rate (benign-facing)
+# anchor -- see ContrastSetFilterConfig for why this split exists (mirrors
+# max_depth/max_depth_attack: min_growth_rate stays the benign-facing
+# threshold, min_growth_rate_attack is the optional attack-facing override).
+# 3.0 deliberately excluded: identical filtering behavior to leaving
+# min_growth_rate_attack unset (None), which every other job in this grid
+# already does, but fingerprints differently -- including it would mine a
+# hash-distinct duplicate of data already cached under the growth_rate sweep.
+STEP1_GROWTH_RATES_ATTACK = [2.0, 5.0, 10.0]
+
+# Step 2 grid (decision tree, two trees now -- see module docstring).
+# max_depth (benign-facing) is a narrow search: recall_benign was cleanly
+# monotonic in the old single-tree data, so this confirms shallow-is-best
+# rather than hunting for a peak. max_depth_attack (attack-facing) is a
+# denser search: precision_attack was non-monotonic (peaked at 3, worse at
+# both 1 and 5), and 2/4 were never tested, so this axis has real unknowns.
+STEP2_MAX_DEPTHS = [1, 2, 3]
+STEP2_MAX_DEPTHS_ATTACK = [1, 2, 3, 4, 5]
+STEP2_CLASS_WEIGHTS = ["balanced", "none"]
+# min_samples_leaf is not swept at all here -- negligible on every
+# structural metric in the single-tree analysis (attribute_mining_sweep_eda
+# .ipynb section 4.1), fixed at STEP2_DEFAULT_MIN_SAMPLES_LEAF everywhere.
+
+# Small growth_rate x max_depth_attack cross-check -- see module docstring
+# for why this one script keeps a cross-check where the single-tree version
+# dropped it.
+CROSS_CHECK_GROWTH_RATES = [2.0, 10.0]
+CROSS_CHECK_MAX_DEPTHS_ATTACK = [1, 5]
 
 MAX_WORKERS = 6
 
@@ -201,16 +295,20 @@ class _ThreadLocalStream:
 def build_config(
     growth_rate: float,
     max_depth: int,
+    max_depth_attack: int,
     class_weight: str,
     min_samples_leaf: int,
     attack_coverage: float,
     benign_coverage: float,
+    growth_rate_attack: float | None = None,
 ) -> AttributeMiningConfig:
     config = AttributeMiningConfig()
     config.contrast.min_attack_coverage = attack_coverage
     config.contrast.min_benign_coverage = benign_coverage
     config.contrast.min_growth_rate = growth_rate
+    config.contrast.min_growth_rate_attack = growth_rate_attack
     config.tree.max_depth = max_depth
+    config.tree.max_depth_attack = max_depth_attack
     config.tree.min_samples_leaf = min_samples_leaf
     config.tree.class_weight = None if class_weight == "none" else class_weight
     return config
@@ -262,35 +360,39 @@ def window_fingerprint(
 
 def build_jobs(mine_fracs_windows: dict[float, int]) -> list[MineJob]:
     jobs: list[MineJob] = []
-    # Grids 2 and 3 each hold every axis but one at the grid-1 anchor value
-    # (growth_rate=MIN_GROWTH_RATE_FIXED, class_weight="balanced",
-    # min_samples_leaf=20, attack/benign coverage=0.05) -- whenever the swept
-    # axis's own grid *also* contains that anchor value (e.g. 0.05 sitting in
-    # COVERAGE_GRID_NEW, or "balanced" in CLASS_WEIGHTS_NEW), that call
-    # produces the exact (mine_frac, win_idx, config) combination grid 1
-    # already queued. Tracked here instead of hand-tuning each grid to dodge
-    # the anchor, since that's what actually caused the duplicate "cache hit"
-    # log lines for two different-looking tags -- same config, same window,
-    # mined/cached twice for no reason.
+    # Both stages' grids hold every axis but one at the *other* stage's
+    # anchor value -- whenever a swept axis's own grid also contains its
+    # stage's anchor value (e.g. 0.05 sitting in STEP1_COVERAGE_GRID, or
+    # STEP2_DEFAULT_MAX_DEPTH sitting in STEP2_MAX_DEPTHS), that call
+    # produces the exact (mine_frac, win_idx, config) combination another
+    # axis's sweep already queued. Tracked here instead of hand-tuning each
+    # grid to dodge the anchor, since that's what actually caused duplicate
+    # "cache hit" log lines for two different-looking tags in an earlier
+    # version of this script -- same config, same window, mined/cached
+    # twice for no reason.
     seen: set[tuple] = set()
 
     def add(
         growth_rate,
         max_depth,
+        max_depth_attack,
         mine_frac,
         class_weight,
-        min_samples_leaf,
+        min_samples_leaf=STEP2_DEFAULT_MIN_SAMPLES_LEAF,
         attack_coverage=0.05,
         benign_coverage=0.05,
+        growth_rate_attack=None,
     ):
         key = (
             growth_rate,
             max_depth,
+            max_depth_attack,
             mine_frac,
             class_weight,
             min_samples_leaf,
             attack_coverage,
             benign_coverage,
+            growth_rate_attack,
         )
         if key in seen:
             return
@@ -299,13 +401,19 @@ def build_jobs(mine_fracs_windows: dict[float, int]) -> list[MineJob]:
         config = build_config(
             growth_rate,
             max_depth,
+            max_depth_attack,
             class_weight,
             min_samples_leaf,
             attack_coverage,
             benign_coverage,
+            growth_rate_attack=growth_rate_attack,
         )
+        # Only jobs that actually set growth_rate_attack get the extra tag
+        # segment -- keeps every other job's tag (and thus its log file name)
+        # unchanged from before this axis existed.
+        gra_tag = f"_gra{growth_rate_attack}" if growth_rate_attack is not None else ""
         base_tag = (
-            f"{SCENARIO}_gr{growth_rate}_md{max_depth}_cw{class_weight}"
+            f"{SCENARIO}_gr{growth_rate}{gra_tag}_md{max_depth}_mda{max_depth_attack}_cw{class_weight}"
             f"_msl{min_samples_leaf}_ac{attack_coverage}_bc{benign_coverage}_gran{mine_frac:g}"
         )
         for win_idx in range(mine_fracs_windows[mine_frac]):
@@ -318,51 +426,117 @@ def build_jobs(mine_fracs_windows: dict[float, int]) -> list[MineJob]:
                 )
             )
 
-    # Grid 1: growth_rate x max_depth x granularity, at the default
-    # class_weight=balanced / min_samples_leaf=20.
-    for growth_rate in MIN_GROWTH_RATES:
-        for max_depth in MAX_DEPTHS:
+    # Step 1 grid: growth_rate x granularity, at Step 2's anchor -- growth_rate's
+    # own effect on Step-1 metrics doesn't depend on either tree's depth/
+    # class_weight (see module docstring), so one Step-2 anchor point is
+    # enough; no cross product with STEP2_MAX_DEPTHS/STEP2_MAX_DEPTHS_ATTACK
+    # needed here (see the small cross-check below instead).
+    for growth_rate in STEP1_GROWTH_RATES:
+        for mine_frac in MINE_FRACS:
+            add(
+                growth_rate,
+                STEP2_DEFAULT_MAX_DEPTH,
+                STEP2_DEFAULT_MAX_DEPTH_ATTACK,
+                mine_frac,
+                STEP2_DEFAULT_CLASS_WEIGHT,
+            )
+
+    # Step 1 grid: min_attack_coverage / min_benign_coverage, one axis at a
+    # time (holding the other at its 0.05 default), same Step-2 anchor.
+    for mine_frac in MINE_FRACS:
+        for attack_coverage in STEP1_COVERAGE_GRID:
+            add(
+                STEP1_DEFAULT_GROWTH_RATE,
+                STEP2_DEFAULT_MAX_DEPTH,
+                STEP2_DEFAULT_MAX_DEPTH_ATTACK,
+                mine_frac,
+                STEP2_DEFAULT_CLASS_WEIGHT,
+                attack_coverage=attack_coverage,
+                benign_coverage=STEP1_DEFAULT_BENIGN_COVERAGE,
+            )
+        for benign_coverage in STEP1_COVERAGE_GRID:
+            add(
+                STEP1_DEFAULT_GROWTH_RATE,
+                STEP2_DEFAULT_MAX_DEPTH,
+                STEP2_DEFAULT_MAX_DEPTH_ATTACK,
+                mine_frac,
+                STEP2_DEFAULT_CLASS_WEIGHT,
+                attack_coverage=STEP1_DEFAULT_ATTACK_COVERAGE,
+                benign_coverage=benign_coverage,
+            )
+
+    # Step 1 grid: min_growth_rate_attack, swept alone at the min_growth_rate
+    # (benign-facing) anchor and the Step-2 anchor -- see
+    # STEP1_GROWTH_RATES_ATTACK's own comment for why 3.0 isn't in this list.
+    for growth_rate_attack in STEP1_GROWTH_RATES_ATTACK:
+        for mine_frac in MINE_FRACS:
+            add(
+                STEP1_DEFAULT_GROWTH_RATE,
+                STEP2_DEFAULT_MAX_DEPTH,
+                STEP2_DEFAULT_MAX_DEPTH_ATTACK,
+                mine_frac,
+                STEP2_DEFAULT_CLASS_WEIGHT,
+                growth_rate_attack=growth_rate_attack,
+            )
+
+    # Step 2 grid: max_depth (benign-facing tree) x granularity, at Step 1's
+    # anchor and the attack tree's default depth -- narrow search, see
+    # module docstring (recall_benign was monotonic in the old data).
+    for max_depth in STEP2_MAX_DEPTHS:
+        for mine_frac in MINE_FRACS:
+            add(
+                STEP1_DEFAULT_GROWTH_RATE,
+                max_depth,
+                STEP2_DEFAULT_MAX_DEPTH_ATTACK,
+                mine_frac,
+                STEP2_DEFAULT_CLASS_WEIGHT,
+                attack_coverage=STEP1_DEFAULT_ATTACK_COVERAGE,
+                benign_coverage=STEP1_DEFAULT_BENIGN_COVERAGE,
+            )
+
+    # Step 2 grid: max_depth_attack (attack-facing tree) x granularity, at
+    # Step 1's anchor and the benign tree's default depth -- denser search,
+    # see module docstring (precision_attack was non-monotonic).
+    for max_depth_attack in STEP2_MAX_DEPTHS_ATTACK:
+        for mine_frac in MINE_FRACS:
+            add(
+                STEP1_DEFAULT_GROWTH_RATE,
+                STEP2_DEFAULT_MAX_DEPTH,
+                max_depth_attack,
+                mine_frac,
+                STEP2_DEFAULT_CLASS_WEIGHT,
+                attack_coverage=STEP1_DEFAULT_ATTACK_COVERAGE,
+                benign_coverage=STEP1_DEFAULT_BENIGN_COVERAGE,
+            )
+
+    # Step 2 grid: class_weight, one axis at a time, same Step-1 anchor and
+    # both trees' default depths. min_samples_leaf is not swept -- see
+    # module docstring.
+    for mine_frac in MINE_FRACS:
+        for class_weight in STEP2_CLASS_WEIGHTS:
+            add(
+                STEP1_DEFAULT_GROWTH_RATE,
+                STEP2_DEFAULT_MAX_DEPTH,
+                STEP2_DEFAULT_MAX_DEPTH_ATTACK,
+                mine_frac,
+                class_weight,
+                attack_coverage=STEP1_DEFAULT_ATTACK_COVERAGE,
+                benign_coverage=STEP1_DEFAULT_BENIGN_COVERAGE,
+            )
+
+    # Small growth_rate x max_depth_attack cross-check -- see module
+    # docstring for why this script keeps one where the single-tree version
+    # dropped it (the algorithm changed; the orthogonality argument hasn't
+    # been re-verified under two-tree fitting yet).
+    for growth_rate in CROSS_CHECK_GROWTH_RATES:
+        for max_depth_attack in CROSS_CHECK_MAX_DEPTHS_ATTACK:
             for mine_frac in MINE_FRACS:
-                add(growth_rate, max_depth, mine_frac, "balanced", 20)
-
-    # Grid 2: class_weight / min_samples_leaf, one axis at a time,
-    # growth_rate fixed -- see the module docstring above.
-    for max_depth in MAX_DEPTHS:
-        for mine_frac in MINE_FRACS:
-            for class_weight in CLASS_WEIGHTS_NEW:
-                add(MIN_GROWTH_RATE_FIXED, max_depth, mine_frac, class_weight, 20)
-            for min_samples_leaf in MIN_SAMPLES_LEAVES_NEW:
                 add(
-                    MIN_GROWTH_RATE_FIXED,
-                    max_depth,
+                    growth_rate,
+                    STEP2_DEFAULT_MAX_DEPTH,
+                    max_depth_attack,
                     mine_frac,
-                    "balanced",
-                    min_samples_leaf,
-                )
-
-    # Grid 3: min_attack_coverage / min_benign_coverage, one axis at a time
-    # (holding the other at its 0.05 default), same anchor as grid 2.
-    for max_depth in MAX_DEPTHS:
-        for mine_frac in MINE_FRACS:
-            for attack_coverage in COVERAGE_GRID_NEW:
-                add(
-                    MIN_GROWTH_RATE_FIXED,
-                    max_depth,
-                    mine_frac,
-                    "balanced",
-                    20,
-                    attack_coverage=attack_coverage,
-                    benign_coverage=0.05,
-                )
-            for benign_coverage in COVERAGE_GRID_NEW:
-                add(
-                    MIN_GROWTH_RATE_FIXED,
-                    max_depth,
-                    mine_frac,
-                    "balanced",
-                    20,
-                    attack_coverage=0.05,
-                    benign_coverage=benign_coverage,
+                    STEP2_DEFAULT_CLASS_WEIGHT,
                 )
 
     return jobs
@@ -375,7 +549,9 @@ def job_key(config: AttributeMiningConfig, mine_frac: float, win_idx: int) -> tu
     directly comparable."""
     return (
         config.contrast.min_growth_rate,
+        config.contrast.min_growth_rate_attack,
         config.tree.max_depth,
+        config.tree.max_depth_attack,
         config.tree.class_weight,
         config.tree.min_samples_leaf,
         config.contrast.min_attack_coverage,
@@ -450,7 +626,9 @@ def scan_existing_job_keys() -> set[tuple]:
         keys.add(
             (
                 cfg["contrast"]["min_growth_rate"],
+                cfg["contrast"].get("min_growth_rate_attack"),
                 cfg["tree"]["max_depth"],
+                cfg["tree"].get("max_depth_attack"),
                 cfg["tree"]["class_weight"],
                 cfg["tree"]["min_samples_leaf"],
                 cfg["contrast"]["min_attack_coverage"],

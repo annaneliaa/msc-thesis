@@ -29,8 +29,7 @@ from thesis.mining.attribute_contrast_mining import (
 )
 from thesis.mining.decision_tree_rule_mining import (
     build_training_matrix,
-    extract_leaf_rules,
-    fit_rule_tree,
+    fit_and_extract_rules,
 )
 
 
@@ -104,8 +103,10 @@ def run_alert_group_attribute_mining_job(
                 "min_attack_coverage": config.contrast.min_attack_coverage,
                 "min_benign_coverage": config.contrast.min_benign_coverage,
                 "min_growth_rate": config.contrast.min_growth_rate,
+                "min_growth_rate_attack": config.contrast.min_growth_rate_attack,
                 "max_p_value": config.contrast.max_p_value,
                 "max_depth": config.tree.max_depth,
+                "max_depth_attack": config.tree.max_depth_attack,
                 "min_samples_leaf": config.tree.min_samples_leaf,
                 "class_weight": config.tree.class_weight,
                 "input_type": "AlertGroup",
@@ -135,6 +136,7 @@ def run_alert_group_attribute_mining_job(
             min_attack_coverage=config.contrast.min_attack_coverage,
             min_benign_coverage=config.contrast.min_benign_coverage,
             min_growth_rate=config.contrast.min_growth_rate,
+            min_growth_rate_attack=config.contrast.min_growth_rate_attack,
             max_p_value=config.contrast.max_p_value,
         )
         save_dataframe_artifact(survivors_df, run_dir, "contrast_survivors")
@@ -149,38 +151,33 @@ def run_alert_group_attribute_mining_job(
         X_train, kept_predicate_map = build_training_matrix(
             X_cat, X_num, column_predicate_map, surviving_cols
         )
-        tree = fit_rule_tree(
-            X_train,
-            y,
-            max_depth=config.tree.max_depth,
-            min_samples_leaf=config.tree.min_samples_leaf,
-            class_weight=config.tree.class_weight,
-            random_state=config.tree.random_state,
-            min_impurity_decrease=config.tree.min_impurity_decrease,
-        )
-        leaf_rules_df, predicates = extract_leaf_rules(
-            tree, X_train, y, kept_predicate_map
+        leaf_rules_df, predicates = fit_and_extract_rules(
+            X_train, y, kept_predicate_map, config.tree
         )
         save_dataframe_artifact(leaf_rules_df, run_dir, "decision_tree_rules")
+        tree_mode = (
+            "two-tree" if config.tree.max_depth_attack is not None else "single-tree"
+        )
         print(
-            f"  Step 2: extracted {len(leaf_rules_df)} leaf rules from the fitted tree."
+            f"  Step 2: extracted {len(leaf_rules_df)} leaf rules ({tree_mode} mode)."
         )
 
-        # Unlike the cooccurrence pipeline (separate benign-mining and
-        # attack-mining passes, each explicitly tagged before concatenation),
-        # this pipeline mines both classes jointly in one pass -- a survivor
-        # or leaf can lean either way. Tag each row from its own
-        # confidence_attack vs confidence_benign rather than assuming
-        # everything is attack-leaning (the caller previously passed a single
-        # hardcoded source_label="attack" for the whole combined set,
-        # mislabeling every benign-leaning row).
-        for df in (survivors_df, leaf_rules_df):
-            if not df.empty:
-                df["source_label"] = np.where(
-                    df["confidence_attack"] > df["confidence_benign"],
-                    "attack",
-                    "benign",
-                )
+        # Step 1's survivors_df still needs its own source_label -- fit_and_
+        # extract_rules already tags leaf_rules_df's (it needs the tag
+        # internally in two-tree mode, to know which leaves to keep). Unlike
+        # the cooccurrence pipeline (separate benign-mining and attack-mining
+        # passes, each explicitly tagged before concatenation), Step 1 mines
+        # both classes jointly in one pass -- a survivor can lean either way,
+        # tagged from its own confidence_attack vs confidence_benign rather
+        # than assuming everything is attack-leaning (a past version of this
+        # caller passed a single hardcoded source_label="attack" for the
+        # whole combined set, mislabeling every benign-leaning row).
+        if not survivors_df.empty:
+            survivors_df["source_label"] = np.where(
+                survivors_df["confidence_attack"] > survivors_df["confidence_benign"],
+                "attack",
+                "benign",
+            )
 
         mined_df = pd.concat(
             [survivors_df, leaf_rules_df], ignore_index=True, sort=False
