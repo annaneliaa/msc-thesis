@@ -116,6 +116,16 @@ def compute_lime_signed_importances(
         random_state=random_state,
     )
 
+    # LIME perturbs `row` into a raw ndarray batch and calls this predict_fn
+    # directly -- re-wrap as a DataFrame before handing it to `model` so a
+    # scaled Pipeline's StandardScaler (fit on a DataFrame) doesn't re-warn
+    # "X does not have valid feature names" on every single explain_instance
+    # call (num_samples perturbations per row, batched into one predict_proba
+    # call, but still once per row -- floods the log across every
+    # explained row x horizon x config).
+    def _predict_fn(x: np.ndarray) -> np.ndarray:
+        return model.predict_proba(pd.DataFrame(x, columns=feature_names))
+
     n_features = len(feature_names)
     signed_sum = np.zeros(n_features)
     fidelities: list[float] = []
@@ -123,7 +133,7 @@ def compute_lime_signed_importances(
     for row in x_arr:
         exp = explainer.explain_instance(
             row,
-            model.predict_proba,
+            _predict_fn,
             labels=(1,),
             num_features=n_features,
             num_samples=num_samples,

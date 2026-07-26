@@ -29,7 +29,8 @@ dependencies = [
   "python-dotenv",
   "accelerate>=1.1.0",
   "shap",
-  "lime"
+  "lime",
+  "deepcase @ git+https://github.com/Thijsvanede/DeepCASE.git@7d19eaa798da257b83567aeaed78d88bd3574370",
 ]
 
 [project.optional-dependencies]

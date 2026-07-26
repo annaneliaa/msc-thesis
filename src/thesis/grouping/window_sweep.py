@@ -1,5 +1,5 @@
 """
-Sweep over fixed-window sizes for fixed_window grouping.
+Fixed-window size selection diagnostics.
 
 For each window_size reports:
   - AlertGroup counts: total, benign, attack, mixed, purity
@@ -10,45 +10,34 @@ For each window_size reports:
   - Train/test split quality: label distribution for a temporal split (default 70/30),
     flagging window sizes that produce a single-class train or test set.
 
-This helps identify a suitable window size for each method. The reference value of
-2 s used in earlier runs came from the Landauer et al. (2022) time-delta method,
-not from a fixed-window evaluation.
+This helps identify a suitable window size for fixed_window grouping. The reference
+value of 2s used in earlier runs came from the Landauer et al. (2022) time-delta
+method, not from a fixed-window evaluation.
 
-Usage:
-    python src/thesis/scripts/run_fixed_window_sweep.py fox \\
-        [--windows 1 2 5 10 30 60] \\
-        [--train-frac 0.7] \\
-        [--out-dir artifacts/experiments/run_fixed_window_sweep]
+Meant to be called from a notebook, e.g.:
+    from thesis.grouping.window_sweep import run_scenario
+    results = run_scenario("fox", windows=[1, 2, 5, 10, 30, 60], train_frac=0.7,
+                            filter_method=None, out_dir=Path("artifacts/experiments/window_sweep/fox"))
 """
 
 from __future__ import annotations
 
-import argparse
 import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+import numpy as np
+
 from thesis.grouping.group_alerts import group_alerts_fixed_window
+from thesis.paths import ARTIFACTS_DIR, CACHE_DIR, ROOT
 from thesis.preprocessing.parsing import parse_incoming_alert
 from thesis.preprocessing.tokenization import tokenize_alert
 from thesis.schemas.groups import GroupSnapshot
 from thesis.schemas.preprocessing import IncomingAlert, TokenizedAlert
-from thesis.paths import CACHE_DIR
-
-
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-
-import matplotlib.ticker as mticker
-import numpy as np
-
-_HERE = Path(__file__).resolve()
-_REPO = next(p for p in _HERE.parents if (p / "pyproject.toml").exists())
-sys.path.insert(0, str(_REPO / "src"))
 
 
 class _Tee:
@@ -76,9 +65,9 @@ class _Tee:
 
 
 _DEFAULT_WINDOWS = [1, 2, 5, 10, 30, 60]
-_RAW_ALERTS_DIR = _REPO / "data" / "alerts_csv"
-_BALANCED_ALERTS_DIR = _REPO / "artifacts" / "alerts" / "balanced"
-_EXPERIMENTS_DIR = _REPO / "artifacts" / "experiments" / "run_fixed_window_sweep"
+_RAW_ALERTS_DIR = ROOT / "data" / "alerts_csv"
+_BALANCED_ALERTS_DIR = ARTIFACTS_DIR / "alerts" / "balanced"
+_DEFAULT_OUT_DIR = ARTIFACTS_DIR / "experiments" / "window_sweep"
 _BENIGN_LABEL = "false_positive"
 
 
@@ -1096,11 +1085,11 @@ def plot_metrics_heatmap(
     2×3 grid of (scenario × window) heatmaps — one metric per panel.
 
       A  Attack %             (attack+mixed)/n_tx — class imbalance
-      B  Purity %             (benign+attack)/n_tx — no mixed-label tx
-      C  Mean alerts/tx       alert_group richness
-      D  Single-alert tx %    degenerate alert_groups (window too small?)
-      E  Recurring profiles % same alert type fires multiple times (window too large?)
-      F  Split viable         temporal 70/30 split has both classes in train+test
+      B  Purity %              (benign+attack)/n_tx — no mixed-label tx
+      C  Mean alerts/tx        alert_group richness
+      D  Single-alert tx %     degenerate alert_groups (window too small?)
+      E  Recurring profiles %  same alert type fires multiple times (window too large?)
+      F  Split viable          temporal 70/30 split has both classes in train+test
     """
     scenarios = sorted(scenario_results.keys())
     n_scen = len(scenarios)
@@ -1247,7 +1236,7 @@ def plot_metrics_heatmap(
 
 
 # ---------------------------------------------------------------------------
-# Main
+# Orchestration
 # ---------------------------------------------------------------------------
 
 
@@ -1273,7 +1262,7 @@ def _run_method(
     }
 
 
-def _discover_scenarios(filter_method: str | None) -> list[str]:
+def discover_scenarios(filter_method: str | None = None) -> list[str]:
     if filter_method:
         search_dir = _BALANCED_ALERTS_DIR / filter_method
         if not search_dir.exists():
@@ -1288,12 +1277,15 @@ def _discover_scenarios(filter_method: str | None) -> list[str]:
 
 def run_scenario(
     scenario: str,
-    windows: list[float],
-    train_frac: float,
-    filter_method: str | None,
-    out_dir: Path,
-    run_ts: str,
+    windows: list[float] = _DEFAULT_WINDOWS,
+    train_frac: float = 0.7,
+    filter_method: str | None = None,
+    out_dir: Path | None = None,
+    run_ts: str | None = None,
 ) -> list[dict]:
+    windows = sorted(windows)
+    out_dir = out_dir or (_DEFAULT_OUT_DIR / scenario)
+    run_ts = run_ts or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     out_dir.mkdir(parents=True, exist_ok=True)
 
     with _Tee(out_dir / "sweep.log"):
@@ -1368,83 +1360,33 @@ def _run_scenario_inner(
     return results
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "scenario",
-        nargs="?",
-        default=None,
-        help="Scenario name (e.g. 'fox'). Omit when using --all.",
-    )
-    parser.add_argument(
-        "--all",
-        action="store_true",
-        dest="all_scenarios",
-        help="Run for every scenario found in the alerts source directory.",
-    )
-    parser.add_argument(
-        "--windows",
-        nargs="+",
-        type=float,
-        default=_DEFAULT_WINDOWS,
-        metavar="W",
-        help=f"Window sizes in seconds (default: {_DEFAULT_WINDOWS})",
-    )
-    parser.add_argument(
-        "--out-dir",
-        type=Path,
-        default=_EXPERIMENTS_DIR,
-        help="Output directory for saved results",
-    )
-    parser.add_argument(
-        "--balanced",
-        metavar="METHOD",
-        dest="filtered",
-        default=None,
-        help=(
-            "Load balanced alerts from artifacts/alerts/balanced/<METHOD>/<scenario>_alerts.json "
-            "instead of raw alerts from data/alerts_csv/. E.g. --balanced naive50"
-        ),
-    )
-    parser.add_argument(
-        "--train-frac",
-        type=float,
-        default=0.7,
-        metavar="F",
-        help="Fraction of alert_groups (sorted by time) used as the train split (default: 0.7).",
-    )
-    args = parser.parse_args()
+def run_all_scenarios(
+    windows: list[float] = _DEFAULT_WINDOWS,
+    train_frac: float = 0.7,
+    filter_method: str | None = None,
+    out_dir: Path | None = None,
+) -> dict[str, list[dict]]:
+    """Run run_scenario for every scenario found, then emit the cross-scenario plots."""
+    scenarios = discover_scenarios(filter_method)
+    if not scenarios:
+        search_dir = (
+            _BALANCED_ALERTS_DIR / filter_method if filter_method else _RAW_ALERTS_DIR
+        )
+        raise FileNotFoundError(f"No scenarios found under {search_dir}.")
 
-    if args.all_scenarios and args.scenario:
-        parser.error("Provide either a scenario name or --all, not both.")
-    if not args.all_scenarios and not args.scenario:
-        parser.error("Provide a scenario name or use --all.")
-
-    windows: list[float] = sorted(args.windows)
-    train_frac: float = args.train_frac
-    filter_method: str | None = args.filtered
+    windows = sorted(windows)
     run_ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-
-    if args.all_scenarios:
-        scenarios = _discover_scenarios(filter_method)
-        if not scenarios:
-            search_dir = (
-                _BALANCED_ALERTS_DIR / filter_method
-                if filter_method
-                else _RAW_ALERTS_DIR
-            )
-            print(f"No scenarios found under {search_dir}.", file=sys.stderr)
-            sys.exit(1)
-        print(f"Running all {len(scenarios)} scenarios: {scenarios}")
-    else:
-        scenarios = [args.scenario]
+    sweep_dir = (out_dir or _DEFAULT_OUT_DIR) / f"sweep_{run_ts}"
 
     all_results: dict[str, list[dict]] = {}
-    sweep_dir = args.out_dir / f"sweep_{run_ts}"
     for scenario in scenarios:
-        out_dir = sweep_dir / scenario
         results = run_scenario(
-            scenario, windows, train_frac, filter_method, out_dir, run_ts
+            scenario,
+            windows=windows,
+            train_frac=train_frac,
+            filter_method=filter_method,
+            out_dir=sweep_dir / scenario,
+            run_ts=run_ts,
         )
         if results:
             all_results[scenario] = results
@@ -1460,12 +1402,9 @@ def main() -> None:
             method="fixed_window",
             filter_method=filter_method,
         )
-
     if len(all_results) > 1:
         plot_cross_scenario(
             all_results, sweep_dir, windows, filter_method=filter_method
         )
 
-
-if __name__ == "__main__":
-    main()
+    return all_results

@@ -9,6 +9,12 @@ class GroupingRecord:
     alert_id: str
     group_id: str
     method: str  # "fixed_window" | "cscas_pregrouped | cscas_grouping"
+    # True only for DeepCASE alerts DBSCAN calls noise or that never clear
+    # the confidence threshold -- still assigned their own singleton
+    # group_id (see deepcase_grouping._cluster_ids_to_records), but this
+    # flag lets coverage metrics distinguish a genuine rejection from an
+    # ordinary one-alert group. Every other method leaves this False.
+    is_outlier: bool = False
 
 
 @dataclass(slots=True)

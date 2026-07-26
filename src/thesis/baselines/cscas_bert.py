@@ -51,6 +51,8 @@ from transformers import (
     TrainingArguments,
 )
 
+from thesis.baselines._results import save_baseline_results
+
 MODEL_NAME = "distilbert-base-uncased"
 MAX_LENGTH = 256  # bump if you see truncation warnings
 N_SEEDS = 5
@@ -63,7 +65,7 @@ VAL_FRAC_WITHIN_POOL = 0.15  # stratified carve-out from the training pool, for 
 # Flip this on for a cheap timing sanity check -- runs a single seed per
 # baseline against a small stratified sample of the test set instead of the
 # full sweep -- before committing to the full run with QUICK_SANITY_CHECK=False.
-QUICK_SANITY_CHECK = False
+QUICK_SANITY_CHECK = True
 QUICK_SEEDS = 1
 QUICK_TEST_SAMPLE_N = 20_000
 
@@ -326,3 +328,13 @@ print(
     f"paper P=0.868 R=0.952 F1=0.908  |  "
     f"BERT P={avg_b2.precision:.3f} R={avg_b2.recall:.3f} F1={avg_b2.f1:.3f}"
 )
+
+if QUICK_SANITY_CHECK:
+    print("[QUICK_SANITY_CHECK] Not saving results -- these numbers are timing-only.")
+else:
+    save_baseline_results(
+        name="cscas_bert",
+        description="8 non-similarity fields serialized to text, fine-tuned DistilBERT",
+        results_b1=results_b1,
+        results_b2=results_b2,
+    )

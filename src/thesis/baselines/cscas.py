@@ -16,6 +16,8 @@ import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import precision_score, recall_score, f1_score
 
+from thesis.baselines._results import save_baseline_results
+
 # 1) Load and sort dataset
 
 df = pd.read_csv("../../../data/cscas/dataset-labeled-anon-ip.csv")
@@ -131,3 +133,10 @@ print(
 # Scenario                          Expected P      Expected R  Expected F1
 # Baseline 1 (random undersampling) 0.669           0.963       0.789
 # Baseline 2 (Guided by CSCAS)      0.868           0.952       0.908
+
+save_baseline_results(
+    name="cscas",
+    description="Paper's own 42 raw features, RandomForestClassifier(n_estimators=100)",
+    results_b1=results_b1,
+    results_b2=results_b2,
+)

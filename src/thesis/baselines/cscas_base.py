@@ -18,6 +18,8 @@ import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import precision_score, recall_score, f1_score
 
+from thesis.baselines._results import save_baseline_results
+
 # 1) Load and sort dataset
 
 df = pd.read_csv("../../../data/cscas/dataset-labeled-anon-ip.csv")
@@ -147,4 +149,11 @@ print(
     f"{'Baseline 2 (guided by CSCAS)':<40}"
     f"paper P=0.868 R=0.952 F1=0.908  |  "
     f"mine P={avg_b2.precision:.3f} R={avg_b2.recall:.3f} F1={avg_b2.f1:.3f}"
+)
+
+save_baseline_results(
+    name="cscas_base",
+    description="This project's base schema (41 features, no SignatureID), RandomForestClassifier(n_estimators=100)",
+    results_b1=results_b1,
+    results_b2=results_b2,
 )

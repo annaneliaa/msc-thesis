@@ -1,20 +1,24 @@
 #!/usr/bin/env bash
 #
 # Temporal Generalization (Rolling-Horizon Decay): for each scenario, runs
-# run_temporal_decay.py against that scenario's shortlist (as produced by
-# notebooks/config_selection.ipynb from a screening-sweep run). For each
-# shortlisted config, mines/fits once on window 0's train split and walks
-# the frozen schema/model/threshold forward one window at a time to the end
-# of the timeline, tracking SHAP/LIME importances alongside the metric decay
-# -- mined schemas are cached the same way as the screening sweep, so
-# rerunning this script only (re)mines whatever isn't already cached.
+# run_temporal_decay.py directly against the mining notebook's structural
+# shortlist (attribute_mining_sweep_eda.ipynb's feasible_configs_all.csv --
+# every config that clears the mining-only precision/recall floors), crossed
+# with GRANULARITIES below. No separate real-evaluation ranking step
+# (notebooks/config_selection.ipynb is no longer part of this pipeline) --
+# STRUCTURAL_CONFIGS is the single source of truth. For each resulting
+# config, run_temporal_decay.py mines/fits once on window 0's train split and
+# walks the frozen schema/model/threshold forward one window at a time to
+# the end of the timeline, tracking SHAP/LIME importances alongside the
+# metric decay -- mined schemas are cached the same way as the screening
+# sweep, so rerunning this script only (re)mines whatever isn't already
+# cached.
 #
 # Usage:
 #   src/thesis/shell-scripts/run_temporal_decay.sh
 #
-# Edit the variables below to change the scenario(s), threshold mode, or
-# explanation sampling. Each scenario needs a shortlist.csv already saved at
-# artifacts/experiments/screening_sweep/<scenario>/shortlist.csv.
+# Edit the variables below to change the scenario(s), granularities,
+# threshold mode, or explanation sampling.
 
 set -uo pipefail
 
@@ -27,6 +31,8 @@ conda activate thesis
 SCENARIOS=(cscas)
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 MINING_SETTINGS="$REPO_ROOT/src/thesis/configs/screening_mining_settings.yaml"
+STRUCTURAL_CONFIGS="$REPO_ROOT/artifacts/experiments/attribute_mining_parameter_grid/feasible_configs_all.csv"
+GRANULARITIES=(0.1 0.2 0.25)
 THRESHOLD_MODE="fixed"  # or "calibrated_recall"
 CALIBRATED_RECALL_TARGET="0.90"  # only used when THRESHOLD_MODE=calibrated_recall
 COMPUTE_EXPLANATIONS=1  # 0 to skip SHAP/LIME (metrics only, much faster)
@@ -43,12 +49,11 @@ failed=()
 for scenario in "${SCENARIOS[@]}"; do
   total=$((total + 1))
   log_file="$LOG_DIR/${RUN_TS}_${scenario}.log"
-  shortlist="$REPO_ROOT/artifacts/experiments/screening_sweep/$scenario/shortlist.csv"
 
   echo "[$total] $scenario"
 
-  if [[ ! -f "$shortlist" ]]; then
-    echo "    FAILED — no shortlist at $shortlist (run config_selection.ipynb first)"
+  if [[ ! -f "$STRUCTURAL_CONFIGS" ]]; then
+    echo "    FAILED — no structural shortlist at $STRUCTURAL_CONFIGS (run attribute_mining_sweep_eda.ipynb's section 5.3 first)"
     failed+=("$scenario")
     continue
   fi
@@ -56,9 +61,16 @@ for scenario in "${SCENARIOS[@]}"; do
   # Built up incrementally (rather than expanding a possibly-empty array)
   # since "${empty_array[@]}" errors under `set -u` on bash <4.4 -- macOS's
   # default /usr/bin/bash is 3.2.
-  cmd=(python "$REPO_ROOT/src/thesis/scripts/mining/run_temporal_decay.py" \
+  # -u: unbuffered stdout -- without it, redirecting to $log_file makes
+  # Python fully block-buffer stdout (prints only flush every ~8KB or at
+  # exit) while warnings.warn() writes straight to unbuffered stderr, so the
+  # log looks like it's stuck spewing only sklearn warnings for the whole
+  # run with none of the "[n/4] ..."/"Saved →" progress prints showing up
+  # until the process exits.
+  cmd=(python -u "$REPO_ROOT/src/thesis/scripts/mining/run_temporal_decay.py" \
     "$scenario" \
-    --shortlist "$shortlist" \
+    --structural-configs "$STRUCTURAL_CONFIGS" \
+    --granularities "${GRANULARITIES[@]}" \
     --mining-settings "$MINING_SETTINGS" \
     --threshold-mode "$THRESHOLD_MODE" \
     --explain-sample-n "$EXPLAIN_SAMPLE_N" \
