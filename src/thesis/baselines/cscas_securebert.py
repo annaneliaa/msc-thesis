@@ -1,49 +1,37 @@
 """
-Same experimental setup as baselines/cscas.py / cscas_base.py (temporal
-split, shared eval subsample) -- what changes here is the model (fine-tuned
-DistilBERT instead of RandomForestClassifier) and the input representation
-(every non-similarity field serialized to text, instead of numeric
-columns), per the supervisor-suggested "BERT is good at text" baseline.
+Same experimental setup as cscas_bert.py -- same temporal split, shared
+eval subsample, weighted cross-entropy via WeightedLossTrainer, 8-field
+text serialization, same three training-pool conditions (random
+undersampling, class-weighted, guided by CSCAS) via the same POOL_BUILDERS
+pattern -- see cscas_bert.py's module docstring for the full rationale.
+What changes here is the checkpoint: `cisco-ai/SecureBERT2.0-base` (Cisco,
+2025) instead of distilbert-base-uncased, the domain-adapted encoder in
+the project's LLM-baseline axis (see Docs/Baselines.md) -- fine-tuned from
+`answerdotai/ModernBERT-base` on threat reports, vulnerability
+descriptions, and MITRE ATT&CK-style text.
 
-Each row is serialized into one text string, e.g.:
-  "SignatureText: ET EXPLOIT D-Link ... | SignatureID: 12345 | Proto: 6 |
-   ExtPort: 443 | IntPort: 8080 | AlertCount: 3 |
-   SignatureMatchesPerDay: 1.2 | SCAS: 1"
-The *Similarity columns (Similarity, SignatureIDSimilarity, and the 33
-AttrValueSimilarity columns) are deliberately left out -- they're plain
-numeric scores with no textual content, so serializing them to text gains
-BERT nothing over just handing them to the RF baselines as numbers.
+Unlike v1 (`ehsanaghaei/SecureBERT`, RoBERTa architecture, needed
+Roberta-specific tokenizer/model classes), SecureBERT 2.0 is architecturally
+ModernBERT (its own config.json: `"model_type": "modernbert"`,
+`"architectures": ["ModernBertForMaskedLM"]`) and loads cleanly through the
+`Auto*` classes, same as cscas_bert.py -- the checkpoint ships a
+`tokenizer.json`, so `AutoTokenizer` resolves a fast tokenizer directly.
+`AutoModelForSequenceClassification` loads the pretrained encoder body and
+freshly initializes a new classification head (same "some weights not
+initialized from the checkpoint" pattern as DistilBERT -- expected, that's
+what fine-tuning is for). ModernBERT support landed in transformers 4.48;
+this repo's transformers dependency has been floored there accordingly.
+MAX_LENGTH stays at 256 (unchanged) for parity with the other BERT-family
+baselines here, well under ModernBERT's 8192-token native context -- the
+serialized 8-field rows are short enough that this doesn't truncate.
 
-Same three training-pool conditions as the RF/LogReg/XGBoost baselines --
-random undersampling, class-weighted (natural-ratio), guided by CSCAS --
-via the same POOL_BUILDERS pattern cscas_base.py uses. This is
-N_SEEDS x 3 fine-tuning runs (15 at the default N_SEEDS=5), noticeably more
-GPU time than the class-weighted-only version this script started as; see
-git history if you want the original single-condition scope and its
-rationale.
-
-Unlike sklearn's `class_weight='balanced'`, fine-tuning needs an explicit
-weighted cross-entropy loss -- see WeightedLossTrainer below. Only the
-class-weighted condition actually needs this: random/guided pools are
-already ~balanced by construction (that's the point of undersampling), so
-run_seed only builds class_weights when the pool's own extra_kwargs say
-`class_weight == "balanced"` -- same conditional cscas_base.py uses for
-sklearn's `class_weight` param.
-
-CLASS_WEIGHTED_POOL_CAP (below) can be set (directly, or via the
-CSCAS_CLASS_WEIGHTED_POOL_CAP env var) to bound fine-tuning cost -- left
-uncapped (None) by default, the full 139,532-row natural-ratio pool is
-used, and a single seed at that size measured well over an hour of fit
-time alone.
-
-Evaluates on the shared, frozen eval subsample (see
-_sampling.get_cscas_eval_subsample) -- NOT the full 1.255M-row test set.
-This matches every other non-replication baseline (only cscas.py/
-cscas_base.py's paper-adjacent full-test-set eval is exempt).
+Everything else -- WeightedLossTrainer, CLASS_WEIGHTED_POOL_CAP's open
+"size TBD" decision, shared eval subsample, N_SEEDS -- is identical to
+cscas_bert.py; see that module's docstring for the full rationale.
 
 Run:
     cd src/thesis/baselines
-    python cscas_bert.py
+    python cscas_securebert.py
 
 The data path below is relative to the current working directory (not this
 file's location), so it must be run from src/thesis/baselines/.
@@ -80,9 +68,9 @@ from thesis.baselines._sampling import (
     random_undersample_pool,
 )
 
-MODEL_NAME = "distilbert-base-uncased"
+MODEL_NAME = "cisco-ai/SecureBERT2.0-base"
 MAX_LENGTH = 256  # bump if you see truncation warnings
-N_SEEDS = 5  # same seed count as the RF/LogReg/XGBoost baselines
+N_SEEDS = 5  # same seed count as cscas_bert.py and the RF/LogReg/XGBoost baselines
 BATCH_SIZE = 8
 NUM_EPOCHS = 3
 VAL_FRAC_WITHIN_POOL = 0.15  # stratified carve-out from the training pool, for epoch-level eval/model selection only -- not the final eval set
@@ -93,13 +81,13 @@ VAL_FRAC_WITHIN_POOL = 0.15  # stratified carve-out from the training pool, for 
 _cap_env = os.environ.get("CSCAS_CLASS_WEIGHTED_POOL_CAP")
 CLASS_WEIGHTED_POOL_CAP = (
     int(_cap_env) if _cap_env else None
-)  # see module docstring -- open "size TBD" decision
+)  # see cscas_bert.py's module docstring -- open "size TBD" decision, same call here
 
 # Fine-tuning always sees a small pool (~3,530 rows for random/guided; see
 # CLASS_WEIGHTED_POOL_CAP above for class-weighted). Set this for a cheap
 # 1-seed timing/smoke check before committing to the full N_SEEDS sweep --
-# both modes now evaluate on the same shared eval subsample (see below),
-# so the only difference is seed count and whether results get saved.
+# both modes evaluate on the same shared eval subsample (see below), so the
+# only difference is seed count and whether results get saved.
 QUICK_SANITY_CHECK = os.environ.get("CSCAS_QUICK_SANITY_CHECK", "1") == "1"
 QUICK_SEEDS = 1
 
@@ -115,8 +103,8 @@ assert df["Label"].sum() == 20_952, f"got {df['Label'].sum()}"
 assert df["SCAS"].sum() == 72_672, f"got {df['SCAS'].sum()}"
 
 # 3) Split into train and test sets based on timestamp -- identical boundary
-# to cscas.py/cscas_base.py, so the final test set (and its row count) is the
-# same across the paper baseline, the base-schema baseline, and this one.
+# to cscas.py/cscas_base.py/cscas_bert.py, so the final test set (and its row
+# count) is the same across every CSCAS baseline.
 split_time = pd.Timestamp("2022-01-26 06:23:21+02:00")
 
 train = df[df["Timestamp"] <= split_time].copy()
@@ -127,11 +115,10 @@ assert len(test) == 1_255_792, f"got {len(test)}"
 assert train["Label"].sum() == 1_765, f"got {train['Label'].sum()}"
 assert test["Label"].sum() == 19_187, f"got {test['Label'].sum()}"
 
-# 4) Fields serialized into text. Dropped: Timestamp (used only for the
-# split, not a per-row signal here), Label (the target), ExtIP/IntIP
-# (anonymized per-connection identifiers -- same reasoning cscas.py already
-# applies by excluding them from FEATURE_COLS), and every *Similarity column
-# (plain numeric scores, no textual content -- see module docstring above).
+# 4) Fields serialized into text -- identical to cscas_bert.py. Dropped:
+# Timestamp (used only for the split), Label (the target), ExtIP/IntIP
+# (anonymized identifiers), and every *Similarity column (plain numeric
+# scores, no textual content).
 DROP_COLS = ["Timestamp", "Label", "ExtIP", "IntIP"]
 TEXT_FIELD_COLS = [
     c for c in df.columns if c not in DROP_COLS and not c.endswith("Similarity")
@@ -162,8 +149,7 @@ def build_text_column(frame: pd.DataFrame) -> pd.Series:
 
 
 # 5) Prepare the shared, frozen eval subsample once, outside the seed loop.
-# Same subsample every other non-replication baseline uses -- see module
-# docstring for why this is no longer a timing-only ad hoc sample.
+# Same subsample every other non-replication baseline uses.
 eval_df = get_cscas_eval_subsample(test)
 print(
     f"Evaluating on shared eval subsample: {len(eval_df)} rows, "
@@ -243,9 +229,9 @@ def run_seed(
     condition: str,
 ) -> dict[str, float]:
     """
-    Fine-tune DistilBERT from scratch on `pool`, evaluate once on the
-    shared eval subsample, and return precision/recall/f1 -- one point in
-    the N_SEEDS-seed average for `condition`.
+    Fine-tune SecureBERT 2.0 from its pretrained checkpoint on `pool`, evaluate
+    once on the shared eval subsample, and return precision/recall/f1 --
+    one point in the N_SEEDS-seed average for `condition`.
     """
     t_start = time.time()
     pool_df = pd.DataFrame(
@@ -264,7 +250,7 @@ def run_seed(
     model = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME, num_labels=2)
 
     training_args = TrainingArguments(
-        output_dir=f"/tmp/cscas_bert_{condition}_seed{seed}",
+        output_dir=f"/tmp/cscas_securebert_{condition}_seed{seed}",
         eval_strategy="epoch",
         save_strategy="epoch",
         logging_strategy="epoch",
@@ -321,9 +307,9 @@ def class_weights_tensor(pool: pd.DataFrame, label_col: str = "Label") -> torch.
 
 SEEDS_TO_RUN = range(QUICK_SEEDS) if QUICK_SANITY_CHECK else range(N_SEEDS)
 
-# 7) Three training-pool conditions -- same POOL_BUILDERS pattern as
-# cscas_base.py. `important` (all positive-label rows) feeds random/guided,
-# same as every other trainable baseline.
+# 6) Three training-pool conditions -- same POOL_BUILDERS pattern as
+# cscas_bert.py/cscas_base.py. `important` (all positive-label rows) feeds
+# random/guided, same as every other trainable baseline.
 important = train[train["Label"] == 1]
 
 POOL_BUILDERS = {
@@ -337,7 +323,7 @@ POOL_BUILDERS = {
 results: dict[str, list[dict[str, float]]] = {name: [] for name in POOL_BUILDERS}
 
 for condition, build_pool in POOL_BUILDERS.items():
-    print(f"\n=== {condition} (BERT, non-similarity fields as text) ===")
+    print(f"\n=== {condition} (SecureBERT 2.0, non-similarity fields as text) ===")
 
     for seed in SEEDS_TO_RUN:
         pool, extra_kwargs = build_pool(seed)
@@ -367,11 +353,12 @@ if QUICK_SANITY_CHECK:
     )
 else:
     save_baseline_results(
-        name="cscas_bert",
+        name="cscas_securebert",
         description=(
-            "8 non-similarity fields serialized to text, fine-tuned DistilBERT, "
-            "all three training-pool conditions (random undersampling, "
-            "class-weighted, guided by CSCAS), evaluated on the shared eval subsample"
+            "8 non-similarity fields serialized to text, fine-tuned SecureBERT 2.0 "
+            "(ModernBERT architecture), all three training-pool conditions (random "
+            "undersampling, class-weighted, guided by CSCAS), evaluated on the "
+            "shared eval subsample"
         ),
         results=results,
     )

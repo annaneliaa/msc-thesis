@@ -1,37 +1,35 @@
 """
-Reproduces the CSCAS paper's own two baselines (Table IV) -- random
-undersampling and guided by CSCAS's SCAS outlier clusters -- using the
-paper's own 42 raw feature columns and a RandomForestClassifier, averaged
-over 5 seeds. Also runs a third, non-paper condition (class-weighted,
-natural-ratio) alongside them, per the project's extended baseline design
-(see Docs/Baselines.md).
-
-All three conditions evaluate on the FULL test set, for all three -- this
-script is the anchor replication target, and matching the paper's published
-F1=0.908 (guided) requires exactly that protocol. The new class-weighted
-condition has no published target to match; it just needs to run cleanly.
+Same experimental setup as cscas_base.py (base schema, training-pool
+sampling, shared eval subsample, 5 seeds) -- swaps RandomForestClassifier
+for XGBClassifier, the "modern default tabular baseline" in the project's
+baseline design (see Docs/Baselines.md). A straight swap of the RF
+pattern: XGBoost, like RF, is tree-based and handles the `-1` sentinel
+values in CSCAS's base schema the same way RF does (splits just treat -1
+as a very low value) -- no scaling, no missingness flags needed, unlike
+cscas_logreg.py.
 
 Run:
     cd src/thesis/baselines
-    python cscas.py
+    python cscas_xgboost.py
 
 The data path below is relative to the current working directory (not this
 file's location), so it must be run from src/thesis/baselines/.
 """
 
 import pandas as pd
-from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import precision_score, recall_score, f1_score
+from xgboost import XGBClassifier
 
 from thesis.baselines._results import save_baseline_results
 from thesis.baselines._sampling import (
     class_weighted_pool,
+    get_cscas_eval_subsample,
     guided_by_cscas_pool,
     random_undersample_pool,
 )
 
-# RandomForestClassifier here is CPU-only -- no GPU/device selection in this
-# script -- printed for parity with the torch-based baselines' device line.
+# XGBClassifier here runs CPU-only (no tree_method/device set to use a GPU)
+# -- printed for parity with the torch-based baselines' device line.
 print("Using device: cpu")
 
 # 1) Load and sort dataset
@@ -56,18 +54,14 @@ assert len(test) == 1_255_792, f"got {len(test)}"
 assert train["Label"].sum() == 1_765, f"got {train['Label'].sum()}"
 assert test["Label"].sum() == 19_187, f"got {test['Label'].sum()}"
 
-# 4) Define feature columns
-DROP_COLS = ["Timestamp", "SignatureText", "Label", "ExtIP", "IntIP"]
+# 4) Base schema -- same 41 columns as cscas_base.py
+DROP_COLS = ["Timestamp", "SignatureText", "Label", "ExtIP", "IntIP", "SignatureID"]
 FEATURE_COLS = [c for c in df.columns if c not in DROP_COLS]
-
-# Sanity check: should be 42 columns
-# SignatureID, SignatureMatchesPerDay, AlertCount, Proto,
-# ExtPort, IntPort, Similarity, SCAS,
-# + 34 AttrSimilarity columns
+assert len(FEATURE_COLS) == 41, f"got {len(FEATURE_COLS)}"
 print(f"Feature count: {len(FEATURE_COLS)}")
 print(FEATURE_COLS)
 
-# 5) Verify training pools against Table IV (pool construction itself now
+# 5) Verify training pools against Table IV (pool construction itself
 # lives in _sampling.py -- these are just the sanity-check counts).
 important = train[train["Label"] == 1]
 irr_inliers = train[(train["Label"] == 0) & (train["SCAS"] == 0)]
@@ -77,9 +71,14 @@ assert len(important) == 1_765, f"got {len(important)}"
 assert len(irr_inliers) == 133_614, f"got {len(irr_inliers)}"
 assert len(irr_outliers) == 4_153, f"got {len(irr_outliers)}"
 
-# 6) Prepare test set -- full test set for every condition (see docstring).
-X_test = test[FEATURE_COLS].values
-y_test = test["Label"].values
+# 6) Prepare eval set -- shared, frozen subsample (not the full test set --
+# that's reserved for the paper-replication script only).
+eval_df = get_cscas_eval_subsample(test)
+X_test = eval_df[FEATURE_COLS].values
+y_test = eval_df["Label"].values
+print(
+    f"Evaluating on shared eval subsample: {len(eval_df)} rows, {int(eval_df['Label'].sum())} positive"
+)
 
 # 7) Three training-pool conditions
 POOL_BUILDERS = {
@@ -88,7 +87,7 @@ POOL_BUILDERS = {
     "guided": lambda seed: guided_by_cscas_pool(train, important, seed),
 }
 
-TARGETS = {
+REFERENCE = {
     "random": "P=0.669, R=0.963, F1=0.789",
     "class_weighted": None,
     "guided": "P=0.868, R=0.952, F1=0.908",
@@ -97,10 +96,12 @@ TARGETS = {
 results: dict[str, list[dict[str, float]]] = {name: [] for name in POOL_BUILDERS}
 
 for condition, build_pool in POOL_BUILDERS.items():
-    target = TARGETS[condition]
-    print(f"\n=== {condition} ===")
-    if target:
-        print(f"    Paper target: {target}")
+    reference = REFERENCE[condition]
+    print(f"\n=== {condition} (XGBoost, base schema) ===")
+    if reference:
+        print(
+            f"    Paper reference (RF, 42 numeric features, full test set): {reference}"
+        )
 
     for seed in range(5):
         pool, extra_kwargs = build_pool(seed)
@@ -108,11 +109,11 @@ for condition, build_pool in POOL_BUILDERS.items():
         X_tr = pool[FEATURE_COLS].values
         y_tr = pool["Label"].values
 
-        clf = RandomForestClassifier(
+        clf = XGBClassifier(
             n_estimators=100,
             random_state=seed,
             n_jobs=-1,
-            class_weight=extra_kwargs.get("class_weight"),
+            scale_pos_weight=extra_kwargs.get("scale_pos_weight"),
         )
         clf.fit(X_tr, y_tr)
         y_pred = clf.predict(X_test)
@@ -127,13 +128,21 @@ for condition, build_pool in POOL_BUILDERS.items():
     print(f"  AVERAGE: P={avg.precision:.3f} R={avg.recall:.3f} F1={avg.f1:.3f}")
 
 
-# Scenario                          Expected P      Expected R  Expected F1
-# random (undersampling)            0.669           0.963       0.789
-# guided (by CSCAS)                 0.868           0.952       0.908
-# class_weighted                    -- no published target --
+print(
+    "\n=== Summary: paper (RF, 42 features, full test set) vs "
+    "XGBoost (base schema, shared eval subsample) ==="
+)
+for condition, reference in REFERENCE.items():
+    avg = pd.DataFrame(results[condition]).mean()
+    ref_str = f"paper {reference}  |  " if reference else ""
+    print(
+        f"{condition:<16}"
+        f"{ref_str}"
+        f"mine P={avg.precision:.3f} R={avg.recall:.3f} F1={avg.f1:.3f}"
+    )
 
 save_baseline_results(
-    name="cscas",
-    description="Paper's own 42 raw features, RandomForestClassifier(n_estimators=100)",
+    name="cscas_xgboost",
+    description="Base schema (41 features), XGBClassifier(n_estimators=100), evaluated on the shared eval subsample",
     results=results,
 )

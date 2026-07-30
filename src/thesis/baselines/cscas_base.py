@@ -1,10 +1,15 @@
 """
 Same experimental setup as baselines/cscas.py (split, training-pool
-sampling, classifier, seeds) -- the only thing that changes is
+sampling, classifier, seeds) -- the only things that change are (a)
 FEATURE_COLS, swapped from the paper's own 42 raw columns to this
 project's "base" schema (see encoders/baseline.py:
 compute_cscas_baseline_features), which is the paper's feature set minus
-the raw SignatureID column (kept out deliberately -- see docstring there).
+the raw SignatureID column (kept out deliberately -- see docstring there),
+and (b) the eval set: unlike cscas.py (the paper-replication anchor, which
+stays on the full test set forever), this is an internal-system baseline,
+so it scores all three conditions on the shared, frozen evaluation
+subsample (see _sampling.get_cscas_eval_subsample) for a fair head-to-head
+against the other non-replication baselines.
 
 Run:
     cd src/thesis/baselines
@@ -19,6 +24,16 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import precision_score, recall_score, f1_score
 
 from thesis.baselines._results import save_baseline_results
+from thesis.baselines._sampling import (
+    class_weighted_pool,
+    get_cscas_eval_subsample,
+    guided_by_cscas_pool,
+    random_undersample_pool,
+)
+
+# RandomForestClassifier here is CPU-only -- no GPU/device selection in this
+# script -- printed for parity with the torch-based baselines' device line.
+print("Using device: cpu")
 
 # 1) Load and sort dataset
 
@@ -56,104 +71,85 @@ assert len(FEATURE_COLS) == 41, f"got {len(FEATURE_COLS)}"
 print(f"Feature count: {len(FEATURE_COLS)}")
 print(FEATURE_COLS)
 
-# 5) Build training pools
-# Important points (Label=1) — all of them
+# 5) Verify training pools against Table IV (pool construction itself now
+# lives in _sampling.py -- these are just the sanity-check counts).
 important = train[train["Label"] == 1]
-
-# Irrelevant inliers (Label=0, SCAS=0)
 irr_inliers = train[(train["Label"] == 0) & (train["SCAS"] == 0)]
-
-# Irrelevant outliers (Label=0, SCAS=1)
 irr_outliers = train[(train["Label"] == 0) & (train["SCAS"] == 1)]
 
-# Verify against Table IV
 assert len(important) == 1_765, f"got {len(important)}"
 assert len(irr_inliers) == 133_614, f"got {len(irr_inliers)}"
 assert len(irr_outliers) == 4_153, f"got {len(irr_outliers)}"
 
-# 6) Prepare test set
-X_test = test[FEATURE_COLS].values
-y_test = test["Label"].values
-
-# 7) Baseline 1 = random undersampling
-print("=== Baseline 1: Random undersampling (my 41-feature base schema) ===")
+# 6) Prepare eval set -- shared, frozen subsample (not the full test set --
+# that's reserved for the paper-replication script only).
+eval_df = get_cscas_eval_subsample(test)
+X_test = eval_df[FEATURE_COLS].values
+y_test = eval_df["Label"].values
 print(
-    "    Paper reference (their 42 features incl. SignatureID): P=0.669, R=0.963, F1=0.789"
+    f"Evaluating on shared eval subsample: {len(eval_df)} rows, {int(eval_df['Label'].sum())} positive"
 )
 
-results_b1 = []
-irrelevant = train[train["Label"] == 0]
+# 7) Three training-pool conditions
+POOL_BUILDERS = {
+    "random": lambda seed: random_undersample_pool(train, important, seed),
+    "class_weighted": lambda seed: class_weighted_pool(train, seed=seed),
+    "guided": lambda seed: guided_by_cscas_pool(train, important, seed),
+}
 
-for seed in range(5):
-    irr_sample = irrelevant.sample(n=1_765, random_state=seed)
-    sample = pd.concat([important, irr_sample])
+REFERENCE = {
+    "random": "P=0.669, R=0.963, F1=0.789",
+    "class_weighted": None,
+    "guided": "P=0.868, R=0.952, F1=0.908",
+}
 
-    X_tr = sample[FEATURE_COLS].values
-    y_tr = sample["Label"].values
+results: dict[str, list[dict[str, float]]] = {name: [] for name in POOL_BUILDERS}
 
-    clf = RandomForestClassifier(n_estimators=100, random_state=seed, n_jobs=-1)
-    clf.fit(X_tr, y_tr)
-    y_pred = clf.predict(X_test)
+for condition, build_pool in POOL_BUILDERS.items():
+    reference = REFERENCE[condition]
+    print(f"\n=== {condition} (my 41-feature base schema) ===")
+    if reference:
+        print(f"    Paper reference (their 42 features incl. SignatureID): {reference}")
 
-    p = precision_score(y_test, y_pred)
-    r = recall_score(y_test, y_pred)
-    f = f1_score(y_test, y_pred)
-    results_b1.append({"precision": p, "recall": r, "f1": f})
-    print(f"  seed={seed}: P={p:.3f} R={r:.3f} F1={f:.3f}")
+    for seed in range(5):
+        pool, extra_kwargs = build_pool(seed)
 
-avg_b1 = pd.DataFrame(results_b1).mean()
+        X_tr = pool[FEATURE_COLS].values
+        y_tr = pool["Label"].values
+
+        clf = RandomForestClassifier(
+            n_estimators=100,
+            random_state=seed,
+            n_jobs=-1,
+            class_weight=extra_kwargs.get("class_weight"),
+        )
+        clf.fit(X_tr, y_tr)
+        y_pred = clf.predict(X_test)
+
+        p = precision_score(y_test, y_pred)
+        r = recall_score(y_test, y_pred)
+        f = f1_score(y_test, y_pred)
+        results[condition].append({"precision": p, "recall": r, "f1": f})
+        print(f"  seed={seed}: P={p:.3f} R={r:.3f} F1={f:.3f}")
+
+    avg = pd.DataFrame(results[condition]).mean()
+    print(f"  AVERAGE: P={avg.precision:.3f} R={avg.recall:.3f} F1={avg.f1:.3f}")
+
+
 print(
-    f"  AVERAGE: P={avg_b1.precision:.3f} " f"R={avg_b1.recall:.3f} F1={avg_b1.f1:.3f}"
+    "\n=== Summary: paper (42 features, full test set) vs mine (41 features, no SignatureID, shared eval subsample) ==="
 )
-
-
-# 8) Run baseline 2 = guided by CSCAS
-print("\n=== Baseline 2: Guided by CSCAS (my 41-feature base schema) ===")
-print(
-    "    Paper reference (their 42 features incl. SignatureID): P=0.868, R=0.952, F1=0.908"
-)
-
-results_b2 = []
-
-for seed in range(5):
-    irr_inl_sample = irr_inliers.sample(n=882, random_state=seed)
-    irr_out_sample = irr_outliers.sample(n=883, random_state=seed)
-    sample = pd.concat([important, irr_inl_sample, irr_out_sample])
-
-    X_tr = sample[FEATURE_COLS].values
-    y_tr = sample["Label"].values
-
-    clf = RandomForestClassifier(n_estimators=100, random_state=seed, n_jobs=-1)
-    clf.fit(X_tr, y_tr)
-    y_pred = clf.predict(X_test)
-
-    p = precision_score(y_test, y_pred)
-    r = recall_score(y_test, y_pred)
-    f = f1_score(y_test, y_pred)
-    results_b2.append({"precision": p, "recall": r, "f1": f})
-    print(f"  seed={seed}: P={p:.3f} R={r:.3f} F1={f:.3f}")
-
-avg_b2 = pd.DataFrame(results_b2).mean()
-print(
-    f"  AVERAGE: P={avg_b2.precision:.3f} " f"R={avg_b2.recall:.3f} F1={avg_b2.f1:.3f}"
-)
-
-
-print("\n=== Summary: paper (42 features) vs mine (41 features, no SignatureID) ===")
-print(
-    f"{'Baseline 1 (random undersampling)':<40}"
-    f"paper P=0.669 R=0.963 F1=0.789  |  "
-    f"mine P={avg_b1.precision:.3f} R={avg_b1.recall:.3f} F1={avg_b1.f1:.3f}"
-)
-print(
-    f"{'Baseline 2 (guided by CSCAS)':<40}"
-    f"paper P=0.868 R=0.952 F1=0.908  |  "
-    f"mine P={avg_b2.precision:.3f} R={avg_b2.recall:.3f} F1={avg_b2.f1:.3f}"
-)
+for condition, reference in REFERENCE.items():
+    avg = pd.DataFrame(results[condition]).mean()
+    ref_str = f"paper {reference}  |  " if reference else ""
+    print(
+        f"{condition:<16}"
+        f"{ref_str}"
+        f"mine P={avg.precision:.3f} R={avg.recall:.3f} F1={avg.f1:.3f}"
+    )
 
 save_baseline_results(
     name="cscas_base",
-    description="This project's base schema (41 features, no SignatureID), RandomForestClassifier(n_estimators=100)",
-    results_b1=results_b1,
-    results_b2=results_b2,
+    description="This project's base schema (41 features, no SignatureID), RandomForestClassifier(n_estimators=100), evaluated on the shared eval subsample",
+    results=results,
 )
