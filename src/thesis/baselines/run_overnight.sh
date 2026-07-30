@@ -1,18 +1,26 @@
 #!/usr/bin/env bash
-# Overnight batch runner: real (non-quick) sweeps for cscas_bert.py and
-# cscas_securebert.py, followed by re-executing the comparison notebook so
+# Overnight batch runner: every implemented baseline (cscas.py,
+# cscas_base.py, cscas_logreg.py, cscas_xgboost.py, cscas_bert.py,
+# cscas_securebert.py), followed by re-executing the comparison notebook so
 # every plot is baked in and ready to look at in the morning.
 #
-# Does NOT touch cscas.py/cscas_base.py/cscas_logreg.py/cscas_xgboost.py --
-# those already have real saved results. Does NOT run cscas_zeroshot.py --
-# it needs a gated model + your own Hugging Face auth, left out of this
-# batch deliberately (run it yourself separately once you've confirmed
-# access is set up).
+# Does NOT run cscas_zeroshot.py -- gated (needs a Llama 3.1 license
+# acceptance + your own Hugging Face auth) and not yet run for real here.
+# The notebook already tolerates its results file being absent (prints a
+# "[skip] ... not found" note and skips the zero-shot plot), so leaving it
+# out of this batch doesn't break the notebook step. Run cscas_zeroshot.py
+# yourself separately once you've confirmed access is set up.
+#
+# The 4 tabular scripts (cscas/cscas_base/cscas_logreg/cscas_xgboost) are
+# RF/LogReg/XGBoost -- CPU, seconds per seed regardless of condition count,
+# so re-running all three conditions x 5 seeds every time is cheap; this
+# always re-generates their saved results fresh rather than assuming
+# they're already there.
 #
 # class_weighted is capped at 15,000 rows (stratified, proportional -- see
-# _sampling.class_weighted_pool) for both scripts, via
-# CSCAS_CLASS_WEIGHTED_POOL_CAP, so both scripts' full N_SEEDS=3 x 3-
-# condition sweeps fit comfortably in one overnight run -- uncapped, a
+# _sampling.class_weighted_pool) for the two fine-tuned scripts, via
+# CSCAS_CLASS_WEIGHTED_POOL_CAP, so their full N_SEEDS=5 x 3-condition
+# sweeps (15 fine-tune runs each) fit in one overnight run -- uncapped, a
 # single SecureBERT smoke test's class_weighted stage alone measured at
 # 2+ hours remaining at only 16% progress for ONE seed.
 #
@@ -58,6 +66,10 @@ run_step() {
     echo "=== Overnight baseline run started at $(date) ==="
     echo "CSCAS_QUICK_SANITY_CHECK=$CSCAS_QUICK_SANITY_CHECK CSCAS_CLASS_WEIGHTED_POOL_CAP=$CSCAS_CLASS_WEIGHTED_POOL_CAP"
 
+    run_step "cscas.py" "$PYTHON" cscas.py
+    run_step "cscas_base.py" "$PYTHON" cscas_base.py
+    run_step "cscas_logreg.py" "$PYTHON" cscas_logreg.py
+    run_step "cscas_xgboost.py" "$PYTHON" cscas_xgboost.py
     run_step "cscas_bert.py" "$PYTHON" cscas_bert.py
     run_step "cscas_securebert.py" "$PYTHON" cscas_securebert.py
     run_step "notebook execution" "$PYTHON" -m jupyter nbconvert \

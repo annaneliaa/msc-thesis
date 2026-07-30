@@ -1,8 +1,9 @@
 """
 Zero-shot LLM baseline: no training step, so none of the three training-
 pool conditions (random/class-weighted/guided) apply here. Llama-3.1-8B-
-Instruct is prompted directly with the same 8-field text serialization
-cscas_bert.py/cscas_securebert.py use (reused as the body of a prompt
+Instruct is prompted directly with the same 6-field reduced text
+serialization cscas_bert.py/cscas_securebert.py use (no SignatureID/SCAS/
+Similarity -- see cscas_base.py's module docstring for why; reused as the body of a prompt
 instead of fed straight to a fine-tuned classifier), and the generated
 label is parsed into precision/recall/f1. Single deterministic run --
 greedy decoding, no seed loop -- this is the one baseline script that
@@ -89,13 +90,15 @@ assert len(test) == 1_255_792, f"got {len(test)}"
 assert test["Label"].sum() == 19_187, f"got {test['Label'].sum()}"
 
 # 4) Fields serialized into text -- identical to cscas_bert.py/cscas_securebert.py.
-DROP_COLS = ["Timestamp", "Label", "ExtIP", "IntIP"]
+DROP_COLS = ["Timestamp", "Label", "ExtIP", "IntIP", "SignatureID", "SCAS"]
 TEXT_FIELD_COLS = [
     c for c in df.columns if c not in DROP_COLS and not c.endswith("Similarity")
 ]
 assert (
-    len(TEXT_FIELD_COLS) == 8
-), f"got {len(TEXT_FIELD_COLS)}"  # SignatureText, SignatureID, SignatureMatchesPerDay, AlertCount, Proto, ExtPort, IntPort, SCAS
+    len(TEXT_FIELD_COLS) == 6
+), (
+    f"got {len(TEXT_FIELD_COLS)}"
+)  # SignatureText, SignatureMatchesPerDay, AlertCount, Proto, ExtPort, IntPort
 
 
 def build_text_column(frame: pd.DataFrame) -> pd.Series:
@@ -232,8 +235,8 @@ else:
     save_zeroshot_results(
         name="cscas_zeroshot",
         description=(
-            f"Zero-shot {MODEL_NAME}, 8 non-similarity fields serialized "
-            "to a prompt, evaluated on the shared eval subsample"
+            f"Zero-shot {MODEL_NAME}, 6 reduced fields (no SignatureID/SCAS/"
+            "Similarity) serialized to a prompt, evaluated on the shared eval subsample"
         ),
         metrics={"precision": p, "recall": r, "f1": f},
     )

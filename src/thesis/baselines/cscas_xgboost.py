@@ -54,10 +54,22 @@ assert len(test) == 1_255_792, f"got {len(test)}"
 assert train["Label"].sum() == 1_765, f"got {train['Label'].sum()}"
 assert test["Label"].sum() == 19_187, f"got {test['Label'].sum()}"
 
-# 4) Base schema -- same 41 columns as cscas_base.py
-DROP_COLS = ["Timestamp", "SignatureText", "Label", "ExtIP", "IntIP", "SignatureID"]
-FEATURE_COLS = [c for c in df.columns if c not in DROP_COLS]
-assert len(FEATURE_COLS) == 41, f"got {len(FEATURE_COLS)}"
+# 4) Reduced base schema -- same 5 columns as cscas_base.py (see that
+# module's docstring for what's dropped and why: SignatureID, SCAS, and
+# every *Similarity column, all unrealistic for a real deployment).
+DROP_COLS = [
+    "Timestamp",
+    "SignatureText",
+    "Label",
+    "ExtIP",
+    "IntIP",
+    "SignatureID",
+    "SCAS",
+]
+FEATURE_COLS = [
+    c for c in df.columns if c not in DROP_COLS and not c.endswith("Similarity")
+]
+assert len(FEATURE_COLS) == 5, f"got {len(FEATURE_COLS)}"
 print(f"Feature count: {len(FEATURE_COLS)}")
 print(FEATURE_COLS)
 
@@ -97,7 +109,7 @@ results: dict[str, list[dict[str, float]]] = {name: [] for name in POOL_BUILDERS
 
 for condition, build_pool in POOL_BUILDERS.items():
     reference = REFERENCE[condition]
-    print(f"\n=== {condition} (XGBoost, base schema) ===")
+    print(f"\n=== {condition} (XGBoost, reduced base schema) ===")
     if reference:
         print(
             f"    Paper reference (RF, 42 numeric features, full test set): {reference}"
@@ -130,7 +142,7 @@ for condition, build_pool in POOL_BUILDERS.items():
 
 print(
     "\n=== Summary: paper (RF, 42 features, full test set) vs "
-    "XGBoost (base schema, shared eval subsample) ==="
+    "XGBoost (reduced base schema, shared eval subsample) ==="
 )
 for condition, reference in REFERENCE.items():
     avg = pd.DataFrame(results[condition]).mean()
@@ -143,6 +155,10 @@ for condition, reference in REFERENCE.items():
 
 save_baseline_results(
     name="cscas_xgboost",
-    description="Base schema (41 features), XGBClassifier(n_estimators=100), evaluated on the shared eval subsample",
+    description=(
+        "Reduced base schema (5 features -- SignatureID, SCAS, and all "
+        "Similarity columns removed as unrealistic for a real deployment), "
+        "XGBClassifier(n_estimators=100), evaluated on the shared eval subsample"
+    ),
     results=results,
 )

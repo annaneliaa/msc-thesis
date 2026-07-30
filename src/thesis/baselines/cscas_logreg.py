@@ -12,15 +12,13 @@ script needs two things neither of the tree-based scripts does:
      then applied to both that pool and the eval subsample.
 
   2. A decision on how to treat CSCAS's `-1` "not applicable" sentinel.
-     It appears in 30 of the base schema's 41 feature columns -- as high
-     as 100% of rows for several protocol-specific *Similarity columns,
-     since e.g. DnsRrnameSimilarity is only meaningful for DNS alerts and
-     is -1 for every other protocol. Scaling -1 in place would conflate
-     "structurally not applicable" with "very dissimilar" on the same
-     continuous [-1, 1] axis, which badly distorts StandardScaler's
-     fitted mean/std for columns where -1 is the majority value (RF/
-     XGBoost don't have this problem -- tree splits just treat -1 as a
-     very low value, no distortion). Decision: add one binary
+     It appears in 3 of the reduced base schema's 5 feature columns (Proto,
+     ExtPort, IntPort -- e.g. ExtPort is -1 whenever a protocol has no
+     notion of a port). Scaling -1 in place would conflate "structurally
+     not applicable" with "very dissimilar" on the same continuous axis,
+     which distorts StandardScaler's fitted mean/std for columns where -1
+     is a sizable share of rows (RF/XGBoost don't have this problem -- tree
+     splits just treat -1 as a very low value, no distortion). Decision: add one binary
      `{col}_missing` indicator column per sentinel-bearing column,
      impute the sentinel to 0 in the original column, then scale
      everything (imputed values + flags) together. This lets the linear
@@ -80,10 +78,22 @@ assert len(test) == 1_255_792, f"got {len(test)}"
 assert train["Label"].sum() == 1_765, f"got {train['Label'].sum()}"
 assert test["Label"].sum() == 19_187, f"got {test['Label'].sum()}"
 
-# 4) Base schema -- same 41 columns as cscas_base.py
-DROP_COLS = ["Timestamp", "SignatureText", "Label", "ExtIP", "IntIP", "SignatureID"]
-FEATURE_COLS = [c for c in df.columns if c not in DROP_COLS]
-assert len(FEATURE_COLS) == 41, f"got {len(FEATURE_COLS)}"
+# 4) Reduced base schema -- same 5 columns as cscas_base.py (see that
+# module's docstring for what's dropped and why: SignatureID, SCAS, and
+# every *Similarity column, all unrealistic for a real deployment).
+DROP_COLS = [
+    "Timestamp",
+    "SignatureText",
+    "Label",
+    "ExtIP",
+    "IntIP",
+    "SignatureID",
+    "SCAS",
+]
+FEATURE_COLS = [
+    c for c in df.columns if c not in DROP_COLS and not c.endswith("Similarity")
+]
+assert len(FEATURE_COLS) == 5, f"got {len(FEATURE_COLS)}"
 print(f"Feature count: {len(FEATURE_COLS)}")
 print(FEATURE_COLS)
 
@@ -145,7 +155,7 @@ results: dict[str, list[dict[str, float]]] = {name: [] for name in POOL_BUILDERS
 for condition, build_pool in POOL_BUILDERS.items():
     reference = REFERENCE[condition]
     print(
-        f"\n=== {condition} (LogisticRegression, base schema + missingness flags) ==="
+        f"\n=== {condition} (LogisticRegression, reduced base schema + missingness flags) ==="
     )
     if reference:
         print(
@@ -187,7 +197,7 @@ for condition, build_pool in POOL_BUILDERS.items():
 
 print(
     "\n=== Summary: paper (RF, 42 features, full test set) vs "
-    "LogReg (base schema + missingness flags, shared eval subsample) ==="
+    "LogReg (reduced base schema + missingness flags, shared eval subsample) ==="
 )
 for condition, reference in REFERENCE.items():
     avg = pd.DataFrame(results[condition]).mean()
@@ -201,9 +211,10 @@ for condition, reference in REFERENCE.items():
 save_baseline_results(
     name="cscas_logreg",
     description=(
-        "Base schema (41 features + missingness flags for -1 sentinel "
-        "columns), StandardScaler, LogisticRegression, evaluated on the "
-        "shared eval subsample"
+        "Reduced base schema (5 features -- SignatureID, SCAS, and all "
+        "Similarity columns removed as unrealistic for a real deployment -- "
+        "plus missingness flags for -1 sentinel columns), StandardScaler, "
+        "LogisticRegression, evaluated on the shared eval subsample"
     ),
     results=results,
 )

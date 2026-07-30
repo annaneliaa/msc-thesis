@@ -1,7 +1,8 @@
 """
 Same experimental setup as cscas_bert.py -- same temporal split, shared
-eval subsample, weighted cross-entropy via WeightedLossTrainer, 8-field
-text serialization, same three training-pool conditions (random
+eval subsample, weighted cross-entropy via WeightedLossTrainer, 6-field
+reduced text serialization (no SignatureID/SCAS/Similarity), same three
+training-pool conditions (random
 undersampling, class-weighted, guided by CSCAS) via the same POOL_BUILDERS
 pattern -- see cscas_bert.py's module docstring for the full rationale.
 What changes here is the checkpoint: `cisco-ai/SecureBERT2.0-base` (Cisco,
@@ -23,7 +24,7 @@ what fine-tuning is for). ModernBERT support landed in transformers 4.48;
 this repo's transformers dependency has been floored there accordingly.
 MAX_LENGTH stays at 256 (unchanged) for parity with the other BERT-family
 baselines here, well under ModernBERT's 8192-token native context -- the
-serialized 8-field rows are short enough that this doesn't truncate.
+serialized 6-field rows are short enough that this doesn't truncate.
 
 Everything else -- WeightedLossTrainer, CLASS_WEIGHTED_POOL_CAP's open
 "size TBD" decision, shared eval subsample, N_SEEDS -- is identical to
@@ -117,15 +118,18 @@ assert test["Label"].sum() == 19_187, f"got {test['Label'].sum()}"
 
 # 4) Fields serialized into text -- identical to cscas_bert.py. Dropped:
 # Timestamp (used only for the split), Label (the target), ExtIP/IntIP
-# (anonymized identifiers), and every *Similarity column (plain numeric
-# scores, no textual content).
-DROP_COLS = ["Timestamp", "Label", "ExtIP", "IntIP"]
+# (anonymized identifiers), SignatureID (nominal identifier), SCAS (the
+# paper's own outlier/inlier flag), and every *Similarity column (plain
+# numeric scores, no textual content).
+DROP_COLS = ["Timestamp", "Label", "ExtIP", "IntIP", "SignatureID", "SCAS"]
 TEXT_FIELD_COLS = [
     c for c in df.columns if c not in DROP_COLS and not c.endswith("Similarity")
 ]
 assert (
-    len(TEXT_FIELD_COLS) == 8
-), f"got {len(TEXT_FIELD_COLS)}"  # SignatureText, SignatureID, SignatureMatchesPerDay, AlertCount, Proto, ExtPort, IntPort, SCAS
+    len(TEXT_FIELD_COLS) == 6
+), (
+    f"got {len(TEXT_FIELD_COLS)}"
+)  # SignatureText, SignatureMatchesPerDay, AlertCount, Proto, ExtPort, IntPort
 print(f"Fields serialized into text: {len(TEXT_FIELD_COLS)}")
 print(TEXT_FIELD_COLS)
 
@@ -323,7 +327,7 @@ POOL_BUILDERS = {
 results: dict[str, list[dict[str, float]]] = {name: [] for name in POOL_BUILDERS}
 
 for condition, build_pool in POOL_BUILDERS.items():
-    print(f"\n=== {condition} (SecureBERT 2.0, non-similarity fields as text) ===")
+    print(f"\n=== {condition} (SecureBERT 2.0, reduced fields as text) ===")
 
     for seed in SEEDS_TO_RUN:
         pool, extra_kwargs = build_pool(seed)
@@ -355,10 +359,10 @@ else:
     save_baseline_results(
         name="cscas_securebert",
         description=(
-            "8 non-similarity fields serialized to text, fine-tuned SecureBERT 2.0 "
-            "(ModernBERT architecture), all three training-pool conditions (random "
-            "undersampling, class-weighted, guided by CSCAS), evaluated on the "
-            "shared eval subsample"
+            "6 reduced fields (no SignatureID/SCAS/Similarity) serialized to text, "
+            "fine-tuned SecureBERT 2.0 (ModernBERT architecture), all three "
+            "training-pool conditions (random undersampling, class-weighted, "
+            "guided by CSCAS), evaluated on the shared eval subsample"
         ),
         results=results,
     )

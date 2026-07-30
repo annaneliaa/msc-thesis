@@ -1,11 +1,25 @@
 """
 Same experimental setup as baselines/cscas.py (split, training-pool
 sampling, classifier, seeds) -- the only things that change are (a)
-FEATURE_COLS, swapped from the paper's own 42 raw columns to this
-project's "base" schema (see encoders/baseline.py:
-compute_cscas_baseline_features), which is the paper's feature set minus
-the raw SignatureID column (kept out deliberately -- see docstring there),
-and (b) the eval set: unlike cscas.py (the paper-replication anchor, which
+FEATURE_COLS and (b) the eval set.
+
+FEATURE_COLS drops, on top of the paper's own DROP_COLS (Timestamp,
+SignatureText, Label, ExtIP, IntIP): SignatureID (nominal identifier, not
+a real signal -- same reasoning encoders/baseline.py's
+compute_cscas_baseline_features already applies), SCAS (the paper's own
+CSCAS outlier/inlier flag -- still used to build the "guided" pool's rows
+in _sampling.guided_by_cscas_pool, just no longer handed to the classifier
+as a feature), and every column ending in "Similarity" (the bare
+`Similarity` column plus all 34 per-field `*Similarity` columns). None of
+these are things a real deployment could compute for a fresh alert without
+already knowing the answer or running the exact same offline similarity
+pipeline CSCAS's paper did -- see Docs/Baselines.md. This is a deliberately
+narrower cut than compute_cscas_baseline_features (which still includes
+SCAS/similarity/attr_value:* today), so the two have diverged; this
+script's FEATURE_COLS is the source of truth for what "the reduced
+baselines" actually train on now.
+
+(b) the eval set: unlike cscas.py (the paper-replication anchor, which
 stays on the full test set forever), this is an internal-system baseline,
 so it scores all three conditions on the shared, frozen evaluation
 subsample (see _sampling.get_cscas_eval_subsample) for a fair head-to-head
@@ -57,17 +71,23 @@ assert len(test) == 1_255_792, f"got {len(test)}"
 assert train["Label"].sum() == 1_765, f"got {train['Label'].sum()}"
 assert test["Label"].sum() == 19_187, f"got {test['Label'].sum()}"
 
-# 4) Define feature columns
-# Dropped vs. the paper's own DROP_COLS (Timestamp, SignatureText, Label,
-# ExtIP, IntIP): also drop SignatureID, since this project's base schema
-# excludes it as a raw nominal identifier.
-DROP_COLS = ["Timestamp", "SignatureText", "Label", "ExtIP", "IntIP", "SignatureID"]
-FEATURE_COLS = [c for c in df.columns if c not in DROP_COLS]
+# 4) Define feature columns -- see module docstring for what's dropped and why.
+DROP_COLS = [
+    "Timestamp",
+    "SignatureText",
+    "Label",
+    "ExtIP",
+    "IntIP",
+    "SignatureID",
+    "SCAS",
+]
+FEATURE_COLS = [
+    c for c in df.columns if c not in DROP_COLS and not c.endswith("Similarity")
+]
 
-# Sanity check: should be 41 columns (paper's 42 minus SignatureID) --
-# SignatureMatchesPerDay, AlertCount, Proto, ExtPort, IntPort, Similarity,
-# SCAS, SignatureIDSimilarity + 33 AttrSimilarity columns
-assert len(FEATURE_COLS) == 41, f"got {len(FEATURE_COLS)}"
+# Sanity check: should be 5 columns -- SignatureMatchesPerDay, AlertCount,
+# Proto, ExtPort, IntPort
+assert len(FEATURE_COLS) == 5, f"got {len(FEATURE_COLS)}"
 print(f"Feature count: {len(FEATURE_COLS)}")
 print(FEATURE_COLS)
 
@@ -107,9 +127,11 @@ results: dict[str, list[dict[str, float]]] = {name: [] for name in POOL_BUILDERS
 
 for condition, build_pool in POOL_BUILDERS.items():
     reference = REFERENCE[condition]
-    print(f"\n=== {condition} (my 41-feature base schema) ===")
+    print(f"\n=== {condition} (my 5-feature reduced base schema) ===")
     if reference:
-        print(f"    Paper reference (their 42 features incl. SignatureID): {reference}")
+        print(
+            f"    Paper reference (their 42 features incl. SignatureID/SCAS/Similarity): {reference}"
+        )
 
     for seed in range(5):
         pool, extra_kwargs = build_pool(seed)
@@ -137,7 +159,8 @@ for condition, build_pool in POOL_BUILDERS.items():
 
 
 print(
-    "\n=== Summary: paper (42 features, full test set) vs mine (41 features, no SignatureID, shared eval subsample) ==="
+    "\n=== Summary: paper (42 features, full test set) vs mine (5 features, "
+    "no SignatureID/SCAS/Similarity, shared eval subsample) ==="
 )
 for condition, reference in REFERENCE.items():
     avg = pd.DataFrame(results[condition]).mean()
@@ -150,6 +173,10 @@ for condition, reference in REFERENCE.items():
 
 save_baseline_results(
     name="cscas_base",
-    description="This project's base schema (41 features, no SignatureID), RandomForestClassifier(n_estimators=100), evaluated on the shared eval subsample",
+    description=(
+        "This project's reduced base schema (5 features -- SignatureID, SCAS, "
+        "and all Similarity columns removed as unrealistic for a real deployment), "
+        "RandomForestClassifier(n_estimators=100), evaluated on the shared eval subsample"
+    ),
     results=results,
 )

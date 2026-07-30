@@ -3,9 +3,6 @@ from typing import Any, Iterable
 import pandas as pd
 
 from thesis.schemas.groups import AlertGroup
-from thesis.schemas.preprocessing import ATTR_SIMILARITY_COLUMNS
-
-_ATTR_NOT_APPLICABLE = -1.0
 
 # AlertGroup.method values produced by CSCAS grouping (group_alerts.py); every
 # other method comes from the AIT-ADS alert-level grouping phase.
@@ -40,39 +37,33 @@ def compute_cscas_baseline_features(tx: AlertGroup) -> dict[str, Any]:
     off the CSV -- no bucketing, no derived multi_* flags. Those derived
     features live in mining/attribute_features.py as mining candidates instead.
 
-    Deliberately excludes the raw SignatureID column that the paper's own
-    FEATURE_COLS includes (see baselines/cscas.py) -- SignatureID is a nominal
-    identifier, not a real signal, and feeding its raw integer value to
-    RF/logreg risks encoding an arbitrary ID ordering rather than anything
-    meaningful. SignatureID is not even carried through the ingestion pipeline
-    past IncomingSuricataGroup as a result (see schemas/preprocessing.py).
+    Deliberately excludes, same reduced-feature-set reasoning as
+    baselines/cscas_base.py's module docstring (none of these are things a
+    real deployment could compute for a fresh alert without already knowing
+    the answer or running CSCAS's offline similarity pipeline):
+      - SignatureID: a nominal identifier, not a real signal, and feeding
+        its raw integer value to RF/logreg risks encoding an arbitrary ID
+        ordering rather than anything meaningful. Not even carried through
+        the ingestion pipeline past IncomingSuricataGroup as a result (see
+        schemas/preprocessing.py).
+      - SCAS: the paper's own outlier/inlier flag, computed from the same
+        offline similarity pipeline as the *Similarity columns below.
+      - similarity, signature_id_similarity, and the 33 attr_value:*
+        columns (from ATTR_SIMILARITY_COLUMNS): CSCAS's own offline,
+        per-field similarity scores -- unrealistic for a real deployment to
+        have on hand for a fresh alert.
     """
-    features: dict[str, Any] = {
+    return {
         "proto": tx.proto if tx.proto is not None else -1,
         "ext_port": tx.ext_port if tx.ext_port is not None else -1,
         "int_port": tx.int_port if tx.int_port is not None else -1,
-        "scas": tx.scas if tx.scas is not None else -1,
         "n_alerts": int(tx.n_alerts),
         "signature_matches_per_day": (
             tx.signature_matches_per_day
             if tx.signature_matches_per_day is not None
             else 0.0
         ),
-        "similarity": tx.similarity if tx.similarity is not None else 0.0,
-        "signature_id_similarity": (
-            tx.signature_id_similarity
-            if tx.signature_id_similarity is not None
-            else 0.0
-        ),
     }
-
-    attr_similarities = tx.attr_similarities or {}
-    for name in ATTR_SIMILARITY_COLUMNS:
-        features[f"attr_value:{name}"] = attr_similarities.get(
-            name, _ATTR_NOT_APPLICABLE
-        )
-
-    return features
 
 
 def compute_baseline_features(tx: AlertGroup) -> dict[str, Any]:

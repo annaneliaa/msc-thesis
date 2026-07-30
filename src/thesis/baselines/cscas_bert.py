@@ -6,13 +6,16 @@ DistilBERT instead of RandomForestClassifier) and the input representation
 columns), per the supervisor-suggested "BERT is good at text" baseline.
 
 Each row is serialized into one text string, e.g.:
-  "SignatureText: ET EXPLOIT D-Link ... | SignatureID: 12345 | Proto: 6 |
-   ExtPort: 443 | IntPort: 8080 | AlertCount: 3 |
-   SignatureMatchesPerDay: 1.2 | SCAS: 1"
-The *Similarity columns (Similarity, SignatureIDSimilarity, and the 33
-AttrValueSimilarity columns) are deliberately left out -- they're plain
-numeric scores with no textual content, so serializing them to text gains
-BERT nothing over just handing them to the RF baselines as numbers.
+  "SignatureText: ET EXPLOIT D-Link ... | Proto: 6 | ExtPort: 443 |
+   IntPort: 8080 | AlertCount: 3 | SignatureMatchesPerDay: 1.2"
+Left out, same reduced-feature-set reasoning as cscas_base.py's module
+docstring (none of these are things a real deployment could compute for a
+fresh alert without already knowing the answer or running CSCAS's offline
+pipeline): the *Similarity columns (Similarity, SignatureIDSimilarity, and
+the 33 AttrValueSimilarity columns -- plain numeric scores with no textual
+content anyway, so serializing them gains BERT nothing over handing them
+to the RF baselines as numbers), SignatureID (nominal identifier), and
+SCAS (the paper's own outlier/inlier flag).
 
 Same three training-pool conditions as the RF/LogReg/XGBoost baselines --
 random undersampling, class-weighted (natural-ratio), guided by CSCAS --
@@ -130,15 +133,19 @@ assert test["Label"].sum() == 19_187, f"got {test['Label'].sum()}"
 # 4) Fields serialized into text. Dropped: Timestamp (used only for the
 # split, not a per-row signal here), Label (the target), ExtIP/IntIP
 # (anonymized per-connection identifiers -- same reasoning cscas.py already
-# applies by excluding them from FEATURE_COLS), and every *Similarity column
-# (plain numeric scores, no textual content -- see module docstring above).
-DROP_COLS = ["Timestamp", "Label", "ExtIP", "IntIP"]
+# applies by excluding them from FEATURE_COLS), SignatureID (nominal
+# identifier), SCAS (the paper's own outlier/inlier flag), and every
+# *Similarity column (plain numeric scores, no textual content -- see
+# module docstring above).
+DROP_COLS = ["Timestamp", "Label", "ExtIP", "IntIP", "SignatureID", "SCAS"]
 TEXT_FIELD_COLS = [
     c for c in df.columns if c not in DROP_COLS and not c.endswith("Similarity")
 ]
 assert (
-    len(TEXT_FIELD_COLS) == 8
-), f"got {len(TEXT_FIELD_COLS)}"  # SignatureText, SignatureID, SignatureMatchesPerDay, AlertCount, Proto, ExtPort, IntPort, SCAS
+    len(TEXT_FIELD_COLS) == 6
+), (
+    f"got {len(TEXT_FIELD_COLS)}"
+)  # SignatureText, SignatureMatchesPerDay, AlertCount, Proto, ExtPort, IntPort
 print(f"Fields serialized into text: {len(TEXT_FIELD_COLS)}")
 print(TEXT_FIELD_COLS)
 
@@ -337,7 +344,7 @@ POOL_BUILDERS = {
 results: dict[str, list[dict[str, float]]] = {name: [] for name in POOL_BUILDERS}
 
 for condition, build_pool in POOL_BUILDERS.items():
-    print(f"\n=== {condition} (BERT, non-similarity fields as text) ===")
+    print(f"\n=== {condition} (BERT, reduced fields as text) ===")
 
     for seed in SEEDS_TO_RUN:
         pool, extra_kwargs = build_pool(seed)
@@ -369,9 +376,10 @@ else:
     save_baseline_results(
         name="cscas_bert",
         description=(
-            "8 non-similarity fields serialized to text, fine-tuned DistilBERT, "
-            "all three training-pool conditions (random undersampling, "
-            "class-weighted, guided by CSCAS), evaluated on the shared eval subsample"
+            "6 reduced fields (no SignatureID/SCAS/Similarity) serialized to text, "
+            "fine-tuned DistilBERT, all three training-pool conditions (random "
+            "undersampling, class-weighted, guided by CSCAS), evaluated on the "
+            "shared eval subsample"
         ),
         results=results,
     )
