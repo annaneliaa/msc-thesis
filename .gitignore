@@ -55,6 +55,8 @@ archive
 
 # Output
 out
+.png
+.pdf
 
 # Docker
 .dockerignore

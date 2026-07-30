@@ -40,7 +40,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-PYTHON="../../../venv/bin/python3"
+PYTHON="python3"
 LOG_DIR="logs"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/overnight_$(date +%Y%m%d_%H%M%S).log"
