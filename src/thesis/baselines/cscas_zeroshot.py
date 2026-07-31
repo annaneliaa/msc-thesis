@@ -272,8 +272,12 @@ if QUICK_SANITY_CHECK:
         "[QUICK_SANITY_CHECK] Not saving results -- these numbers are smoke-test only."
     )
 else:
+    # name includes the model so a multi-model sweep (see
+    # run_zeroshot_sweep.sh) writes one results/cscas_zeroshot_<model>.json
+    # per model instead of every run overwriting the same file.
+    model_slug = MODEL_NAME.replace(":", "-").replace("/", "-")
     save_zeroshot_results(
-        name="cscas_zeroshot",
+        name=f"cscas_zeroshot_{model_slug}",
         description=(
             f"Zero-shot {MODEL_NAME} (via Ollama), 6 reduced fields (no "
             "SignatureID/SCAS/Similarity) serialized to a prompt, evaluated "
