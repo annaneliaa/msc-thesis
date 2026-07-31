@@ -12,10 +12,11 @@
 # Requires (see cscas_zeroshot.py's own docstring for details):
 #   - Ollama running on the DGX host (not in this container)
 #   - This container launched with --network host
-#   - Each model in MODELS already pulled on the host, e.g.
-#     `ollama pull llama3.1:8b` -- this script attempts `ollama pull` for
-#     each model first (idempotent/cheap if already present) so a missing
-#     model fails fast and clearly instead of mid-sweep inside Python.
+#   - Each model in MODELS gets pulled automatically via Ollama's HTTP API
+#     (POST /api/pull) before its eval run -- NOT the `ollama` CLI, which
+#     only exists on the host, not inside this container. The API call
+#     blocks (stream:false) until the pull finishes, so this doubles as a
+#     fail-fast check if Ollama itself isn't reachable.
 #
 # Run:
 #   cd src/thesis/baselines
@@ -29,6 +30,8 @@ cd "$SCRIPT_DIR"
 LOG_DIR="logs"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/zeroshot_sweep_$(date +%Y%m%d_%H%M%S).log"
+
+OLLAMA_HOST="${OLLAMA_HOST:-http://localhost:11434}"
 
 MODELS=(
     "llama3.1:8b"
@@ -51,12 +54,19 @@ run_step() {
     return 0  # never abort the sweep on a single model's failure
 }
 
+ollama_pull() {
+    local model="$1"
+    curl -sf -X POST "$OLLAMA_HOST/api/pull" \
+        -d "{\"name\": \"$model\", \"stream\": false}"
+}
+
 {
     echo "=== Zero-shot sweep started at $(date) ==="
     echo "Models: ${MODELS[*]}"
+    echo "Ollama host: $OLLAMA_HOST"
 
     for model in "${MODELS[@]}"; do
-        run_step "ollama pull $model" ollama pull "$model"
+        run_step "ollama pull $model" ollama_pull "$model"
         run_step "cscas_zeroshot.py ($model)" env OLLAMA_MODEL="$model" python cscas_zeroshot.py
     done
 
