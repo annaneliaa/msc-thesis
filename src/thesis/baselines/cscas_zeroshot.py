@@ -69,7 +69,7 @@ MODEL_NAME = os.environ.get("OLLAMA_MODEL", "llama3.1:8b")
 MAX_NEW_TOKENS = 8
 GENERATION_BATCH_SIZE = 8  # concurrent in-flight requests to Ollama, not a padded batch
 
-QUICK_SANITY_CHECK = True
+QUICK_SANITY_CHECK = False
 QUICK_EVAL_N = 50
 
 SYSTEM_PROMPT = (
