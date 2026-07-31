@@ -1,32 +1,42 @@
 """
 Zero-shot LLM baseline: no training step, so none of the three training-
-pool conditions (random/class-weighted/guided) apply here. Llama-3.1-8B-
-Instruct is prompted directly with the same 6-field reduced text
-serialization cscas_bert.py/cscas_securebert.py use (no SignatureID/SCAS/
-Similarity -- see cscas_base.py's module docstring for why; reused as the body of a prompt
-instead of fed straight to a fine-tuned classifier), and the generated
-label is parsed into precision/recall/f1. Single deterministic run --
-greedy decoding, no seed loop -- this is the one baseline script that
-stays single-condition/single-run (see Docs/Baselines.md: architecturally
-distinct from BERT/SecureBERT -- decoder/generative, not encoder/fine-
-tuned).
+pool conditions (random/class-weighted/guided) apply here. The model is
+prompted directly with the same 6-field reduced text serialization
+cscas_bert.py/cscas_securebert.py use (no SignatureID/SCAS/Similarity --
+see cscas_base.py's module docstring for why; reused as the body of a
+prompt instead of fed straight to a fine-tuned classifier), and the
+generated label is parsed into precision/recall/f1. Single deterministic
+run -- greedy-equivalent decoding (temperature=0, fixed seed), no seed
+loop -- this is the one baseline script that stays single-condition/
+single-run (see Docs/Baselines.md: architecturally distinct from BERT/
+SecureBERT -- decoder/generative, not encoder/fine-tuned).
 
 Evaluates ONLY on the shared, frozen eval subsample (see
 _sampling.get_cscas_eval_subsample) -- mandatory here, not optional like
 the RF/LogReg/XGBoost/BERT/SecureBERT scripts, since prompting an LLM over
 the full 1.255M-row test set is not tractable.
 
+Backend: inference is delegated to a locally running Ollama server rather
+than loading weights directly via `transformers` -- Ollama handles model
+loading, quantization, and GPU placement itself, and its model library
+sidesteps Hugging Face's gated-access flow for Llama.
+
 Requires:
-  1. Accepting the Llama 3.1 license on the model's Hugging Face page
-     (https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct) -- the repo
-     is gated ("manual" approval, confirmed via the HF Hub API).
-  2. Being authenticated locally so `from_pretrained` can fetch the
-     weights: `huggingface-cli login`, or an `HF_TOKEN` environment
-     variable.
+  1. Ollama installed and running on the DGX host (NOT inside this
+     container): `curl -fsSL https://ollama.com/install.sh | sh`, then
+     `ollama serve` (or the systemd service the installer sets up --
+     check `systemctl status ollama` first).
+  2. The target model pulled once on the host, e.g. `ollama pull
+     llama3.1:8b`. Swap OLLAMA_MODEL below (or the OLLAMA_MODEL env var)
+     to use qwen2.5:7b, llama3.1:70b, qwen2.5:72b, etc. -- no other code
+     changes needed, Ollama handles quantized weights for all of them.
+  3. This container launched with `--network host` (or otherwise able to
+     reach the host's Ollama port on 11434), so OLLAMA_HOST below
+     resolves. See dgx-spark-workflow.md.
 
 Run:
     cd src/thesis/baselines
-    python cscas_zeroshot.py
+    OLLAMA_MODEL=llama3.1:8b python cscas_zeroshot.py
 
 The data path below is relative to the current working directory (not this
 file's location), so it must be run from src/thesis/baselines/.
@@ -35,24 +45,29 @@ Before committing to the full 20,000-row eval subsample, set
 QUICK_SANITY_CHECK = True below for a cheap smoke check on a handful of
 rows (still drawn from the real shared eval subsample, just fewer of its
 rows, and not saved), then flip it back to False for real, reportable
-numbers. An 8B-parameter model prompted 20,000 times is a substantial
-local run even with the eval subsample already bounding the cost -- size
-GENERATION_BATCH_SIZE to what your GPU/unified memory can hold.
+numbers. Prompting even an 8B-class model 20,000 times over a network call
+per request adds up -- GENERATION_BATCH_SIZE now controls how many
+in-flight concurrent requests are sent to Ollama at once, not a padded
+tensor batch (Ollama has no native equivalent of HF's batched
+model.generate) -- raise it only as far as OLLAMA_NUM_PARALLEL on the
+server side actually supports concurrently.
 """
 
+import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import pandas as pd
-import torch
+import requests
 from sklearn.metrics import f1_score, precision_score, recall_score
-from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from thesis.baselines._results import save_zeroshot_results
 from thesis.baselines._sampling import get_cscas_eval_subsample
 
-MODEL_NAME = "meta-llama/Llama-3.1-8B-Instruct"
+OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+MODEL_NAME = os.environ.get("OLLAMA_MODEL", "llama3.1:8b")
 MAX_NEW_TOKENS = 8
-GENERATION_BATCH_SIZE = 8
+GENERATION_BATCH_SIZE = 8  # concurrent in-flight requests to Ollama, not a padded batch
 
 QUICK_SANITY_CHECK = True
 QUICK_EVAL_N = 50
@@ -129,36 +144,40 @@ print(f"Evaluating on {len(eval_df)} rows, {int(eval_df['Label'].sum())} positiv
 eval_df = eval_df.copy()
 eval_df["_prompt_text"] = build_text_column(eval_df)
 
-device = (
-    "mps"
-    if torch.backends.mps.is_available()
-    else ("cuda" if torch.cuda.is_available() else "cpu")
-)
-print(f"Using device: {device}")
 
-print(f"Loading {MODEL_NAME} (gated -- requires license acceptance + HF auth)...")
-tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-tokenizer.padding_side = "left"  # required for correct batched causal-LM generation
-if tokenizer.pad_token is None:
-    tokenizer.pad_token = tokenizer.eos_token
+def check_ollama_ready() -> None:
+    """Fail fast with a clear message rather than erroring 20,000 requests
+    in if Ollama isn't reachable or the model hasn't been pulled."""
+    try:
+        resp = requests.get(f"{OLLAMA_HOST}/api/tags", timeout=10)
+        resp.raise_for_status()
+    except requests.exceptions.RequestException as e:
+        raise RuntimeError(
+            f"Could not reach Ollama at {OLLAMA_HOST}. Is it running on the "
+            "DGX host, and was this container launched with --network host? "
+            f"Original error: {e}"
+        ) from e
+    available = [m["name"] for m in resp.json().get("models", [])]
+    if not any(MODEL_NAME in m for m in available):
+        raise RuntimeError(
+            f"'{MODEL_NAME}' not found on the Ollama server at {OLLAMA_HOST}. "
+            f"Run `ollama pull {MODEL_NAME}` on the DGX host first. "
+            f"Available models: {available or '(none pulled yet)'}"
+        )
 
-model = AutoModelForCausalLM.from_pretrained(
-    MODEL_NAME,
-    torch_dtype=torch.float16 if device != "cpu" else torch.float32,
-    low_cpu_mem_usage=True,
-)
-model.to(device)
-model.eval()
+
+print(f"Using Ollama model '{MODEL_NAME}' at {OLLAMA_HOST}")
+check_ollama_ready()
 
 
-def build_prompt(alert_text: str) -> str:
-    messages = [
+def build_prompt(alert_text: str) -> list[dict]:
+    """Message list for Ollama's /api/chat -- Ollama applies the target
+    model's own chat template server-side, so no tokenizer/
+    apply_chat_template call is needed here (unlike the HF version)."""
+    return [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": alert_text},
     ]
-    return tokenizer.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True
-    )
 
 
 def parse_label(generated_text: str) -> int | None:
@@ -175,17 +194,32 @@ def parse_label(generated_text: str) -> int | None:
     return None
 
 
-@torch.no_grad()
-def generate_batch(prompts: list[str]) -> list[str]:
-    inputs = tokenizer(prompts, return_tensors="pt", padding=True).to(device)
-    output_ids = model.generate(
-        **inputs,
-        max_new_tokens=MAX_NEW_TOKENS,
-        do_sample=False,
-        pad_token_id=tokenizer.pad_token_id,
+def generate_one(messages: list[dict]) -> str:
+    resp = requests.post(
+        f"{OLLAMA_HOST}/api/chat",
+        json={
+            "model": MODEL_NAME,
+            "messages": messages,
+            "stream": False,
+            "options": {
+                "num_predict": MAX_NEW_TOKENS,
+                "temperature": 0,  # deterministic, greedy-equivalent
+                "seed": 0,
+            },
+        },
+        timeout=120,
     )
-    new_tokens = output_ids[:, inputs["input_ids"].shape[1] :]
-    return tokenizer.batch_decode(new_tokens, skip_special_tokens=True)
+    resp.raise_for_status()
+    return resp.json()["message"]["content"]
+
+
+def generate_batch(prompt_batches: list[list[dict]]) -> list[str]:
+    """Ollama serves one request per call -- there's no native equivalent
+    of HF's padded-tensor model.generate() batching. Fan requests out
+    across a thread pool instead for some concurrency; real throughput
+    still depends on OLLAMA_NUM_PARALLEL on the server side."""
+    with ThreadPoolExecutor(max_workers=len(prompt_batches)) as ex:
+        return list(ex.map(generate_one, prompt_batches))
 
 
 # 6) Single deterministic pass over the eval set -- no seeds, no conditions.
@@ -235,8 +269,9 @@ else:
     save_zeroshot_results(
         name="cscas_zeroshot",
         description=(
-            f"Zero-shot {MODEL_NAME}, 6 reduced fields (no SignatureID/SCAS/"
-            "Similarity) serialized to a prompt, evaluated on the shared eval subsample"
+            f"Zero-shot {MODEL_NAME} (via Ollama), 6 reduced fields (no "
+            "SignatureID/SCAS/Similarity) serialized to a prompt, evaluated "
+            "on the shared eval subsample"
         ),
         metrics={"precision": p, "recall": r, "f1": f},
     )
