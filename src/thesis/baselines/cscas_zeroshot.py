@@ -74,9 +74,15 @@ QUICK_EVAL_N = 50
 
 SYSTEM_PROMPT = (
     "You are a network security analyst triaging intrusion-detection alerts. "
-    "You will be given the serialized fields of one alert. Decide whether it "
-    "represents a real attack (relevant, should be escalated) or an "
-    "irrelevant/benign alert (should be dismissed). "
+    "You will be given the serialized fields of one alert GROUP -- a cluster "
+    "of alerts sharing the same signature, not a single isolated event. "
+    "AlertCount is how many alerts are in this specific group; "
+    "SignatureMatchesPerDay is how often this signature fires per day "
+    "overall. Use these frequency signals as part of your judgment (e.g. a "
+    "signature firing constantly across many alerts looks different from a "
+    "rare, isolated one). Decide whether the group represents a real attack "
+    "(relevant, should be escalated) or an irrelevant/benign pattern "
+    "(should be dismissed). "
     "Respond with exactly one word: ATTACK or BENIGN. Do not explain your reasoning."
 )
 
