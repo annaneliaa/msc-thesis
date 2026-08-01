@@ -42,6 +42,17 @@ cd "$REPO_ROOT"
 
 echo "=== repo root: $REPO_ROOT ==="
 
+# Bind-mounted from the host, so the repo's file ownership (host user) never
+# matches whatever user this container runs git as (commonly root) -- git
+# refuses to touch it otherwise ("detected dubious ownership"). "*" (not
+# just $REPO_ROOT) so this also covers external/AlertBERT once the
+# submodule step below checks it out -- that's a nested repo under the same
+# bind mount, so it hits the identical check. Only affects git's own trust
+# check for these paths, not filesystem permissions, and this container is
+# single-purpose/single-user, so the multi-tenant scenario this check
+# guards against doesn't apply here.
+git config --global --add safe.directory '*'
+
 echo ""
 echo "--- git submodules (external/AlertBERT) ---"
 git submodule update --init --recursive

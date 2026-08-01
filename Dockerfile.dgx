@@ -62,7 +62,14 @@ RUN ARCH=$(uname -m) && \
       "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-${ARCH}.sh" && \
     bash /tmp/miniforge.sh -b -p "$CONDA_DIR" && \
     rm /tmp/miniforge.sh
-ENV PATH="$CONDA_DIR/bin:$PATH"
+# Appended, not prepended: mamba/conda are unique names so they're found
+# either way, but python3/pip are NOT unique -- prepending would shadow the
+# NGC image's own Python (the one with torch/CUDA already configured) with
+# Miniforge's empty base env for every bare `python3`/`pip` call at
+# container runtime, including inside setup_container.sh's own "base env"
+# install steps -- silently defeating the whole point of starting from this
+# base image.
+ENV PATH="$PATH:$CONDA_DIR/bin"
 
 # thesis-alertbert: a separate env (not this image's base Python) purely so
 # graph-tool is importable -- see alertbert_grouping.py's module docstring
