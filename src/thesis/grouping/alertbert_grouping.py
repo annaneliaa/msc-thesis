@@ -42,7 +42,7 @@ is set in the environment before Python starts.
 delta/theta sweep
 ------------------
 Sweep delta and theta over the same log-scale grid used for time_delta
-(see grouping_comparison.ipynb's `time_delta_grid` / `TIME_DELTA_VALUES`:
+(see thesis.baselines.grouping.time_delta's `time_delta_grid` / `TIME_DELTA_VALUES`:
 `a * 2**i` for `i` in `range(-7, 14)`, `a` in `(1, 1.5)`) -- this mirrors
 the AlertBERT paper's own evaluation protocol
 (`alertbert.eval_grouping.timedelta_roc_traj_*`). theta must be >= delta;
@@ -65,6 +65,7 @@ from alertbert.preprocessing import (
     load_feature_vocabs,
 )
 
+from thesis.grouping._device import resolve_device
 from thesis.paths import ROOT
 from thesis.schemas.groups import GroupingRecord
 
@@ -116,6 +117,26 @@ class _ScipyAlertBERT(_AlertBertGroupingModel):
         )
 
 
+class _DeviceCollate:
+    """
+    Wraps a collate_fn so its output TensorDict lands on `device` before the
+    model consumes it. BaseSequenceCollate.__call__ always builds its
+    TensorDict on CPU (no device argument anywhere in the vendored
+    preprocessing code), while the model itself is moved to `device` in
+    _load_checkpoint below -- without this, AlertBERT.get_embeddings's
+    `self.model(batch)` call raises a device-mismatch RuntimeError as soon
+    as `device` is anything other than cpu. TensorDict.to(device) moves
+    every contained tensor at once.
+    """
+
+    def __init__(self, collate_fn: BaseSequenceCollate, device: torch.device) -> None:
+        self._collate_fn = collate_fn
+        self._device = device
+
+    def __call__(self, batch):
+        return self._collate_fn(batch).to(self._device)
+
+
 class _LoadedCheckpoint:
     __slots__ = ("inference_model", "collate_fn", "params")
 
@@ -130,13 +151,14 @@ class _LoadedCheckpoint:
         self.params = params
 
 
-_checkpoint_cache: dict[str, _LoadedCheckpoint] = {}
+_checkpoint_cache: dict[tuple[str, str], _LoadedCheckpoint] = {}
 
 
-def _load_checkpoint(checkpoint: str) -> _LoadedCheckpoint:
+def _load_checkpoint(checkpoint: str, device: torch.device) -> _LoadedCheckpoint:
     """Loads (and caches) a checkpoint's model + vocabs for inference."""
-    if checkpoint in _checkpoint_cache:
-        return _checkpoint_cache[checkpoint]
+    cache_key = (checkpoint, str(device))
+    if cache_key in _checkpoint_cache:
+        return _checkpoint_cache[cache_key]
 
     ckpt_dir = _SAVED_MODELS_DIR / checkpoint
     if not ckpt_dir.exists():
@@ -148,7 +170,6 @@ def _load_checkpoint(checkpoint: str) -> _LoadedCheckpoint:
     with (ckpt_dir / "report.json").open() as f:
         params = json.load(f)["params"]
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     features = set(params["features"]) | set(params["targets"])
     vocabs = load_feature_vocabs(str(ckpt_dir), sorted(features), params["min_freq"])
     if "host" in features:
@@ -165,10 +186,10 @@ def _load_checkpoint(checkpoint: str) -> _LoadedCheckpoint:
 
     collate_fn_map = dict(vocabs)
     collate_fn_map[params["encoding"]] = default_collate_fn
-    collate_fn = BaseSequenceCollate(collate_fn_map)
+    collate_fn = _DeviceCollate(BaseSequenceCollate(collate_fn_map), device)
 
     loaded = _LoadedCheckpoint(inference_model, collate_fn, params)
-    _checkpoint_cache[checkpoint] = loaded
+    _checkpoint_cache[cache_key] = loaded
     return loaded
 
 
@@ -207,17 +228,22 @@ def group_alerts_alertbert(
     theta: float,
     checkpoint: str = DEFAULT_CHECKPOINT,
     dim_reduction: int = ALERTBERT_DIM_REDUCTION,
+    device: str | torch.device | None = None,
 ) -> list[GroupingRecord]:
     """
     Groups alerts using a pretrained AlertBERT checkpoint (no training
     here). See module docstring for checkpoint/scenario compatibility and
     the delta/theta sweep grid. Requires the `thesis-alertbert` conda env
     (graph-tool + the alertbert package); see module docstring.
+
+    `device` (None/"auto"/"cpu"/"cuda"/"mps"/...) is resolved once via
+    thesis.grouping._device.resolve_device -- see that module for the
+    mps->cuda->cpu auto-detect order.
     """
     if not alerts:
         return []
 
-    loaded = _load_checkpoint(checkpoint)
+    loaded = _load_checkpoint(checkpoint, resolve_device(device))
     dataset, sorted_alerts = _to_alert_dataset(alerts)
 
     grouping_model = _ScipyAlertBERT(
@@ -250,6 +276,7 @@ def group_alerts_alertbert_by_group(
     theta: float,
     checkpoint: str = DEFAULT_CHECKPOINT,
     dim_reduction: int = ALERTBERT_DIM_REDUCTION,
+    device: str | torch.device | None = None,
 ) -> dict[str, list[AlertBertGroupableAlert]]:
     records = group_alerts_alertbert(
         alerts,
@@ -257,6 +284,7 @@ def group_alerts_alertbert_by_group(
         theta=theta,
         checkpoint=checkpoint,
         dim_reduction=dim_reduction,
+        device=device,
     )
     alert_by_id = {a.alert_id: a for a in alerts}
     groups: dict[str, list[AlertBertGroupableAlert]] = {}

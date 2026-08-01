@@ -15,6 +15,29 @@ class GroupingRecord:
     # flag lets coverage metrics distinguish a genuine rejection from an
     # ordinary one-alert group. Every other method leaves this False.
     is_outlier: bool = False
+    # Why is_outlier is True, e.g. "deepcase_low_confidence" /
+    # "deepcase_dbscan_noise". A general field any future rejecting method
+    # can populate with its own reason strings -- not DeepCASE-specific,
+    # even though DeepCASE is the only method that sets it today. None
+    # whenever is_outlier is False.
+    reason: str | None = None
+
+
+@dataclass(slots=True)
+class ManualReviewRecord:
+    """
+    One entry in the manual-inspection queue: an alert some grouping method
+    marked ungroupable (GroupingRecord.is_outlier=True), routed for analyst
+    review instead of silently becoming a singleton group -- mirrors
+    DeepCASE's own semi-automatic mode. `reason` follows the
+    "<method>_<why>" convention (see GroupingRecord.reason), so the source
+    method is implicit rather than a separate field.
+    """
+
+    alert_id: str
+    ts: int | float
+    host: str | None
+    reason: str | None
 
 
 @dataclass(slots=True)
@@ -76,6 +99,15 @@ class AlertGroup:  # encoding/experiment input (with weight)
     group_label: Optional[str] = None
     weight: float = 1.0
     raw_items: Optional[set[str]] = None  # mining items (tokens / signature words)
+    # True if this group's constituent GroupingRecords were all is_outlier
+    # (i.e. it's not a real group, just a rejected alert's singleton
+    # placeholder -- see GroupingRecord.is_outlier). Mining should skip
+    # these. Not yet populated by GroupSnapshot.to_alert_group() or the
+    # caching layer -- no current caller feeds a rejecting method's output
+    # through pipeline.py, so this stays False until that propagation is
+    # built; attribute_mining_job.py's skip check is a dormant-but-correct
+    # guard for when it is.
+    is_outlier: bool = False
 
     # AIT-ADS only (None for CSCAS)
     alert_ids: Optional[list[str]] = None  # AIT-ADS only (None for CSCAS)

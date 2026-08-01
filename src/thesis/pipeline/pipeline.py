@@ -254,6 +254,24 @@ def ingest_cscas_scenario(
     print(f"  {len(rows)} rows loaded.")
 
     print("[2/2] Parsing rows into alert_groups...")
+    alert_groups = rows_to_cscas_alert_groups(rows)
+
+    alert_groups.sort(key=lambda g: g.start_ts)
+    save_alert_groups_json(alert_groups, out_path)
+    print(f"  Saved {len(alert_groups)} alert_groups → {out_path}")
+    return out_path
+
+
+def rows_to_cscas_alert_groups(rows: list[dict]) -> list[AlertGroup]:
+    """
+    Parse CSCAS CSV rows (as dicts, e.g. from `df.to_dict("records")`) into
+    AlertGroup objects, one per row (CSCAS_PREGROUPED_METHOD) -- the same
+    parsing ingest_cscas_scenario() uses for the full dataset, factored out
+    so callers that already have a specific row subset in hand (e.g. a
+    baseline script's train/eval split) can build AlertGroups directly from
+    it without re-deriving a global sort order over the full CSV. Rows that
+    fail to parse are skipped, same as ingest_cscas_scenario().
+    """
     parsed_rows: list[ParsedSuricataGroup] = []
     n_skipped = 0
     for row in rows:
@@ -267,7 +285,7 @@ def ingest_cscas_scenario(
     if n_skipped:
         print(f"  [warn] Skipped {n_skipped} rows due to parsing errors.")
 
-    alert_groups: list[AlertGroup] = [
+    return [
         AlertGroup(
             alert_group_id=parsed.group_id,
             group_id=parsed.group_id,
@@ -300,11 +318,6 @@ def ingest_cscas_scenario(
         )
         for parsed in parsed_rows
     ]
-
-    alert_groups.sort(key=lambda g: g.start_ts)
-    save_alert_groups_json(alert_groups, out_path)
-    print(f"  Saved {len(alert_groups)} alert_groups → {out_path}")
-    return out_path
 
 
 # ---------------------------------------------------------------------------

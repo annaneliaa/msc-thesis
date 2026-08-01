@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from typing import Protocol, runtime_checkable
-from thesis.schemas.groups import GroupingRecord
+from thesis.schemas.groups import GroupingRecord, ManualReviewRecord
 
 
 # --- Fixed window -----------------------------------------------------------
@@ -77,6 +77,39 @@ def _split_by_host_signature(
     for alert in alerts:
         by_key[(_host_key(alert), _signature_key(alert))].append(alert)
     return by_key
+
+
+def build_manual_review_records(
+    alerts: list[GroupableAlert], records: list[GroupingRecord]
+) -> list[ManualReviewRecord]:
+    """
+    Turns whichever GroupingRecords a method flagged is_outlier=True into the
+    manual-inspection queue's shape, joining timestamp/host from `alerts` by
+    alert_id. Method-agnostic: works for any grouping method's output, not
+    just DeepCASE's (the only method that sets is_outlier today) -- so
+    "ungroupable" stays a general concept this layer understands rather than
+    a DeepCASE special case. Ungroupable alerts skip group-based mining
+    (there's no real group to mine from), but aren't dropped -- this is
+    where they surface instead, mirroring DeepCASE's own semi-automatic
+    mode of deferring to an analyst.
+    """
+    alert_by_id = {a.alert_id: a for a in alerts}
+    review_records: list[ManualReviewRecord] = []
+    for record in records:
+        if not record.is_outlier:
+            continue
+        alert = alert_by_id.get(record.alert_id)
+        if alert is None:
+            continue
+        review_records.append(
+            ManualReviewRecord(
+                alert_id=record.alert_id,
+                ts=alert.ts,
+                host=alert.host,
+                reason=record.reason,
+            )
+        )
+    return review_records
 
 
 def _chain_by_gap(

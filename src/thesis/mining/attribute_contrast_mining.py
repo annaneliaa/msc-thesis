@@ -34,6 +34,7 @@ _CONTRAST_STATS_COLUMNS = [
 
 def build_categorical_predicate_matrix(
     alert_groups: Sequence[AlertGroup],
+    exclude_fields: set[str] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series, dict[str, tuple[str, Any]]]:
     """
     Single per-group pass building everything downstream mining needs:
@@ -46,7 +47,21 @@ def build_categorical_predicate_matrix(
     - column_predicate_map: column -> (attribute, expected_value), describing
       how to reconstruct each X_cat column as a condition against
       compute_candidate_attribute_features() output
+
+    exclude_fields, if given, drops the named candidate fields (matching
+    MULTI_VALUED_CATEGORICAL_FIELDS / BINARY_CATEGORICAL_FIELDS /
+    NUMERIC_FIELDS entries) from the candidate space entirely, for both
+    Step 1 (contrast-set) and Step 2 (decision tree) -- e.g. to keep fields
+    that a real deployment couldn't compute out of the mined schema. None
+    (default) preserves the full candidate space, unchanged.
     """
+    exclude_fields = exclude_fields or set()
+    multi_valued_fields = [
+        f for f in MULTI_VALUED_CATEGORICAL_FIELDS if f not in exclude_fields
+    ]
+    binary_fields = [f for f in BINARY_CATEGORICAL_FIELDS if f not in exclude_fields]
+    numeric_fields = [f for f in NUMERIC_FIELDS if f not in exclude_fields]
+
     cat_rows: list[dict[str, int]] = []
     num_rows: list[dict[str, float]] = []
     labels: list[int] = []
@@ -56,18 +71,18 @@ def build_categorical_predicate_matrix(
         feats = compute_candidate_attribute_features(tx)
 
         cat_row: dict[str, int] = {}
-        for field_name in MULTI_VALUED_CATEGORICAL_FIELDS:
+        for field_name in multi_valued_fields:
             value = feats[field_name]
             col = f"{field_name}={value}"
             cat_row[col] = 1
             column_predicate_map.setdefault(col, (field_name, value))
-        for field_name in BINARY_CATEGORICAL_FIELDS:
+        for field_name in binary_fields:
             cat_row[field_name] = int(bool(feats[field_name]))
             column_predicate_map.setdefault(field_name, (field_name, True))
         cat_rows.append(cat_row)
 
         num_rows.append(
-            {field_name: feats[field_name] for field_name in NUMERIC_FIELDS}
+            {field_name: feats[field_name] for field_name in numeric_fields}
         )
 
         labels.append(1 if tx.group_label == "attack" else 0)

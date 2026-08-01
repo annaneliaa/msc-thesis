@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Overnight batch runner: every implemented baseline (cscas.py,
-# cscas_base.py, cscas_logreg.py, cscas_xgboost.py, cscas_bert.py,
-# cscas_securebert.py), followed by re-executing the comparison notebook so
-# every plot is baked in and ready to look at in the morning.
+# cscas_base.py, cscas_mining.py, cscas_logreg.py, cscas_xgboost.py,
+# cscas_bert.py, cscas_securebert.py), followed by re-executing the
+# comparison notebook so every plot is baked in and ready to look at in the
+# morning.
 #
 # Does NOT run cscas_zeroshot.py -- gated (needs a Llama 3.1 license
 # acceptance + your own Hugging Face auth) and not yet run for real here.
@@ -68,6 +69,7 @@ run_step() {
 
     run_step "cscas.py" "$PYTHON" cscas.py
     run_step "cscas_base.py" "$PYTHON" cscas_base.py
+    run_step "cscas_mining.py" "$PYTHON" cscas_mining.py
     run_step "cscas_logreg.py" "$PYTHON" cscas_logreg.py
     run_step "cscas_xgboost.py" "$PYTHON" cscas_xgboost.py
     run_step "cscas_bert.py" "$PYTHON" cscas_bert.py

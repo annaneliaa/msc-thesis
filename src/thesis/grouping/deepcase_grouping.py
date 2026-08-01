@@ -80,6 +80,7 @@ from deepcase.interpreter.cluster import Cluster
 from deepcase.interpreter.utils import group_by
 from deepcase.preprocessing import Preprocessor
 
+from thesis.grouping._device import resolve_device
 from thesis.paths import CACHE_DIR
 from thesis.schemas.groups import GroupingRecord
 
@@ -164,6 +165,7 @@ def _build_tensors(
     target_alerts: list[DeepCaseGroupableAlert],
     context_length: int,
     timeout: float,
+    device: torch.device,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, dict]:
     """
     Builds (train_X, train_y, target_X, target_y, mapping) by running
@@ -172,6 +174,14 @@ def _build_tensors(
     into train/target halves using the known split index (safe because
     Preprocessor.sequence() preserves input row order -- see module
     docstring).
+
+    Preprocessor.sequence() always returns CPU tensors, so every split is
+    moved to `device` here -- the one choke point both halves pass through.
+    train_X/train_y would technically work uncopied too (ContextBuilder.fit()
+    moves its inputs internally), but target_X/target_y genuinely need this:
+    Interpreter.attended_context() -> ContextBuilder.query()/.predict() never
+    move their input, so a GPU-resident context_builder fed CPU target
+    tensors raises a device-mismatch RuntimeError without this.
     """
     combined = train_alerts + target_alerts
     df = pd.DataFrame(
@@ -188,10 +198,10 @@ def _build_tensors(
 
     n_train = len(train_alerts)
     return (
-        context[:n_train],
-        events[:n_train],
-        context[n_train:],
-        events[n_train:],
+        context[:n_train].to(device),
+        events[:n_train].to(device),
+        context[n_train:].to(device),
+        events[n_train:].to(device),
         mapping,
     )
 
@@ -210,6 +220,7 @@ def _fit_or_load_context_builder(
     batch_size: int,
     learning_rate: float,
     seed: int,
+    device: torch.device,
 ) -> ContextBuilder:
     key = _cache_key(
         train_id,
@@ -229,8 +240,6 @@ def _fit_or_load_context_builder(
     cache_dir = _CACHE_DIR / key
     meta_path = cache_dir / "meta.json"
     state_path = cache_dir / "state_dict.pt"
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     if meta_path.exists() and state_path.exists():
         with meta_path.open() as f:
@@ -298,7 +307,9 @@ def _fit_or_load_context_builder(
 
 
 def _cluster_ids_to_records(
-    alerts: list[DeepCaseGroupableAlert], cluster_ids: np.ndarray
+    alerts: list[DeepCaseGroupableAlert],
+    cluster_ids: np.ndarray,
+    mask: np.ndarray,
 ) -> list[GroupingRecord]:
     """
     Maps DBSCAN cluster ids (aligned with `alerts`' order) to GroupingRecords
@@ -309,22 +320,35 @@ def _cluster_ids_to_records(
     folding every -1 alert into one group would misrepresent purity. These
     records also get is_outlier=True, so metrics that need to distinguish a
     genuine rejection from an ordinary one-alert group (e.g. coverage) can.
+
+    `mask` (aligned with `alerts`, from Interpreter.attended_context) is what
+    lets the two -1 causes be told apart for `reason`, since cluster_ids
+    alone collapses both to the same value: an alert absent from `mask`
+    never cleared the confidence threshold and was never even handed to
+    DBSCAN ("deepcase_low_confidence"); an alert present in `mask` but
+    still clustered -1 was scored by DBSCAN and called noise
+    ("deepcase_dbscan_noise").
     """
     anchor_by_cluster: dict[int, str] = {}
     records: list[GroupingRecord] = []
-    for alert, cluster_id in zip(alerts, cluster_ids):
+    for alert, cluster_id, in_mask in zip(alerts, cluster_ids, mask):
         cluster_id = int(cluster_id)
         is_outlier = cluster_id == -1
         if is_outlier:
             anchor_id = alert.alert_id
+            reason = (
+                "deepcase_low_confidence" if not in_mask else "deepcase_dbscan_noise"
+            )
         else:
             anchor_id = anchor_by_cluster.setdefault(cluster_id, alert.alert_id)
+            reason = None
         records.append(
             GroupingRecord(
                 alert_id=alert.alert_id,
                 group_id=f"{DEEPCASE_METHOD}:{anchor_id}",
                 method=DEEPCASE_METHOD,
                 is_outlier=is_outlier,
+                reason=reason,
             )
         )
     return records
@@ -411,6 +435,7 @@ def group_alerts_deepcase_many_eps(
     cluster_iterations: int = DEFAULT_CLUSTER_ITERATIONS,
     cluster_batch_size: int = DEFAULT_CLUSTER_BATCH_SIZE,
     seed: int = DEFAULT_SEED,
+    device: str | torch.device | None = None,
 ) -> dict[float, list[GroupingRecord]]:
     """
     Like group_alerts_deepcase, but evaluates every value in `eps_values`
@@ -421,14 +446,20 @@ def group_alerts_deepcase_many_eps(
     retraining (a fresh entry in artifacts/cache/deepcase/), but eps is a
     DBSCAN-only parameter applied on top of the same precomputed vectors.
 
+    `device` (None/"auto"/"cpu"/"cuda"/"mps"/...) is resolved once via
+    thesis.grouping._device.resolve_device -- see that module for the
+    mps->cuda->cpu auto-detect order.
+
     Returns a dict keyed by each value in eps_values (not deduplicated --
     pass unique values).
     """
     if not alerts:
         return {eps: [] for eps in eps_values}
 
+    resolved_device = resolve_device(device)
+
     train_X, train_y, target_X, target_y, mapping = _build_tensors(
-        train_alerts, alerts, context_length, timeout
+        train_alerts, alerts, context_length, timeout, resolved_device
     )
 
     context_builder = _fit_or_load_context_builder(
@@ -445,6 +476,7 @@ def group_alerts_deepcase_many_eps(
         batch_size,
         learning_rate,
         seed,
+        resolved_device,
     )
 
     vectors, mask, y = _compute_attended_vectors(
@@ -457,10 +489,11 @@ def group_alerts_deepcase_many_eps(
         cluster_batch_size,
     )
 
+    mask_np = mask.cpu().numpy()
     results: dict[float, list[GroupingRecord]] = {}
     for eps in eps_values:
         cluster_ids = _cluster_from_vectors(vectors, mask, y, eps, min_samples)
-        results[eps] = _cluster_ids_to_records(alerts, cluster_ids)
+        results[eps] = _cluster_ids_to_records(alerts, cluster_ids, mask_np)
     return results
 
 
@@ -482,6 +515,7 @@ def group_alerts_deepcase(
     cluster_iterations: int = DEFAULT_CLUSTER_ITERATIONS,
     cluster_batch_size: int = DEFAULT_CLUSTER_BATCH_SIZE,
     seed: int = DEFAULT_SEED,
+    device: str | torch.device | None = None,
 ) -> list[GroupingRecord]:
     """
     Groups `alerts` using a DeepCASE ContextBuilder trained on `train_alerts`
@@ -523,6 +557,7 @@ def group_alerts_deepcase(
         cluster_iterations=cluster_iterations,
         cluster_batch_size=cluster_batch_size,
         seed=seed,
+        device=device,
     )[eps]
 
 

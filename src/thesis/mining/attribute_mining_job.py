@@ -52,7 +52,21 @@ def _load_labeled_alert_groups(alert_groups_path: str | Path) -> list[AlertGroup
             f"  [warn] Dropping {n_dropped} unlabeled/mixed alert_groups "
             "before attribute mining"
         )
-    return labeled
+
+    # Ungroupable placeholders (see GroupingRecord.is_outlier) have nothing
+    # to mine from -- there's no real group, just a rejected alert's
+    # singleton stand-in. No current grouping method feeding this pipeline
+    # sets AlertGroup.is_outlier (only DeepCASE ever marks outliers, and
+    # DeepCASE isn't wired into pipeline.py), so this is a dormant guard
+    # today, not a currently-exercised path.
+    mineable = [tx for tx in labeled if not tx.is_outlier]
+    n_outlier = len(labeled) - len(mineable)
+    if n_outlier:
+        print(
+            f"  [warn] Dropping {n_outlier} ungroupable alert_groups "
+            "before attribute mining"
+        )
+    return mineable
 
 
 def run_alert_group_attribute_mining_job(
@@ -61,6 +75,7 @@ def run_alert_group_attribute_mining_job(
     run_name: str = "debug",
     config: AttributeMiningConfig | None = None,
     run_dir: Path | None = None,
+    exclude_fields: set[str] | None = None,
 ) -> AttributeMiningJobResult:
     """
     Two-stage per-alert-group attribute mining:
@@ -72,6 +87,10 @@ def run_alert_group_attribute_mining_job(
     Unlike the itemset/sequence co-occurrence jobs, this operates directly on
     AlertGroup records (one per signature x external-IP group) -- there is no
     cross-group basket to construct.
+
+    exclude_fields is passed straight to build_categorical_predicate_matrix
+    to drop specific candidate fields from the mining space entirely -- see
+    that function's docstring.
     """
     ensure_artifact_dirs()
     config = config or AttributeMiningConfig()
@@ -124,7 +143,7 @@ def run_alert_group_attribute_mining_job(
         # reused as-is in Step 2 below, so compute_candidate_attribute_features
         # is never re-derived from the raw alert_groups a second time.
         X_cat, X_num, y, column_predicate_map = build_categorical_predicate_matrix(
-            alert_groups
+            alert_groups, exclude_fields=exclude_fields
         )
         contrast_stats_df = compute_predicate_contrast_stats(
             X_cat, y, column_predicate_map
