@@ -1,15 +1,21 @@
 #!/usr/bin/env bash
-# Overnight batch runner for the grouping comparison: every method's script
+# Batch runner for the grouping comparison: every method's script
 # (fixed_window.py, time_delta.py, cscas_grouping.py,
 # cscas_grouping_sensitivity.py, alertbert_sweep.py, deepcase_sweep.py), followed by
 # re-executing the comparison notebook so every plot is baked in and ready
-# to look at in the morning. Mirrors src/thesis/baselines/run_overnight.sh's
+# to look at when the run finishes. Mirrors src/thesis/baselines/run_overnight.sh's
 # skeleton (run_step wrapper, no set -e, one tee'd log file).
 #
 # alertbert_sweep.py needs the `thesis-alertbert` conda env (graph-tool +
 # KMP_DUPLICATE_LIB_OK=TRUE) -- run via `conda run` so this script doesn't
 # need to be launched from inside that env itself. Every other step runs in
 # whatever plain venv/interpreter this script itself is invoked with.
+#
+# On a fresh machine/container (e.g. a DGX Spark Docker container based on
+# nvcr.io/nvidia/pytorch), run setup_container.sh once first -- it installs
+# this project (and, in a separate conda env, graph-tool + alertbert) into
+# whatever environment this script then expects to already be set up. See
+# setup_container.sh and Dockerfile.dgx (repo root) for that one-time setup.
 #
 # Does not abort on a single script's failure (no `set -e`) -- if one
 # script errors out (e.g. the thesis-alertbert conda env isn't set up on
@@ -26,7 +32,7 @@
 #
 # Run:
 #   cd src/thesis/baselines/grouping
-#   nohup ./run_overnight.sh > /dev/null 2>&1 &
+#   nohup ./run_grouping.sh > /dev/null 2>&1 &
 
 set -uo pipefail
 
@@ -36,7 +42,7 @@ cd "$SCRIPT_DIR"
 PYTHON="python3"
 LOG_DIR="logs"
 mkdir -p "$LOG_DIR"
-LOG_FILE="$LOG_DIR/overnight_$(date +%Y%m%d_%H%M%S).log"
+LOG_FILE="$LOG_DIR/grouping_run_$(date +%Y%m%d_%H%M%S).log"
 
 export GROUPING_DEVICE="${GROUPING_DEVICE:-auto}"
 export GROUPING_RUN_FULL_ALERTBERT_SWEEP="${GROUPING_RUN_FULL_ALERTBERT_SWEEP:-1}"
@@ -57,7 +63,7 @@ run_step() {
 }
 
 {
-    echo "=== Grouping overnight run started at $(date) ==="
+    echo "=== Grouping run started at $(date) ==="
     echo "GROUPING_DEVICE=$GROUPING_DEVICE GROUPING_RUN_FULL_ALERTBERT_SWEEP=$GROUPING_RUN_FULL_ALERTBERT_SWEEP GROUPING_RUN_FULL_DEEPCASE_SWEEP=$GROUPING_RUN_FULL_DEEPCASE_SWEEP"
 
     run_step "fixed_window.py" "$PYTHON" fixed_window.py
@@ -76,5 +82,5 @@ run_step() {
         ../../notebooks/baselines/grouping_comparison.ipynb
 
     echo ""
-    echo "=== Grouping overnight run finished at $(date) ==="
+    echo "=== Grouping run finished at $(date) ==="
 } 2>&1 | tee "$LOG_FILE"

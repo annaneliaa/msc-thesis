@@ -1,0 +1,85 @@
+# GPU environment for running the grouping experiment (see
+# src/thesis/baselines/grouping/run_grouping.sh) on a DGX Spark or any other
+# CUDA machine -- distinct from the plain-CPU `Dockerfile` at the repo root,
+# which serves the FastAPI app.
+#
+# Starts from NVIDIA's own PyTorch NGC image so the CUDA toolkit/driver
+# bindings already match the hardware (critical on very recent chips like
+# DGX Spark's GB10 Grace Blackwell superchip, where a generic PyPI torch
+# wheel may not exist yet or may not be built for this exact combination) --
+# do NOT let a later `pip install` silently replace this image's own torch;
+# see setup_container.sh, which installs the rest of this project's
+# dependencies with that constraint in mind.
+#
+# Also creates a *separate* conda env, `thesis-alertbert`, with graph-tool
+# (conda/mamba-only, not pip-installable -- see the comment in pyproject.toml)
+# for AlertBERT grouping specifically. Every other method in the grouping
+# comparison (fixed_window, time_delta, cscas_grouping,
+# cscas_grouping_sensitivity, deepcase) only needs the image's own base
+# Python env.
+#
+# This image intentionally does NOT COPY the repo in (matches .dockerignore,
+# which already excludes data/ and artifacts/ from any build context) --
+# mount your working directory as a volume at container run time instead,
+# exactly as you'd already do for local development:
+#
+#   docker build -f Dockerfile.dgx -t thesis-dgx .
+#   docker run -d --init --gpus all --ipc=host \
+#     -v $HOME/.cache/huggingface:/root/.cache/huggingface \
+#     -v ${PWD}:/workspace -w /workspace \
+#     --name thesis-run \
+#     thesis-dgx sleep infinity
+#
+# Then, once (per fresh container -- this step needs the live repo, which
+# only exists after the volume is mounted, so it can't be baked into the
+# image itself):
+#
+#   docker exec -it thesis-run bash src/thesis/baselines/grouping/setup_container.sh
+#
+# After that, run_grouping.sh works exactly as it does locally:
+#
+#   docker exec -it thesis-run bash -lc \
+#     "cd src/thesis/baselines/grouping && ./run_grouping.sh"
+
+FROM nvcr.io/nvidia/pytorch:25.11-py3
+
+WORKDIR /workspace
+
+# git: needed for `git submodule update` (external/AlertBERT) at setup time.
+# curl/ca-certificates: needed to fetch the Miniforge installer below.
+# Most NGC images already have these, but don't assume it.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Miniforge (conda-forge-first distribution, incl. mamba) -- graph-tool is
+# conda/mamba-only, and conda-forge is the channel that actually publishes
+# it. Installed to a fixed path so setup_container.sh can find it reliably
+# regardless of which user runs it.
+ENV CONDA_DIR=/opt/miniforge3
+RUN ARCH=$(uname -m) && \
+    curl -fsSL -o /tmp/miniforge.sh \
+      "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-${ARCH}.sh" && \
+    bash /tmp/miniforge.sh -b -p "$CONDA_DIR" && \
+    rm /tmp/miniforge.sh
+ENV PATH="$CONDA_DIR/bin:$PATH"
+
+# thesis-alertbert: a separate env (not this image's base Python) purely so
+# graph-tool is importable -- see alertbert_grouping.py's module docstring
+# for why AlertBERT specifically needs it. Python version matches this
+# project's own Dockerfile (python:3.11-slim) for consistency; adjust if
+# conda-forge's graph-tool build for this platform needs a different one.
+# torch/tensordict/the alertbert package itself are installed later by
+# setup_container.sh (after the repo, incl. external/AlertBERT, is mounted
+# in) rather than baked in here, since the actual constraint (which CUDA
+# stack this specific chip needs) is easier to get right once torch is
+# already known-working in the base image.
+RUN mamba create -y -n thesis-alertbert -c conda-forge python=3.11 graph-tool \
+    && mamba clean -afy
+
+# macOS-only fix upstream (numpy/torch both bundling libomp causes a SIGABRT
+# on import there) but harmless to set unconditionally -- see
+# alertbert_grouping.py's module docstring.
+ENV KMP_DUPLICATE_LIB_OK=TRUE
+
+CMD ["sleep", "infinity"]
