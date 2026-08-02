@@ -20,6 +20,8 @@ import random as _random
 from datetime import datetime, timezone
 from pathlib import Path
 
+import numpy as np
+
 from thesis.paths import ensure_artifact_dirs
 from thesis.configs import dataset_for_scenario
 from thesis.schemas.experiments import BaselineExperimentConfig, ExperimentResult
@@ -150,6 +152,19 @@ def run_baseline_experiment(
             grouping_mode=config.grouping.mode,
         )
 
+    # AlertGroup.scas (CSCAS's own outlier-cluster flag; None for AIT-ADS)
+    # survives ingestion but is never a model feature -- captured here, in
+    # alert_groups' current row order (post random-split shuffle above, if
+    # any), only for the "guided" pool-sampling condition below. See
+    # training/pool_sampling.guided_by_scas_pool. None (not an all-NaN array)
+    # for non-CSCAS scenarios, since "guided" is CSCAS-only and callers
+    # should never request it for AIT-ADS in the first place.
+    scas_full = (
+        np.array([tx.scas for tx in alert_groups])
+        if dataset_for_scenario(config.scenario) == "cscas"
+        else None
+    )
+
     # 5. Encode under baseline schema
     print(f"[5/7] Encoding alert_groups (schema='{config.schema_name}')...")
     df, schema = encode_and_cache_alert_groups(
@@ -174,6 +189,8 @@ def run_baseline_experiment(
             f"  [warn] Dropping {n_mixed} alert_groups with unlabelled/mixed group_label"
         )
         X, y = X[mask], y[mask]
+        if scas_full is not None:
+            scas_full = scas_full[mask.to_numpy()]
     output_dir = get_model_path(config.scenario, config.model_name, effective_version)
 
     summary = train_model_for_schema(
@@ -187,6 +204,9 @@ def run_baseline_experiment(
         train_frac=config.train_frac,
         random_split=config.random_split,
         random_seed=config.random_seed,
+        scas=scas_full,
+        pool_condition=config.pool_condition,
+        pool_seed=config.pool_seed,
     )
 
     # 7. Load full metrics from saved metadata and write results file

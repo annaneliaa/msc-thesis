@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 from pathlib import Path
 
@@ -8,12 +9,45 @@ from thesis.schemas.models import (
 )
 from thesis.schemas.features import FeatureSchema
 from thesis.training.persistence import save_model_artifact
+from thesis.training.pool_sampling import (
+    class_weighted_extra_kwargs,
+    guided_by_scas_pool,
+    random_undersample_pool,
+)
 from thesis.training.train import train_eval_holdout
 from thesis.training.util import (
     prepare_training_frame,
     make_holdout_split,
 )
 from thesis.training.model_factory import get_model_factory
+
+
+def _apply_pool_condition(
+    X_train: pd.DataFrame,
+    y_train: np.ndarray,
+    scas_train: np.ndarray | None,
+    pool_condition: str,
+    pool_seed: int,
+) -> tuple[pd.DataFrame, np.ndarray, dict]:
+    """Returns (X_pool, y_pool, extra_kwargs) for the active pool-sampling
+    condition -- see training/pool_sampling.py. "none"/"class_weighted" keep
+    every train-split row; "random"/"guided" resample the negative pool."""
+    if pool_condition == "none":
+        return X_train, y_train, {}
+    if pool_condition == "class_weighted":
+        return X_train, y_train, class_weighted_extra_kwargs(y_train)
+    if pool_condition == "random":
+        idx = random_undersample_pool(y_train, seed=pool_seed)
+        return X_train.iloc[idx], y_train[idx], {}
+    if pool_condition == "guided":
+        if scas_train is None:
+            raise ValueError(
+                "pool_condition='guided' requires scas (CSCAS-only -- see "
+                "training/pool_sampling.guided_by_scas_pool)."
+            )
+        idx = guided_by_scas_pool(y_train, scas_train, seed=pool_seed)
+        return X_train.iloc[idx], y_train[idx], {}
+    raise ValueError(f"Unknown pool_condition '{pool_condition}'.")
 
 
 def train_model_for_schema(
@@ -28,9 +62,17 @@ def train_model_for_schema(
     train_frac: float | None = None,
     random_split: bool = False,
     random_seed: int = 42,
+    scas: np.ndarray | None = None,
+    pool_condition: str = "none",
+    pool_seed: int = 42,
 ) -> TrainedModelSummary:
     """
     Train, evaluate, and persist a model for a given feature schema.
+
+    `scas`/`pool_condition`/`pool_seed`: optional training-pool construction
+    (random undersampling / class-weighted / guided-by-CSCAS) applied to the
+    train split before fitting -- see training/pool_sampling.py. Default
+    pool_condition="none" preserves prior behavior exactly.
     """
     if not isinstance(X, pd.DataFrame):
         raise TypeError("X must be a pandas DataFrame.")
@@ -43,16 +85,23 @@ def train_model_for_schema(
             f"Schema '{schema.schema_name}' is missing columns in X: {missing}"
         )
 
-    print("Creating new model instance...")
-    model_factory = get_model_factory(model_name)
-
     print("Preparing training frame...")
-    X_used, y_used = prepare_training_frame(
-        X_full=X,
-        y=y,
-        schema=schema,
-        random_split=random_split,
-    )
+    if scas is not None:
+        X_used, y_used, scas_used = prepare_training_frame(
+            X_full=X,
+            y=y,
+            schema=schema,
+            random_split=random_split,
+            scas=scas,
+        )
+    else:
+        X_used, y_used = prepare_training_frame(
+            X_full=X,
+            y=y,
+            schema=schema,
+            random_split=random_split,
+        )
+        scas_used = None
 
     X_train, X_test, y_train, y_test, split = make_holdout_split(
         X=X_used,
@@ -61,6 +110,16 @@ def train_model_for_schema(
         train_start=train_start,
         train_frac=train_frac,
     )
+    train_start_idx = split - len(X_train)
+    scas_train = scas_used[train_start_idx:split] if scas_used is not None else None
+
+    print(f"Applying pool_condition='{pool_condition}'...")
+    X_train, y_train, extra_kwargs = _apply_pool_condition(
+        X_train, y_train, scas_train, pool_condition, pool_seed
+    )
+
+    print("Creating new model instance...")
+    model_factory = get_model_factory(model_name, **extra_kwargs)
 
     print("Training and evaluating model...")
     result = train_eval_holdout(
@@ -117,6 +176,8 @@ def train_model_for_schema(
             "test_rows": len(X_test),
             "train_label_dist": pd.Series(y_train).value_counts().to_dict(),
             "test_label_dist": pd.Series(y_test).value_counts().to_dict(),
+            "pool_condition": pool_condition,
+            "pool_seed": pool_seed,
         },
         metrics={
             "auc": float(result["auc"]),

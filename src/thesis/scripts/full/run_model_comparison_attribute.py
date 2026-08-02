@@ -89,7 +89,16 @@ _REPO = next(p for p in _HERE.parents if (p / "pyproject.toml").exists())
 sys.path.insert(0, str(_REPO / "src"))
 
 COMPARISON_BASE = _REPO / "artifacts" / "experiments" / "run_model_comparison_attribute"
-MODELS = ["logreg", "rf", "mlp"]
+MODELS = ["logreg", "rf", "mlp", "xgboost", "torch_nn", "rf_gpu"]
+
+# Training-pool conditions (see training/pool_sampling.py). "guided" is
+# CSCAS-only -- AIT-ADS has no SCAS-equivalent outlier signal (see
+# baselines/_sampling.py's module docstring; generalizing it is an explicit
+# non-goal). Iterated as the outer loop in main() below: each condition gets
+# its own run_dir/<condition>/ subtree, so a scenario mix spanning both
+# CSCAS and AIT-ADS just skips "guided" for the AIT-ADS scenarios within
+# that pass rather than needing a separate invocation.
+ALL_POOL_CONDITIONS = ["random", "class_weighted", "guided"]
 
 
 def _load_rmc():
@@ -127,13 +136,18 @@ def _run_for_model(
     test_frac: float = 0.3,
     train_frac: float | None = None,
     schema_cache: dict | None = None,
+    pool_condition: str = "none",
 ) -> dict:
     """Run baseline + attribute-mined symbolic for one scenario/model, write
     compare JSON. Mirrors run_model_comparison._run_for_model but always
     trains the binary classifiers (no anomaly branch) with
     mining_strategy="attribute". schema_cache behaves as in the co-occurrence
     version: populated after the first successful mine so later models in the
-    same run reuse it instead of re-mining."""
+    same run reuse it instead of re-mining.
+
+    pool_condition: training-pool construction strategy (see
+    training/pool_sampling.py), applied identically to both the baseline and
+    symbolic passes below."""
     print(
         f"\n{'='*60}\n  {model_name.upper()} — {scenario} (attribute mining)\n{'='*60}"
     )
@@ -162,6 +176,7 @@ def _run_for_model(
             random_seed=random_seed,
             test_frac=test_frac,
             train_frac=train_frac,
+            pool_condition=pool_condition,
             **extra,
         )
     )
@@ -182,6 +197,7 @@ def _run_for_model(
             test_frac=test_frac,
             train_frac=train_frac,
             prebuilt_symbolic_schema_path=prebuilt,
+            pool_condition=pool_condition,
             **extra,
         )
     )
@@ -431,23 +447,31 @@ examples:
     else:
         run_dir = COMPARISON_BASE / f"{dir_prefix}{run_ts}"
 
-    plots_dir = run_dir / "plots"
-    plots_dir.mkdir(parents=True, exist_ok=True)
+    # This run_dir's own "plots" holds only the shared log across every pool
+    # condition below -- each condition gets its own run_dir/<condition>/plots
+    # subtree for its actual comparison tables/plots (see ALL_POOL_CONDITIONS).
+    log_dir = run_dir / "plots"
+    log_dir.mkdir(parents=True, exist_ok=True)
 
-    log_path = plots_dir / f"comparison_{run_ts}.log"
+    log_path = log_dir / f"comparison_{run_ts}.log"
     tee = rmc._Tee(log_path)
     sys.stdout = tee
     print(f"Logging to {log_path}\n")
 
     try:
-        _run_main(args, run_dir, plots_dir)
+        for condition in ALL_POOL_CONDITIONS:
+            print(f"\n{'#' * 70}\n  POOL CONDITION: {condition}\n{'#' * 70}")
+            condition_run_dir = run_dir / condition
+            condition_plots_dir = condition_run_dir / "plots"
+            condition_plots_dir.mkdir(parents=True, exist_ok=True)
+            _run_main(args, condition_run_dir, condition_plots_dir, condition)
     finally:
         sys.stdout = sys.__stdout__
         tee.close()
         print(f"Log saved → {log_path}")
 
 
-def _run_main(args, run_dir: Path, plots_dir: Path) -> None:
+def _run_main(args, run_dir: Path, plots_dir: Path, condition: str) -> None:
     scenarios = args.scenarios
     models: list[str] = args.models
     filtered = args.filtered is not None
@@ -490,6 +514,12 @@ def _run_main(args, run_dir: Path, plots_dir: Path) -> None:
                     print(f"[skip] {model}/{scenario} — exists. Use --force to re-run.")
                     continue
                 is_cscas = dataset_for_scenario(scenario) == "cscas"
+                if condition == "guided" and not is_cscas:
+                    print(
+                        f"[skip] {model}/{scenario} — 'guided' pool condition is "
+                        f"CSCAS-only, {scenario} has no SCAS-equivalent signal."
+                    )
+                    continue
                 alerts_path = (
                     _REPO / "artifacts" / "processed-data" / scenario / alerts_filename
                     if filtered and not is_cscas
@@ -523,6 +553,7 @@ def _run_main(args, run_dir: Path, plots_dir: Path) -> None:
                         test_frac=args.test_frac,
                         train_frac=args.train_frac,
                         schema_cache=schema_cache,
+                        pool_condition=condition,
                     )
                 except Exception as exc:
                     print(f"\n[{model}/{scenario}] FAILED: {exc}")

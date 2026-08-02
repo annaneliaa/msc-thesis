@@ -57,6 +57,7 @@ archive
 out
 .png
 .pdf
+.npz
 
 # Docker
 .dockerignore

@@ -116,7 +116,19 @@ def train_eval_holdout(
                 raise RuntimeError(
                     "Permutation importance skipped: model flagged as too expensive"
                 )
-            _n_jobs = 1 if getattr(model, "_skip_shap", False) else -1
+            # _gpu_model (torch_nn/rf_gpu, see training/gpu_models.py) forces
+            # single-process too -- joblib's multiprocess backend would need
+            # to re-pickle a GPU-resident model into each worker and give it
+            # its own CUDA context, which is exactly the kind of contention
+            # this is avoiding. Unlike _skip_shap, this does NOT skip SHAP
+            # itself further down -- we still want feature attributions for
+            # these models, just computed in-process.
+            _n_jobs = (
+                1
+                if getattr(model, "_skip_shap", False)
+                or getattr(model, "_gpu_model", False)
+                else -1
+            )
             print(
                 f"  [train] permutation importance: n_repeats=10, n_jobs={_n_jobs}, "
                 f"X_test={X_test.shape} ({len(feature_names)} features x 10 repeats "

@@ -23,7 +23,18 @@ def prepare_training_frame(
     schema: FeatureSchema,
     time_col: str = "timestamp",
     random_split: bool = False,
-) -> tuple[pd.DataFrame, np.ndarray]:
+    scas: np.ndarray | None = None,
+) -> tuple[pd.DataFrame, np.ndarray] | tuple[pd.DataFrame, np.ndarray, np.ndarray]:
+    """
+    `scas` (optional): AlertGroup.scas values aligned 1:1 with X_full/y's
+    input row order (see experiments/baseline.py/symbolic.py, which build it
+    straight off alert_groups). Carried through the same sort/reset_index
+    this function already applies to X/y so pool_sampling.guided_by_scas_pool
+    can later index into it with the same positions as the returned y_arr --
+    without this, a chronological sort here would silently desync scas from
+    y. Returned as a third element only when passed in, so every existing
+    call site (which never passes scas) is unaffected.
+    """
     if hasattr(y, "reset_index"):
         y = y.reset_index(drop=True)
     else:
@@ -31,6 +42,8 @@ def prepare_training_frame(
 
     df = X_full.reset_index(drop=True).copy()
     df["__y__"] = y.values
+    if scas is not None:
+        df["__scas__"] = np.asarray(scas)
 
     if not random_split and time_col in df.columns:
         df = df.sort_values(time_col, kind="stable").reset_index(drop=True)
@@ -39,6 +52,8 @@ def prepare_training_frame(
     X = df[feature_names].fillna(0)
     y_arr = df["__y__"].to_numpy()
 
+    if scas is not None:
+        return X, y_arr, df["__scas__"].to_numpy()
     return X, y_arr
 
 

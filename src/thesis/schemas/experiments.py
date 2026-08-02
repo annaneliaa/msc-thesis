@@ -51,6 +51,13 @@ class SymbolicExperimentConfig:
     results_dir: Path | None = None
     alerts_json_path: Path | None = None
     prebuilt_symbolic_schema_path: Path | None = None
+    # Training-pool construction strategy applied to the train split before
+    # fitting -- see training/pool_sampling.py. "none" (default) preserves
+    # today's behavior exactly (train on the full train split, no
+    # resampling, no imbalance kwargs); every experiment script other than
+    # run_model_comparison_attribute.py leaves this unset.
+    pool_condition: Literal["none", "random", "class_weighted", "guided"] = "none"
+    pool_seed: int = 42
 
 
 @dataclass
@@ -68,6 +75,9 @@ class BaselineExperimentConfig:
     grouping: GroupingConfig = field(default_factory=GroupingConfig)
     results_dir: Path | None = None
     alerts_json_path: Path | None = None
+    # See SymbolicExperimentConfig.pool_condition above.
+    pool_condition: Literal["none", "random", "class_weighted", "guided"] = "none"
+    pool_seed: int = 42
 
 
 @dataclass

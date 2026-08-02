@@ -46,6 +46,19 @@ dev = [
 # Install it via conda before pip install -e .:
 #   mamba install -c conda-forge graph-tool
 
+# cuml (RAPIDS) is required for the "rf_gpu" model (training/gpu_models.py's
+# CuMLRandomForestClassifierWrapper) but is Linux+NVIDIA-only, so it's NOT
+# listed as a base/optional dependency here -- doing so would break
+# `pip install -e .` on macOS. Install separately, only on a CUDA machine
+# (e.g. inside Dockerfile.dgx's container):
+#   pip install cuml-cu12
+#   # or: mamba install -c rapidsai -c conda-forge -c nvidia cuml
+# training/gpu_models.py imports cuml lazily (inside the wrapper's fit(),
+# not at module import time) specifically so model_factory.py -- imported by
+# nearly every training code path -- stays importable without it. Every
+# other model_factory entry ("xgboost", "torch_nn", etc.) works with only
+# this project's existing base dependencies.
+
 [project.scripts]
 thesis-cli = "thesis.cli:app"
 

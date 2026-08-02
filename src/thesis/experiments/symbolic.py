@@ -57,6 +57,8 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+import numpy as np
+
 from thesis.config import load_mining_filter_config
 from thesis.configs import dataset_for_scenario
 from thesis.experiments.baseline import (
@@ -150,6 +152,19 @@ def run_symbolic_experiment(
         print(
             f"  [random-split] Shuffled {len(alert_groups)} alert_groups (seed={config.random_seed})"
         )
+
+    # AlertGroup.scas (CSCAS's own outlier-cluster flag; None for AIT-ADS)
+    # survives ingestion but is never a model feature -- captured here, in
+    # alert_groups' current row order (post sort/shuffle above), only for the
+    # "guided" pool-sampling condition below. See
+    # training/pool_sampling.guided_by_scas_pool. None (not an all-NaN array)
+    # for non-CSCAS scenarios -- see experiments/baseline.py's identical
+    # comment.
+    scas_full = (
+        np.array([tx.scas for tx in alert_groups])
+        if dataset_for_scenario(config.scenario) == "cscas"
+        else None
+    )
 
     n_total = len(alert_groups)
     n_mine = int(config.mine_frac * n_total) if config.mine_frac < 1.0 else n_total
@@ -321,6 +336,8 @@ def run_symbolic_experiment(
             f"  [warn] Dropping {n_mixed} alert_groups with unlabelled/mixed group_label"
         )
         X, y = X[mask], y[mask]
+        if scas_full is not None:
+            scas_full = scas_full[mask.to_numpy()]
     output_dir = get_model_path(config.scenario, config.model_name, effective_version)
 
     summary = train_model_for_schema(
@@ -335,6 +352,9 @@ def run_symbolic_experiment(
         train_frac=config.train_frac,
         random_split=config.random_split,
         random_seed=config.random_seed,
+        scas=scas_full,
+        pool_condition=config.pool_condition,
+        pool_seed=config.pool_seed,
     )
 
     # 8. Load full metrics and write results file
