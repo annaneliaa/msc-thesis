@@ -1,0 +1,16 @@
+{
+  "ait-ads": [
+    "hour_of_day",
+    "n_alerts",
+    "n_sigs",
+    "n_hosts",
+    "n_shorts"
+  ],
+  "cscas": [
+    "proto",
+    "ext_port",
+    "int_port",
+    "n_alerts",
+    "signature_matches_per_day"
+  ]
+}

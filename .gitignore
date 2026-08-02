@@ -30,12 +30,19 @@ artifacts/*
 !artifacts/*/.gitkeep
 !artifacts/*/.csv
 
-# Data 
+# Data
 data/*
 *.parquet
 *.csv
 *.zip
 *.json
+# ...except this project's own config JSON (scenarios.json,
+# baseline_features.json, etc.) -- these are checked-in settings every
+# machine running the code needs (e.g. via load_scenarios/load_base_features
+# in configs/__init__.py), not generated data, and the blanket *.json rule
+# above was silently excluding them from every machine but the one that
+# created them.
+!src/thesis/configs/*.json
 
 # Pytest
 .pytest_cache/
