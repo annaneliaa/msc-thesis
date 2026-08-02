@@ -151,6 +151,14 @@ _MODEL_COLORS = {
     "bernoulli_oc": "#9B59B6",
     "autoencoder_oc": "#17BECF",
     "ocsvm": "#E74C3C",
+    # "rf" was already in run_model_comparison_attribute.py's own MODELS list
+    # before these entries existed -- a pre-existing gap here, not something
+    # specific to xgboost/torch_nn/rf_gpu (run_model_comparison_attribute.py's
+    # newer models, see training/model_factory.py).
+    "rf": "#8C564B",
+    "xgboost": "#BCBD22",
+    "torch_nn": "#7F7F7F",
+    "rf_gpu": "#E377C2",
 }
 _MODEL_LABELS = {
     "logreg": "LogReg",
@@ -159,6 +167,10 @@ _MODEL_LABELS = {
     "bernoulli_oc": "Bernoulli",
     "autoencoder_oc": "Autoencoder",
     "ocsvm": "OC-SVM",
+    "rf": "RandomForest",
+    "xgboost": "XGBoost",
+    "torch_nn": "Torch NN",
+    "rf_gpu": "RandomForest (GPU)",
 }
 
 

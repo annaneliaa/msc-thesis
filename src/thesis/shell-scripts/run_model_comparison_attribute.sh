@@ -12,6 +12,14 @@
 # Edit SCENARIO/MODELS/EXTRA_ARGS below, or override at the command line:
 #   ./run_model_comparison_attribute.sh cscas --models xgboost torch_nn
 #
+# No --force is added by default: run_model_comparison_attribute.py's own
+# default already resumes the latest matching comparison_raw_* run dir and
+# skips any (condition, model, scenario) combo that already has a
+# compare_*.json -- exactly what you want when rerunning after a crash or an
+# interrupted overnight run. Only pass --force yourself (as an extra arg)
+# when you deliberately want to redo everything from scratch, e.g. after
+# changing a model's hyperparameters.
+#
 # --- Getting this to survive BOTH `docker exec` and SSH closing ---
 #
 # `docker run -d ... sleep infinity` (per Dockerfile.dgx) keeps the
@@ -48,9 +56,6 @@ SCENARIO="${1:-cscas}"
 if [[ $# -gt 0 ]]; then shift; fi
 MODELS=(logreg rf mlp xgboost torch_nn rf_gpu)
 EXTRA_ARGS=("$@")
-if [[ ${#EXTRA_ARGS[@]} -eq 0 || "${EXTRA_ARGS[*]}" != *"--force"* ]]; then
-  EXTRA_ARGS+=(--force)
-fi
 
 LOG_DIR="$REPO_ROOT/artifacts/logs/run_model_comparison_attribute"
 mkdir -p "$LOG_DIR"
