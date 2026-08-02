@@ -181,8 +181,13 @@ class TorchMLPClassifier(BaseEstimator, ClassifierMixin):
 
 class CuMLRandomForestClassifierWrapper(BaseEstimator, ClassifierMixin):
     """Wraps cuml.ensemble.RandomForestClassifier for GPU-accelerated
-    RandomForest training. n_estimators matches the existing sklearn "rf"
-    factory for comparability.
+    RandomForest training. n_estimators/max_depth match the existing sklearn
+    "rf" factory for comparability -- cuML's own default (max_depth=16, at
+    least through cuml 26.06) is NOT unlimited like sklearn's, so leaving it
+    unset would silently cap tree depth relative to "rf" and skew any
+    rf-vs-rf_gpu comparison. Pinned explicitly here rather than left to
+    cuML's default, which is also scheduled to change (to None) in a future
+    release -- see cuml.ensemble.RandomForestClassifier's own FutureWarning.
 
     shap.TreeExplainer does not understand cuML's tree format, so this
     exposes get_shap_values() explicitly (using shap's model-agnostic
@@ -195,8 +200,14 @@ class CuMLRandomForestClassifierWrapper(BaseEstimator, ClassifierMixin):
     class_weighted pool condition's fallback.
     """
 
-    def __init__(self, n_estimators: int = 200, random_state: int = 42):
+    def __init__(
+        self,
+        n_estimators: int = 200,
+        max_depth: int | None = None,
+        random_state: int = 42,
+    ):
         self.n_estimators = n_estimators
+        self.max_depth = max_depth
         self.random_state = random_state
         self._gpu_model = True
 
@@ -220,7 +231,9 @@ class CuMLRandomForestClassifierWrapper(BaseEstimator, ClassifierMixin):
         self.n_features_in_ = X.shape[1]
 
         self._model = CuMLRF(
-            n_estimators=self.n_estimators, random_state=self.random_state
+            n_estimators=self.n_estimators,
+            max_depth=self.max_depth,
+            random_state=self.random_state,
         )
         self._model.fit(X, y)
         self.feature_importances_ = self._to_numpy(self._model.feature_importances_)
