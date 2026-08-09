@@ -1,5 +1,5 @@
 # GPU environment for running the grouping experiment (see
-# src/thesis/baselines/grouping/run_grouping.sh) on a DGX Spark or any other
+# src/thesis/shell-scripts/baselines/grouping/run_grouping.sh) on a DGX Spark or any other
 # CUDA machine -- distinct from the plain-CPU `Dockerfile` at the repo root,
 # which serves the FastAPI app.
 #
@@ -34,12 +34,12 @@
 # only exists after the volume is mounted, so it can't be baked into the
 # image itself):
 #
-#   docker exec -it thesis-run bash src/thesis/baselines/grouping/setup_container.sh
+#   docker exec -it thesis-run bash src/thesis/shell-scripts/baselines/grouping/setup_container.sh
 #
 # After that, run_grouping.sh works exactly as it does locally:
 #
 #   docker exec -it thesis-run bash -lc \
-#     "cd src/thesis/baselines/grouping && ./run_grouping.sh"
+#     "src/thesis/shell-scripts/baselines/grouping/run_grouping.sh"
 
 FROM nvcr.io/nvidia/pytorch:25.11-py3
 
