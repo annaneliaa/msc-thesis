@@ -37,6 +37,7 @@ trigger this skip either.)
 
 import os
 import time
+import traceback
 from concurrent.futures import ThreadPoolExecutor
 
 from sklearn.metrics import f1_score, precision_score, recall_score
@@ -249,4 +250,11 @@ check_ollama_ready()
 
 for _grouping_method in GROUPING_METHODS:
     for _scenario in SCENARIOS:
-        run_scenario(_scenario, _grouping_method)
+        try:
+            run_scenario(_scenario, _grouping_method)
+        except Exception:
+            print(
+                f"\n[ERROR] {_grouping_method}_{_scenario}: unhandled exception -- "
+                "continuing to the next combo."
+            )
+            traceback.print_exc()

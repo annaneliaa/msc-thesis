@@ -52,6 +52,7 @@ check per scenario, then flip it back to False for real, reportable numbers.
 
 import os
 import time
+import traceback
 
 import numpy as np
 import pandas as pd
@@ -336,4 +337,11 @@ def run_scenario(scenario: str, grouping_method: str) -> None:
 
 for _grouping_method in GROUPING_METHODS:
     for _scenario in SCENARIOS:
-        run_scenario(_scenario, _grouping_method)
+        try:
+            run_scenario(_scenario, _grouping_method)
+        except Exception:
+            print(
+                f"\n[ERROR] {_grouping_method}_{_scenario}: unhandled exception -- "
+                "continuing to the next combo."
+            )
+            traceback.print_exc()

@@ -311,6 +311,20 @@ def group_alerts_time_delta_host_by_group(
 # =============================================================================
 
 
+def _fs_safe(text: str) -> str:
+    """group_id ends up as a JSON filename verbatim (see
+    caching.cache.TokenCache.write_group_entry: `group_store_dir /
+    f"{group_id}.json"`) -- '/' (and '\\' for Windows-safety) must not
+    survive into it, or a signature like "ET POLICY GNU/Linux APT ..."
+    silently turns group_id into a path through a nonexistent
+    subdirectory and write_group_entry raises FileNotFoundError. Only
+    used when building the group_id *string*, not the (host, signature)
+    tuple _split_by_host_signature buckets alerts by, so this can't
+    change which alerts land in the same group -- only how that group's
+    on-disk identifier is spelled."""
+    return text.replace("/", "_").replace("\\", "_")
+
+
 def group_alerts_cscas(
     alerts: list[GroupableAlert],
     session_length: float = CSCAS_SESSION_LENGTH_SECONDS,
@@ -339,7 +353,7 @@ def group_alerts_cscas(
             records.append(
                 GroupingRecord(
                     alert_id=alert.alert_id,
-                    group_id=f"{CSCAS_METHOD}:{host}:{signature}:{anchor_id}",
+                    group_id=f"{CSCAS_METHOD}:{_fs_safe(host)}:{_fs_safe(signature)}:{anchor_id}",
                     method=CSCAS_METHOD,
                 )
             )
@@ -358,7 +372,9 @@ def group_alerts_cscas_by_group(
             sorted_alerts, gap_threshold=session_timeout, span_cap=session_length
         )
         for alert, anchor_id in assignments:
-            groups[f"{CSCAS_METHOD}:{host}:{signature}:{anchor_id}"].append(alert)
+            groups[
+                f"{CSCAS_METHOD}:{_fs_safe(host)}:{_fs_safe(signature)}:{anchor_id}"
+            ].append(alert)
     return dict(groups)
 
 
