@@ -98,3 +98,12 @@ def is_zero_shot(data: dict) -> bool:
     """True if `data` (as returned by load_baseline_results) is a flat
     zero-shot result rather than a trainable multi-condition result."""
     return data.get("kind") == "zero_shot"
+
+
+def results_exist(name: str) -> bool:
+    """True if RESULTS_DIR/{name}.json already exists -- for callers that
+    want to skip already-computed (condition/scenario/grouping_method/...)
+    combos on a resumed run, the same way
+    scripts/system_eval/run_model_comparison_attribute.py skips existing
+    compare_*.json files unless --force is passed."""
+    return (RESULTS_DIR / f"{name}.json").exists()
