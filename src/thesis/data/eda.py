@@ -22,10 +22,16 @@ import pandas as pd
 from thesis.data.alert_groups import build_labeled_window_alert_groups
 
 from thesis.visualization.eda import (
+    classify_signatures,
     plot_alert_group_size_distribution,
     plot_pair_support_scatter,
     plot_signature_event_raster,
     plot_occurrence_burst_raster,
+    plot_signature_purity_pie,
+    plot_signature_activity_bins,
+    plot_signature_vocabulary_churn,
+    plot_signature_activity_heatmap,
+    plot_attack_temporal_concentration,
 )
 
 
@@ -320,6 +326,260 @@ def run_scenario_eda(
         f.write(sig_counts.head(30).to_string(index=False) + "\n\n")
 
     print(f"  {scenario}: done → {out_path}")
+
+
+# ---------------------------------------------------------------------------
+# Signature-behaviour / temporal-stability analysis (CSCAS notebook parity)
+# ---------------------------------------------------------------------------
+
+
+def compute_signature_behaviour_summary(
+    df: pd.DataFrame, sig_col: str = "signature"
+) -> pd.DataFrame:
+    """
+    One table with per-class (All / Benign-only / Attack-only) signature
+    stats: volume concentration (top-K share, signatures needed for 90% of
+    volume), persistence (days active), and first-appearance timing.
+    Mirrors the CSCAS notebook's signature-behaviour-summary table (there
+    keyed on alert *groups*; here on raw alerts) so both write-ups can quote
+    the same shape of table.
+    """
+    sig_cls = classify_signatures(df, sig_col)
+    total_days = (df["timestamp"].max() - df["timestamp"].min()).days + 1
+    day = df["timestamp"].dt.normalize()
+    per_sig = df.groupby(sig_col).agg(n_alerts=("is_attack", "size"))
+    per_sig["days_active"] = day.groupby(df[sig_col]).nunique()
+    per_sig["cls"] = sig_cls
+    per_sig["alerts_per_day"] = per_sig["n_alerts"] / total_days
+    per_sig["days_active_frac"] = per_sig["days_active"] / total_days
+
+    fs = df.groupby(sig_col)["timestamp"].min()
+    t0 = fs.min()
+    t1 = fs.max()
+    day1 = fs <= t0 + pd.Timedelta(days=1)
+    last25 = fs > t0 + 0.75 * (t1 - t0)
+
+    def _n_for_90(counts):
+        c = counts.sort_values(ascending=False).cumsum() / counts.sum()
+        return int((c < 0.9).sum() + 1)
+
+    def _column(which):
+        ids = per_sig.index if which == "all" else per_sig.index[per_sig.cls == which]
+        sub = per_sig.loc[ids]
+        v = df[df[sig_col].isin(ids)][sig_col].value_counts()
+        return {
+            "Distinct signatures": len(sub),
+            "Signatures carrying 90% of their alerts": _n_for_90(v),
+            "Median alerts per signature": round(sub.n_alerts.median(), 1),
+            "Signatures with < 10 alerts": int((sub.n_alerts < 10).sum()),
+            "Median alerts/day per signature": round(sub.alerts_per_day.median(), 2),
+            "Median days-active fraction": round(sub.days_active_frac.median(), 2),
+            "Signatures active every day": int((sub.days_active_frac == 1.0).sum()),
+            "First appearance on day 1": int(day1.reindex(ids).sum()),
+            "First appearance in final 25%": int(last25.reindex(ids).sum()),
+        }
+
+    vc = df[sig_col].value_counts()
+    cum = vc.sort_values(ascending=False).cumsum() / vc.sum()
+
+    def _top_share(k):
+        return round(100 * cum.iloc[min(k - 1, len(cum) - 1)], 1)
+
+    sig_summary = pd.DataFrame(
+        {
+            "All": _column("all"),
+            "Benign-only": _column("benign"),
+            "Attack-only": _column("attack"),
+        }
+    )
+    overall = pd.DataFrame(
+        {
+            "All": {
+                "Mixed-label signatures": int((sig_cls == "mixed").sum()),
+                "Top 5 signatures, share of all alerts (%)": _top_share(5),
+                "Top 10 signatures, share of all alerts (%)": _top_share(10),
+                "Top 50 signatures, share of all alerts (%)": _top_share(50),
+            }
+        }
+    ).reindex(columns=sig_summary.columns)
+    return pd.concat([sig_summary.iloc[[0]], overall, sig_summary.iloc[1:]])
+
+
+def compute_signature_overview_table(
+    df: pd.DataFrame, sig_col: str = "signature"
+) -> pd.DataFrame:
+    """
+    Per-signature stats table for the write-up's overview CSVs: volume,
+    class, and activity span. Mirrors CSCAS's signature_overview.csv, minus
+    the CVE-reference/category columns (parsed from Suricata's SignatureText
+    convention, which has no AIT-ADS equivalent).
+    """
+    stats = (
+        df.groupby(sig_col)
+        .agg(count=("is_attack", "size"), attack_count=("is_attack", "sum"))
+        .reset_index()
+    )
+    stats["benign_count"] = stats["count"] - stats["attack_count"]
+    stats["attack_rate%"] = (stats["attack_count"] / stats["count"] * 100).round(3)
+    stats["sig_class"] = stats[sig_col].map(classify_signatures(df, sig_col))
+
+    span = (
+        df.groupby(sig_col)
+        .agg(
+            n_days_active=("timestamp", lambda s: s.dt.normalize().nunique()),
+            n_hours_active=("timestamp", lambda s: s.dt.floor("h").nunique()),
+            first_seen=("timestamp", "min"),
+            last_seen=("timestamp", "max"),
+        )
+        .reset_index()
+    )
+    return stats.merge(span, on=sig_col).sort_values("count", ascending=False)
+
+
+def compute_signature_activity_by_bin(
+    df: pd.DataFrame, sig_col: str = "signature", freq: str = "D"
+) -> pd.DataFrame:
+    """For each time bin: how many distinct signatures were active, split by
+    class, and what fraction of that bin's active signatures each class
+    represents. Mirrors CSCAS's signature_activity_per_day/hour.csv."""
+    sig_cls_map = classify_signatures(df, sig_col)
+    binned = df[["timestamp", sig_col]].copy()
+    binned["_cls"] = binned[sig_col].map(sig_cls_map)
+    binned["bin"] = binned["timestamp"].dt.floor(freq)
+    active = binned.groupby(["bin", sig_col])["_cls"].first().reset_index()
+    counts = (
+        active.groupby(["bin", "_cls"])
+        .size()
+        .unstack(fill_value=0)
+        .reindex(columns=["benign", "attack", "mixed"], fill_value=0)
+    )
+    counts["n_active_signatures"] = counts.sum(axis=1)
+    counts["frac_benign"] = counts["benign"] / counts["n_active_signatures"]
+    counts["frac_attack"] = counts["attack"] / counts["n_active_signatures"]
+    counts["frac_mixed"] = counts["mixed"] / counts["n_active_signatures"]
+    return counts.reset_index().rename(columns={"bin": "timestamp"})
+
+
+def compute_signature_activity_summary(
+    activity_by_freq: dict[str, pd.DataFrame],
+) -> pd.DataFrame:
+    """Min/max/mean rollup of compute_signature_activity_by_bin's output
+    across granularities, e.g. {'day': daily_df, 'hour': hourly_df}. Mirrors
+    CSCAS's signature_activity_summary.csv."""
+    cols = [
+        "benign",
+        "attack",
+        "mixed",
+        "n_active_signatures",
+        "frac_benign",
+        "frac_attack",
+        "frac_mixed",
+    ]
+    rows = [
+        {
+            "granularity": granularity,
+            "metric": col,
+            "min": counts_df[col].min(),
+            "max": counts_df[col].max(),
+            "mean": counts_df[col].mean(),
+        }
+        for granularity, counts_df in activity_by_freq.items()
+        for col in cols
+    ]
+    out = pd.DataFrame(rows)
+    out[["min", "max", "mean"]] = out[["min", "max", "mean"]].round(4)
+    return out
+
+
+def run_signature_behaviour_eda(
+    df: pd.DataFrame,
+    scenario: str,
+    out_path: Path,
+    summary_path: Path,
+    overview_dir: Path,
+    sig_col: str = "signature",
+    bin_freq: str = "1h",
+    balanced: str | None = None,
+    groups_balanced: str | None = None,
+) -> None:
+    """
+    Signature-behaviour + temporal-stability analysis for one scenario,
+    mirroring the CSCAS notebook's signature-vocabulary-churn /
+    signature-behaviour-summary / overview-CSV sections so both datasets'
+    write-ups can quote comparable plots and tables. Writes:
+      - <scenario>_signature_behaviour_summary.txt (table + LaTeX) to
+        summary_path
+      - <scenario>_signature_purity_pie.png, _signature_activity_bins.png,
+        _vocabulary_churn.png, _signature_activity_heatmap.png,
+        _attack_temporal_concentration.png to out_path
+      - <scenario>_signature_overview.csv,
+        _signature_activity_per_day.csv, _signature_activity_per_hour.csv,
+        _signature_activity_summary.csv to overview_dir
+    """
+    print(f"  Running signature-behaviour EDA for scenario '{scenario}'...")
+    out_path.mkdir(parents=True, exist_ok=True)
+    summary_path.mkdir(parents=True, exist_ok=True)
+    overview_dir.mkdir(parents=True, exist_ok=True)
+    label = data_label(balanced, groups_balanced)
+
+    sig_summary = compute_signature_behaviour_summary(df, sig_col=sig_col)
+    with open(summary_path / f"{scenario}_signature_behaviour_summary.txt", "w") as f:
+        f.write(f"Signature-behaviour summary — {scenario}\n")
+        f.write("=" * 50 + "\n\n")
+        f.write(sig_summary.to_string(na_rep="--") + "\n\n")
+        f.write(
+            sig_summary.to_latex(
+                na_rep="--",
+                caption=f"{scenario}: signature-behaviour summary.",
+                label=f"tab:{scenario}-signature-behaviour",
+            )
+        )
+
+    fig, _ = plot_signature_purity_pie(df)
+    annotate_and_save(fig, out_path / f"{scenario}_signature_purity_pie.png", label)
+
+    fig, _ = plot_signature_activity_bins(
+        df, scenario, sig_col=sig_col, bin_freq=bin_freq
+    )
+    annotate_and_save(fig, out_path / f"{scenario}_signature_activity_bins.png", label)
+
+    fig, _ = plot_signature_vocabulary_churn(
+        df, scenario, sig_col=sig_col, bin_freq=bin_freq
+    )
+    annotate_and_save(fig, out_path / f"{scenario}_vocabulary_churn.png", label)
+
+    fig, _ = plot_signature_activity_heatmap(df, scenario, sig_col=sig_col)
+    annotate_and_save(
+        fig, out_path / f"{scenario}_signature_activity_heatmap.png", label
+    )
+
+    fig, _ = plot_attack_temporal_concentration(df, scenario, sig_col=sig_col)
+    annotate_and_save(
+        fig, out_path / f"{scenario}_attack_temporal_concentration.png", label
+    )
+
+    sig_overview = compute_signature_overview_table(df, sig_col=sig_col)
+    sig_overview.to_csv(
+        overview_dir / f"{scenario}_signature_overview.csv", index=False
+    )
+
+    daily = compute_signature_activity_by_bin(df, sig_col=sig_col, freq="D")
+    hourly = compute_signature_activity_by_bin(df, sig_col=sig_col, freq="h")
+    daily.to_csv(
+        overview_dir / f"{scenario}_signature_activity_per_day.csv", index=False
+    )
+    hourly.to_csv(
+        overview_dir / f"{scenario}_signature_activity_per_hour.csv", index=False
+    )
+
+    activity_summary = compute_signature_activity_summary(
+        {"day": daily, "hour": hourly}
+    )
+    activity_summary.to_csv(
+        overview_dir / f"{scenario}_signature_activity_summary.csv", index=False
+    )
+
+    print(f"  {scenario}: signature-behaviour EDA done → {out_path}")
 
 
 # ---------------------------------------------------------------------------

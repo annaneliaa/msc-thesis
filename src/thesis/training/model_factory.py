@@ -1,5 +1,5 @@
 from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import IsolationForest, RandomForestClassifier
 from sklearn.neural_network import MLPClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
@@ -136,6 +136,18 @@ MODEL_FACTORIES = {
             ("scaler", StandardScaler()),
             ("clf", OneClassSVM(kernel="rbf", nu=0.05)),
         ]
+    ),
+    # Tree-based like "rf"/"xgboost" above -- scale-invariant, so no
+    # StandardScaler wrapper needed (unlike "ocsvm"). contamination=0.05
+    # matches every other anomaly model's convention. random_state fixes an
+    # otherwise-random model to one deterministic run, same "single run, no
+    # seed-averaging" contract the anomaly baseline scripts rely on for
+    # ocsvm (which is deterministic without needing a seed at all).
+    "iforest": lambda **_: IsolationForest(
+        n_estimators=100,
+        contamination=0.05,
+        random_state=42,
+        n_jobs=-1,
     ),
 }
 

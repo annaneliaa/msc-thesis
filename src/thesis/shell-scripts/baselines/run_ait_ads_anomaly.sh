@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
-# Overnight batch runner for the AIT-ADS anomaly baseline (ait_ads_anomaly.py)
-# -- the AIT-ADS counterpart to run_ait_ads_tabular.sh's single-script
-# pattern. Loops every AIT-ADS scenario x grouping method internally
-# (AIT_ADS_SCENARIOS / AIT_ADS_GROUPING_METHODS below to run a subset of
-# either), sharing the exact same split (_ait_ads_data.load_ait_ads_
-# baseline_split) as every other ait_ads_*.py script -- these results are
-# directly comparable to those, not just similarly configured.
+# Overnight batch runner for the AIT-ADS anomaly baselines
+# (ait_ads_anomaly.py -- OneClassSVM, ait_ads_anomaly_iforest.py --
+# IsolationForest) -- the AIT-ADS counterpart to run_ait_ads_tabular.sh's
+# multi-script loop pattern. Each script loops every AIT-ADS scenario x
+# grouping method internally (AIT_ADS_SCENARIOS / AIT_ADS_GROUPING_METHODS
+# below to run a subset of either), sharing the exact same split
+# (_ait_ads_data.load_ait_ads_baseline_split) as every other ait_ads_*.py
+# script -- these results are directly comparable to those, not just
+# similarly configured.
 #
-# Unlike the six classifier/LLM baselines, this one is expected to also
-# produce a result for harrison/santos/russellmitchell -- see
-# ait_ads_anomaly.py's module docstring for why its single-class guard is
+# Unlike the six classifier/LLM baselines, both of these are expected to
+# also produce a result for harrison/santos/russellmitchell -- see
+# ait_ads_anomaly.py's module docstring for why their single-class guard is
 # test-side only, not train-side.
 #
 # alertbert grouping still needs the thesis-alertbert conda env (graph-tool
@@ -18,7 +20,7 @@
 # (usually already there from the tabular scripts' setup -- see
 # setup_container.sh's thesis-alertbert branch).
 #
-# Cheap (CPU, one deterministic OneClassSVM fit per combo, no seeds/pool
+# Cheap (CPU, one deterministic model fit per combo, no seeds/pool
 # conditions to sweep) -- comparable cost to run_ait_ads_tabular.sh, not
 # run_ait_ads_bert_securebert.sh.
 #
@@ -65,11 +67,13 @@ run_step() {
     echo "AIT_ADS_SCENARIOS=${AIT_ADS_SCENARIOS:-<all>}"
     echo "Non-alertbert grouping methods (plain venv): $NON_ALERTBERT_METHODS"
 
-    AIT_ADS_GROUPING_METHODS="$NON_ALERTBERT_METHODS" \
-        run_step "ait_ads_anomaly.py (fixed_window/time_delta/cscas_grouping/deepcase)" "$PYTHON" ait_ads_anomaly.py
-    run_step "ait_ads_anomaly.py (alertbert)" \
-        env AIT_ADS_GROUPING_METHODS=alertbert conda run -n thesis-alertbert --no-capture-output \
-        "$PYTHON" ait_ads_anomaly.py
+    for script in ait_ads_anomaly.py ait_ads_anomaly_iforest.py; do
+        AIT_ADS_GROUPING_METHODS="$NON_ALERTBERT_METHODS" \
+            run_step "$script (fixed_window/time_delta/cscas_grouping/deepcase)" "$PYTHON" "$script"
+        run_step "$script (alertbert)" \
+            env AIT_ADS_GROUPING_METHODS=alertbert conda run -n thesis-alertbert --no-capture-output \
+            "$PYTHON" "$script"
+    done
 
     echo ""
     echo "=== AIT-ADS anomaly baseline run finished at $(date) ==="

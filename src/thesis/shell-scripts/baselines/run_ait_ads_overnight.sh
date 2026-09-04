@@ -26,10 +26,11 @@
 #      scenarios x 4 Ollama models. Requires Ollama reachable at
 #      OLLAMA_HOST (default http://localhost:11434) with --network host if
 #      containerized -- see that script's own header.
-#   4. run_ait_ads_anomaly.sh -- OneClassSVM fit on benign-only rows, same
-#      grouping method x scenario grid as stage 1 but no pool
-#      conditions/seeds (single deterministic run per combo). Produces a
-#      result for harrison/santos/russellmitchell -- see
+#   4. run_ait_ads_anomaly.sh -- OneClassSVM (ait_ads_anomaly.py) and
+#      IsolationForest (ait_ads_anomaly_iforest.py), each fit on
+#      benign-only rows, same grouping method x scenario grid as stage 1
+#      but no pool conditions/seeds (single deterministic run per combo).
+#      Both produce a result for harrison/santos/russellmitchell -- see
 #      ait_ads_anomaly.py's module docstring.
 #   5. run_ait_ads_mining.sh -- ait_ads_mining.py (RF on base schema +
 #      attribute-mined symbolic features, same pool conditions x seeds as

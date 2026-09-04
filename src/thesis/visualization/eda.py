@@ -2,6 +2,7 @@
 
 import os
 
+import matplotlib.dates as mdates
 import matplotlib.patches as mpatches
 import matplotlib.ticker as mticker
 import numpy as np
@@ -1317,6 +1318,522 @@ def plot_signature_purity_pie(
     plt.tight_layout()
     _save(fig, out_path)
     return fig, ax
+
+
+def classify_signatures(df: pd.DataFrame, sig_col: str = "signature") -> pd.Series:
+    """
+    Per-value verdict for every unique `sig_col` value: 'benign' (never seen
+    with is_attack), 'attack' (never seen without), or 'mixed' (both).
+    Index is unique `sig_col` values. Shared by plot_signature_purity_pie's
+    inline version and the vocabulary-churn / activity plots below, and by
+    thesis.data.eda's signature-behaviour tables.
+    """
+    stats = df.groupby(sig_col)["is_attack"].agg(["sum", "count"])
+    n_benign = stats["count"] - stats["sum"]
+    return pd.Series(
+        np.select(
+            [stats["sum"] == 0, n_benign == 0],
+            ["benign", "attack"],
+            default="mixed",
+        ),
+        index=stats.index,
+    )
+
+
+def plot_signature_activity_bins(
+    df: pd.DataFrame,
+    scenario: str,
+    sig_col: str = "signature",
+    bin_freq: str = "1h",
+    figsize: tuple = (14, 4),
+    out_path: str | None = None,
+) -> tuple:
+    """
+    Alert volume over time (line, log scale) with the count of distinct
+    active `sig_col` values per bin stacked underneath, split into
+    benign-only / attack-only / mixed classes.
+
+    Companion to plot_signature_vocabulary_churn: this shows *how many*
+    signatures are active per bin and how much volume they produce; the
+    churn plot shows whether that active set is the *same* signatures
+    recurring or a constantly-replaced one.
+    """
+    d = df.copy()
+    d["_bin"] = d["timestamp"].dt.floor(bin_freq)
+    vol = d.groupby("_bin").agg(
+        total=("is_attack", "size"), attacks=("is_attack", "sum")
+    )
+
+    sig_class = classify_signatures(d, sig_col)
+    d["_sig_class"] = d[sig_col].map(sig_class)
+    sig_ct = (
+        d.groupby(["_bin", "_sig_class"])[sig_col]
+        .nunique()
+        .unstack("_sig_class", fill_value=0)
+        .reindex(columns=["benign", "attack", "mixed"], fill_value=0)
+        .reindex(vol.index, fill_value=0)
+    )
+
+    fig, ax = plt.subplots(figsize=figsize)
+    ax2 = ax.twinx()
+
+    width_days = pd.Timedelta(bin_freq).total_seconds() / 86400 * 0.9
+    bar_kwargs = dict(width=width_days, alpha=0.35, linewidth=0)
+    ax2.bar(
+        sig_ct.index,
+        sig_ct["benign"],
+        label="Benign-only signatures",
+        color=_C_BENIGN,
+        **bar_kwargs,
+    )
+    ax2.bar(
+        sig_ct.index,
+        sig_ct["attack"],
+        bottom=sig_ct["benign"],
+        label="Attack-only signatures",
+        color=_C_ATTACK,
+        **bar_kwargs,
+    )
+    ax2.bar(
+        sig_ct.index,
+        sig_ct["mixed"],
+        bottom=sig_ct["benign"] + sig_ct["attack"],
+        label="Mixed signatures",
+        color="#CCBB44",
+        **bar_kwargs,
+    )
+    ax2.set_ylabel(f"# distinct {sig_col} values active / bin")
+
+    # keep the alert-volume lines drawn on top of the bars
+    ax.set_zorder(ax2.get_zorder() + 1)
+    ax.patch.set_visible(False)
+    ax.plot(
+        vol.index, vol["total"], label="Total alerts", linewidth=0.8, color="dimgray"
+    )
+    ax.plot(
+        vol.index, vol["attacks"], label="Attack alerts", linewidth=0.8, color=_C_ATTACK
+    )
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d %Hh"))
+    ax.set_title(
+        f"{scenario}: alert volume ({bin_freq} bins, log scale) with active "
+        f"{sig_col} count per bin, stacked by class"
+    )
+    ax.set_ylabel("# alerts")
+    ax.set_yscale("log")
+
+    lines1, labels1 = ax.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax.legend(lines1 + lines2, labels1 + labels2, loc="upper left", fontsize=8)
+
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    _save(fig, out_path)
+    return fig, ax
+
+
+def plot_signature_vocabulary_churn(
+    df: pd.DataFrame,
+    scenario: str,
+    sig_col: str = "signature",
+    bin_freq: str = "1h",
+    last_frac: float = 0.25,
+    figsize: tuple = (13, 4.5),
+    out_path: str | None = None,
+) -> tuple:
+    """
+    Two-panel view of whether the active `sig_col` vocabulary keeps turning
+    over across the scenario or saturates early:
+    (a) cumulative distinct values ever seen vs elapsed time, split by class;
+    (b) per-bin split of active values into first-ever appearances ("new")
+        vs previously-seen ("returning").
+
+    A cumulative curve that keeps climbing (rather than flattening) means
+    new signatures keep arriving throughout the window -- exactly the
+    condition that would make a schema mined on an early slice miss
+    signatures seen later.
+    """
+    d = df.copy()
+    sig_class = classify_signatures(d, sig_col)
+    fs = d.groupby(sig_col)["timestamp"].min().to_frame("first_seen")
+    fs["sig_class"] = sig_class.reindex(fs.index)
+
+    alls = fs["first_seen"].sort_values()
+    n_total = len(alls)
+    t0, t1 = alls.iloc[0], alls.iloc[-1]
+    half_date = alls.iloc[n_total // 2]
+    last_start = t0 + (1 - last_frac) * (t1 - t0)
+    n_last = int((alls > last_start).sum())
+
+    fig, (axA, axB) = plt.subplots(1, 2, figsize=figsize)
+
+    colors = {"benign": _C_BENIGN, "attack": _C_ATTACK, "mixed": "#CCBB44"}
+    for cls, color in colors.items():
+        s = fs.loc[fs.sig_class == cls, "first_seen"].sort_values()
+        if len(s):
+            axA.step(
+                s.values,
+                np.arange(1, len(s) + 1),
+                where="post",
+                color=color,
+                label=f"{cls} (n={len(s)})",
+            )
+    axA.step(
+        alls.values,
+        np.arange(1, n_total + 1),
+        where="post",
+        color="0.35",
+        lw=1.3,
+        label=f"all (n={n_total})",
+    )
+
+    axA.axvspan(last_start, t1, color="0.9", zorder=0)
+    axA.annotate(
+        f"{n_last} {sig_col}s first seen\nin the last {last_frac:.0%} of the timeline",
+        xy=(last_start, n_total * 0.55),
+        xytext=(-10, 0),
+        textcoords="offset points",
+        ha="right",
+        va="center",
+        fontsize=8,
+        color="0.25",
+        arrowprops=dict(arrowstyle="-", color="0.6", lw=0.6),
+    )
+    axA.plot(
+        [t0, half_date, half_date],
+        [n_total / 2, n_total / 2, 0],
+        ls=":",
+        color="0.5",
+        lw=0.8,
+    )
+    axA.plot(half_date, n_total / 2, "o", color="0.3", ms=5)
+    axA.annotate(
+        f"half of all {n_total} seen by\n{half_date:%m-%d %Hh}",
+        xy=(half_date, n_total / 2),
+        xytext=(12, -30),
+        textcoords="offset points",
+        fontsize=8,
+        color="0.25",
+        arrowprops=dict(arrowstyle="-", color="0.6", lw=0.6),
+    )
+    axA.set_ylim(0, n_total * 1.05)
+    axA.set_ylabel(f"cumulative # distinct {sig_col}s seen")
+    axA.set_title("(a) Cumulative distinct signatures over time")
+    axA.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d %Hh"))
+    axA.legend(fontsize=8, loc="lower right")
+
+    bs = d[["timestamp", sig_col]].copy()
+    bs["bucket"] = bs["timestamp"].dt.floor(bin_freq)
+    bs = bs[["bucket", sig_col]].drop_duplicates()
+    bs["first_bucket"] = bs.groupby(sig_col)["bucket"].transform("min")
+    bs["status"] = np.where(bs["bucket"] == bs["first_bucket"], "new", "returning")
+    pb = (
+        bs.groupby(["bucket", "status"])
+        .size()
+        .unstack(fill_value=0)
+        .reindex(columns=["returning", "new"], fill_value=0)
+    )
+    width_days = pd.Timedelta(bin_freq).total_seconds() / 86400 * 0.9
+    axB.bar(
+        pb.index,
+        pb["returning"],
+        width=width_days,
+        color="0.7",
+        label="previously seen",
+    )
+    axB.bar(
+        pb.index,
+        pb["new"],
+        bottom=pb["returning"],
+        width=width_days,
+        color="tab:orange",
+        label="first appearance",
+    )
+    y_top = float((pb["returning"] + pb["new"]).max()) if len(pb) else 1.0
+    axB.axvspan(last_start, t1, color="0.9", zorder=0)
+    axB.annotate(
+        f"{n_last} first appearances\nin the last {last_frac:.0%}",
+        xy=(last_start, y_top * 0.95),
+        xytext=(-8, 0),
+        textcoords="offset points",
+        ha="right",
+        va="top",
+        fontsize=8,
+        color="0.25",
+    )
+    axB.set_ylabel(f"# distinct {sig_col}s active / bin")
+    axB.set_title(f"(b) New vs returning {sig_col}s per {bin_freq} bin")
+    axB.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d %Hh"))
+    axB.legend(fontsize=8, loc="upper right")
+
+    for ax in (axA, axB):
+        ax.xaxis.set_major_locator(mdates.AutoDateLocator(maxticks=8))
+        ax.tick_params(axis="x", rotation=45)
+
+    fig.suptitle(f"{scenario}: {sig_col} vocabulary churn", fontsize=12)
+    plt.tight_layout()
+    _save(fig, out_path)
+    return fig, (axA, axB)
+
+
+def plot_signature_activity_heatmap(
+    df: pd.DataFrame,
+    scenario: str,
+    sig_col: str = "signature",
+    n_tbins: int = 120,
+    figsize: tuple = (13, 5),
+    out_path: str | None = None,
+) -> tuple:
+    """
+    Time x `sig_col` activity heatmap, attack and benign side by side,
+    values ordered by first appearance (bottom = earliest). Cell colour
+    (log) = alert count in that time/signature bin. A vertical stripe
+    spanning many rows is many signatures co-firing (a campaign); a value
+    confined to a narrow x-range near the bottom is an early-appearing,
+    short-lived signature. Quantifies "active whole window vs briefly" --
+    the event-raster scatter (plot_signature_event_raster) only shows this
+    visually.
+    """
+    import matplotlib.colors as mcolors
+
+    g0 = float(df["time"].min())
+    span_days = max((float(df["time"].max()) - g0) / 86400.0, 1e-6)
+
+    def _panel(sub, ax, title, cmap):
+        order = sub.groupby(sig_col)["time"].min().sort_values().index
+        n_order = len(order)
+        if n_order == 0:
+            ax.text(
+                0.5, 0.5, "no data", ha="center", va="center", transform=ax.transAxes
+            )
+            ax.set_title(title, fontsize=10)
+            ax.axis("off")
+            return
+        row = {s: i for i, s in enumerate(order)}
+        x = (sub["time"].values.astype(float) - g0) / 86400.0
+        y = sub[sig_col].map(row).values
+        H, xe, ye = np.histogram2d(
+            x, y, bins=[n_tbins, n_order], range=[[0, span_days], [0, n_order]]
+        )
+        pcm = ax.pcolormesh(
+            xe,
+            ye,
+            H.T,
+            cmap=cmap,
+            rasterized=True,
+            norm=mcolors.LogNorm(vmin=1, vmax=max(H.max(), 1)),
+        )
+        ax.set_title(title, fontsize=10)
+        ax.set_xlabel("elapsed time (days)")
+        ax.set_ylabel(f"{n_order} {sig_col}s (ordered by first appearance)")
+        ax.set_ylim(0, n_order)
+        fig.colorbar(pcm, ax=ax, pad=0.02, label="alerts / bin")
+
+    fig, (axA, axB) = plt.subplots(1, 2, figsize=figsize)
+    _panel(
+        df[df["is_attack"]],
+        axA,
+        f"Attack {sig_col}s (n={df.loc[df['is_attack'], sig_col].nunique()})",
+        "Reds",
+    )
+    _panel(
+        df[~df["is_attack"]],
+        axB,
+        f"Benign {sig_col}s (n={df.loc[~df['is_attack'], sig_col].nunique()})",
+        "Blues",
+    )
+    fig.suptitle(f"{scenario}: {sig_col} activity over time", fontsize=12)
+    plt.tight_layout()
+    _save(fig, out_path)
+    return fig, (axA, axB)
+
+
+def plot_attack_temporal_concentration(
+    df: pd.DataFrame,
+    scenario: str,
+    sig_col: str = "signature",
+    figsize: tuple = (16, 4.3),
+    out_path: str | None = None,
+) -> tuple:
+    """
+    Three complementary views of whether attacks cluster in time rather
+    than arriving at a steady rate:
+    (a) cumulative attack count vs elapsed time, against the
+        uniform-arrival diagonal;
+    (b) share of attacks falling in the busiest slices of the timeline;
+    (c) CDF of the gap between consecutive attacks (any `sig_col` value) vs
+        between consecutive occurrences of the SAME value, against an
+        exponential of the same mean (what a memoryless, non-clustered
+        arrival process would give). If the pooled curve clusters at short
+        gaps but the per-signature curve doesn't, the clustering is
+        different signatures co-firing, not any one signature repeating.
+    """
+    att = df.loc[df["is_attack"]].sort_values("time").reset_index(drop=True)
+    if len(att) < 2:
+        fig, ax = plt.subplots(figsize=figsize)
+        ax.text(
+            0.5,
+            0.5,
+            "Not enough attack alerts to assess concentration",
+            ha="center",
+            va="center",
+            transform=ax.transAxes,
+        )
+        ax.axis("off")
+        _save(fig, out_path)
+        return fig, ax
+
+    t0, t1 = att["time"].min(), df["time"].max()
+    frac_time = (att["time"].values.astype(float) - t0) / (t1 - t0)
+    frac_att = np.arange(1, len(att) + 1) / len(att)
+
+    edges = np.linspace(0, 1, 1001)
+    binned = np.histogram(frac_time, bins=edges)[0]
+    busiest = np.sort(binned)[::-1].cumsum() / binned.sum()
+
+    def _time_for(pp):
+        return float(frac_time[min(np.searchsorted(frac_att, pp), len(att) - 1)])
+
+    q_facts = [(pp, _time_for(pp)) for pp in (0.25, 0.5, 0.8)]
+    b_facts = [(q, float(busiest[int(q * 1000) - 1])) for q in (0.01, 0.05, 0.10)]
+    max_dev = float(np.max(np.abs(frac_att - frac_time)))
+
+    fig, (axL, axR, axG) = plt.subplots(1, 3, figsize=figsize)
+
+    axL.fill_between(
+        frac_time,
+        frac_time,
+        frac_att,
+        where=frac_att >= frac_time,
+        color=_C_ATTACK,
+        alpha=0.12,
+    )
+    axL.fill_between(
+        frac_time,
+        frac_time,
+        frac_att,
+        where=frac_att < frac_time,
+        color=_C_BENIGN,
+        alpha=0.12,
+    )
+    axL.plot(frac_time, frac_att, lw=1.8, color=_C_ATTACK, label="attack alerts")
+    axL.plot([0, 1], [0, 1], "k--", lw=1, label="uniform arrival")
+    for pp, tf in q_facts:
+        axL.plot([tf, tf, 0], [0, pp, pp], color="0.5", lw=0.8, ls=":")
+        axL.plot(tf, pp, "o", color=_C_ATTACK, ms=5)
+        axL.annotate(
+            f"{pp:.0%} of attacks in {tf:.0%} of time",
+            xy=(tf, pp),
+            xytext=(min(tf + 0.03, 0.55), max(pp - 0.16, 0.03)),
+            fontsize=8,
+            color="0.2",
+            arrowprops=dict(arrowstyle="-", color="0.6", lw=0.6),
+        )
+    axL.set_xlim(0, 1)
+    axL.set_ylim(0, 1)
+    axL.set_xlabel("fraction of elapsed time")
+    axL.set_ylabel("fraction of attack alerts")
+    axL.set_title(
+        f"(a) Cumulative attacks over time\n(max deviation from uniform: {max_dev:.0%})",
+        fontsize=9,
+    )
+    axL.legend(loc="upper left", fontsize=8)
+
+    axR.plot(
+        edges[1:] * 100, busiest * 100, lw=1.8, color=_C_ATTACK, label="attack alerts"
+    )
+    axR.plot([0, 100], [0, 100], "k--", lw=1, label="uniform")
+    # One consolidated text block (like panel (c)'s) rather than a label
+    # pinned to each point's own (x, y) -- when concentration is extreme (a
+    # single bursty signature dominates, common in AIT-ADS) all three
+    # busiest-% points land within a few % of 100 and per-point labels
+    # collide regardless of offset.
+    for q, sh in b_facts:
+        axR.plot(q * 100, sh * 100, "o", color=_C_ATTACK, ms=5)
+    facts_txt = "\n".join(
+        f"busiest {q:.0%} -> {sh:.0%}  ({sh / q:.0f}x)" for q, sh in b_facts
+    )
+    axR.text(
+        0.97,
+        0.97,
+        facts_txt,
+        transform=axR.transAxes,
+        fontsize=7.5,
+        color="0.2",
+        ha="right",
+        va="top",
+        family="monospace",
+    )
+    axR.set_xlim(0, 20)
+    axR.set_ylim(0, max(40, b_facts[-1][1] * 100 + 12))
+    axR.set_xlabel("% of timeline (busiest 1h bins first)")
+    axR.set_ylabel("% of attack alerts")
+    axR.set_title("(b) Concentration in the busiest time slices", fontsize=9)
+    axR.legend(loc="lower right", fontsize=8)
+
+    gap = np.diff(att["time"].values.astype(float))
+    n_zero = int((gap == 0).sum())
+    gs = np.sort(gap)
+    mean_gap = gap.mean() if gap.mean() > 0 else 1.0
+
+    _gsig = [
+        np.diff(np.sort(t.values.astype(float)))
+        for _, t in att.groupby(sig_col)["time"]
+        if len(t) > 1
+    ]
+    gsig = np.sort(np.concatenate(_gsig)) if _gsig else np.array([1.0])
+
+    def _cdf(a):
+        return np.clip(a, 1, None), np.arange(1, len(a) + 1) / len(a)
+
+    x_all, y_all = _cdf(gs)
+    x_sig, y_sig = _cdf(gsig)
+    grid = np.logspace(0, np.log10(max(gs.max(), 1) + 1), 200)
+    axG.plot(x_all, y_all, lw=1.8, color=_C_ATTACK, label="any signature")
+    axG.plot(x_sig, y_sig, lw=1.8, color="tab:orange", label="same signature")
+    axG.plot(grid, 1 - np.exp(-grid / mean_gap), "k--", lw=1, label="exponential")
+    for sec, lbl in [(60, "1 min"), (3600, "1 h"), (86400, "1 d")]:
+        if sec <= gs.max():
+            axG.axvline(sec, ls=":", color="0.6", lw=0.8)
+            axG.text(
+                sec,
+                0.02,
+                lbl,
+                rotation=90,
+                fontsize=7,
+                va="bottom",
+                ha="right",
+                color="0.4",
+            )
+
+    m_all, m_sig = float(np.median(gs)), float(np.median(gsig))
+    f_all, f_sig = (gs <= 60).mean(), (gsig <= 60).mean()
+    axG.text(
+        0.03,
+        0.97,
+        f"gaps <= 1 min:  any sig {f_all:.0%},  same sig {f_sig:.0%}\n"
+        f"median gap:   any sig {m_all:,.0f} s,  same sig {m_sig:,.0f} s\n"
+        f"{n_zero:,} coincident (0 s)",
+        transform=axG.transAxes,
+        fontsize=6.5,
+        va="top",
+        color="0.3",
+        family="monospace",
+    )
+
+    axG.set_xscale("log")
+    axG.set_ylim(0, 1)
+    axG.set_xlabel("gap between consecutive attacks (s, log)")
+    axG.set_ylabel("CDF")
+    axG.set_title(
+        "(c) Arrival-gap distribution\n(pooled clusters more than any one signature)",
+        fontsize=9,
+    )
+    axG.legend(loc="lower right", fontsize=7.5)
+
+    fig.suptitle(f"{scenario}: temporal concentration of attacks", fontsize=12)
+    plt.tight_layout()
+    _save(fig, out_path)
+    return fig, (axL, axR, axG)
 
 
 def plot_scenario_overview(
