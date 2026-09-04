@@ -41,6 +41,23 @@ everything from scratch. Set AIT_ADS_FORCE=1 to force a full re-run. (Only
 applies to real runs -- QUICK_SANITY_CHECK passes never save, so they never
 trigger this skip either.)
 
+class_weighted's pool is capped at AIT_ADS_CLASS_WEIGHTED_POOL_CAP rows
+(default 15000, matching cscas_bert.py's own CLASS_WEIGHTED_POOL_CAP
+convention) -- uncapped, this condition fine-tunes on the *entire* natural-
+ratio train split every seed, which measured ~100x longer fit time per seed
+than the random condition's small capped pool in an uncapped run (~19min vs
+~11s per seed on CPU). Set it to "none"/"uncapped"/"0" for the old uncapped
+behavior; any other integer overrides the cap.
+
+Device: auto-detects mps -> cuda -> cpu and prints a
+[device diagnostics] line (torch/cuda versions, availability, device count)
+so a silent CPU fallback is diagnosable at a glance instead of a one-word
+log line. Set AIT_ADS_REQUIRE_GPU=1 to fail immediately at startup if
+neither mps nor cuda is available, rather than silently fine-tuning on CPU
+for hours/days -- this can't *make* torch see a GPU it doesn't (that's a
+container/driver/torch-install issue, not something this script controls),
+it just turns a multi-day silent CPU run into an immediate, loud one.
+
 Run:
     cd src/thesis/baselines
     python ait_ads_bert.py
@@ -86,7 +103,12 @@ NUM_EPOCHS = 3
 VAL_FRAC_WITHIN_POOL = 0.15  # stratified carve-out from the training pool, for epoch-level eval/model selection only -- not the final eval set
 
 _cap_env = os.environ.get("AIT_ADS_CLASS_WEIGHTED_POOL_CAP")
-CLASS_WEIGHTED_POOL_CAP = int(_cap_env) if _cap_env else None
+if _cap_env is None:
+    CLASS_WEIGHTED_POOL_CAP = 15000  # default cap -- see module docstring
+elif _cap_env.strip().lower() in ("", "none", "uncapped", "0"):
+    CLASS_WEIGHTED_POOL_CAP = None
+else:
+    CLASS_WEIGHTED_POOL_CAP = int(_cap_env)
 
 # Set True (or AIT_ADS_QUICK_SANITY_CHECK=1) for a cheap 1-seed timing/smoke
 # check per scenario before committing to the full N_SEEDS sweep.
@@ -109,12 +131,26 @@ GROUPING_METHODS = (
     else ALL_GROUPING_METHODS
 )
 
-device = (
-    "mps"
-    if torch.backends.mps.is_available()
-    else ("cuda" if torch.cuda.is_available() else "cpu")
-)
+REQUIRE_GPU = os.environ.get("AIT_ADS_REQUIRE_GPU", "0") == "1"
+
+_mps_ok = torch.backends.mps.is_available()
+_cuda_ok = torch.cuda.is_available()
+device = "mps" if _mps_ok else ("cuda" if _cuda_ok else "cpu")
 print(f"Using device: {device}")
+print(
+    f"  [device diagnostics] torch={torch.__version__} cuda_build={torch.version.cuda} "
+    f"mps_available={_mps_ok} cuda_available={_cuda_ok} "
+    f"cuda_device_count={torch.cuda.device_count() if _cuda_ok else 0}"
+)
+if REQUIRE_GPU and device == "cpu":
+    raise RuntimeError(
+        "AIT_ADS_REQUIRE_GPU=1 but neither MPS nor CUDA is available (see the "
+        "[device diagnostics] line above) -- refusing to silently fine-tune on "
+        "CPU. Fix the container's GPU/CUDA visibility first (check `nvidia-smi` "
+        'and `python3 -c "import torch; print(torch.cuda.is_available())"` '
+        "inside the container), or unset AIT_ADS_REQUIRE_GPU to proceed on CPU "
+        "anyway."
+    )
 
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 

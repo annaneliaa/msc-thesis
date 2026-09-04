@@ -28,10 +28,18 @@
 # run across every combination to automate here. Open it manually per
 # (scenario, grouping method) once these scripts finish.
 #
-# class_weighted is capped at AIT_ADS_CLASS_WEIGHTED_POOL_CAP rows (see
-# ait_ads_bert.py's module docstring / _sampling.class_weighted_pool) --
-# unset by default (uncapped); set it below if a scenario's natural-ratio
-# pool turns out too large to fine-tune on directly.
+# class_weighted is capped at AIT_ADS_CLASS_WEIGHTED_POOL_CAP rows -- default
+# 15000 (see ait_ads_bert.py's module docstring): measured ~100x longer fit
+# time per seed uncapped vs. the random condition's small capped pool. Set
+# AIT_ADS_CLASS_WEIGHTED_POOL_CAP=none before calling this script for the old
+# uncapped behavior, or to a different integer to change the cap.
+#
+# AIT_ADS_REQUIRE_GPU=1 makes each script fail immediately at startup if
+# neither MPS nor CUDA is visible to torch, instead of silently fine-tuning
+# on CPU for hours/days -- worth setting once you've confirmed this DGX
+# container actually exposes its GPU to torch, so a future regression is
+# caught in seconds. Not set by default here since this script doesn't know
+# whether that's been confirmed yet on whatever machine it's running on.
 #
 # Does not abort on a single script's failure (no `set -e`) -- if one
 # script errors out (e.g. one scenario has a single-class split, or an
@@ -57,7 +65,12 @@ mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/ait_ads_bert_securebert_$(date +%Y%m%d_%H%M%S).log"
 
 export AIT_ADS_QUICK_SANITY_CHECK=0
-export AIT_ADS_CLASS_WEIGHTED_POOL_CAP="${AIT_ADS_CLASS_WEIGHTED_POOL_CAP:-}"
+# Default matches ait_ads_bert.py's own default (15000) -- this only needs to
+# be here at all so a caller's explicit override (including "none" for
+# uncapped) is visible in the summary line below; an unset var would work
+# the same via the Python-side default.
+export AIT_ADS_CLASS_WEIGHTED_POOL_CAP="${AIT_ADS_CLASS_WEIGHTED_POOL_CAP:-15000}"
+export AIT_ADS_REQUIRE_GPU="${AIT_ADS_REQUIRE_GPU:-0}"
 export AIT_ADS_SCENARIOS="${AIT_ADS_SCENARIOS:-}"  # empty = every AIT-ADS scenario
 # Non-alertbert methods run in whatever env this script itself is invoked
 # with; alertbert always runs separately via conda run below, so it's
@@ -82,7 +95,7 @@ run_step() {
 
 {
     echo "=== AIT-ADS BERT/SecureBERT run started at $(date) ==="
-    echo "AIT_ADS_QUICK_SANITY_CHECK=$AIT_ADS_QUICK_SANITY_CHECK AIT_ADS_CLASS_WEIGHTED_POOL_CAP=$AIT_ADS_CLASS_WEIGHTED_POOL_CAP AIT_ADS_SCENARIOS=${AIT_ADS_SCENARIOS:-<all>}"
+    echo "AIT_ADS_QUICK_SANITY_CHECK=$AIT_ADS_QUICK_SANITY_CHECK AIT_ADS_CLASS_WEIGHTED_POOL_CAP=$AIT_ADS_CLASS_WEIGHTED_POOL_CAP AIT_ADS_REQUIRE_GPU=$AIT_ADS_REQUIRE_GPU AIT_ADS_SCENARIOS=${AIT_ADS_SCENARIOS:-<all>}"
     echo "Non-alertbert grouping methods (plain venv): $NON_ALERTBERT_METHODS"
 
     AIT_ADS_GROUPING_METHODS="$NON_ALERTBERT_METHODS" \

@@ -37,11 +37,27 @@ def random_undersample_pool(
 
     Extracted as-is from cscas.py's inline block, generalizing the
     hardcoded n=1_765 to len(important) -- same `.sample(random_state=seed)`
-    semantics, no algorithm change.
+    semantics, no algorithm change, *when* the irrelevant (label==0) class
+    is the majority -- true for every CSCAS split by construction, so this
+    path is unchanged there.
+
+    Some AIT-ADS (scenario, grouping_method) combinations flip that: e.g.
+    deepcase grouping can concentrate far more/larger benign alerts into
+    far fewer groups, leaving `important` (label==1) as the actual
+    majority in `train`. Sampling `n=len(important)` irrelevant rows
+    without replacement then raises ValueError ("Cannot take a larger
+    sample than population") -- seen for real on 'fox' grouped with
+    deepcase. Undersample whichever class is actually the majority down to
+    the minority's count instead, keeping every minority-class row, so
+    "random undersampling" means the same thing regardless of which label
+    happens to be more numerous in a given split.
     """
     irrelevant = train[train[label_col] == 0]
-    irr_sample = irrelevant.sample(n=len(important), random_state=seed)
-    return pd.concat([important, irr_sample]), {}
+    if len(irrelevant) >= len(important):
+        irr_sample = irrelevant.sample(n=len(important), random_state=seed)
+        return pd.concat([important, irr_sample]), {}
+    important_sample = important.sample(n=len(irrelevant), random_state=seed)
+    return pd.concat([important_sample, irrelevant]), {}
 
 
 def guided_by_cscas_pool(

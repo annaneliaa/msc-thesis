@@ -36,6 +36,19 @@ would be self-training leakage, which is exactly why the grouping-quality
 sweep only ever evaluated on fox/russellmitchell. Baseline results for
 alertbert/deepcase are therefore only valid for fox/harrison/
 russellmitchell/santos.
+
+Known, non-retriable DeepCASE failure mode: its ContextBuilder is trained
+once on a closed vocabulary of event types seen in shaw/wardbeck/wheeler/
+wilson (input_size/output_size fixed at training time). A held-out
+scenario whose alerts contain an event type that never appeared in that
+training corpus makes DeepCASE's own `context_builder.forward()` raise
+ValueError("Expected N different input events, but received input event
+... not in expected range") -- seen for real on 'santos'. This is a
+structural vocabulary-coverage limitation, not a transient bug: it fails
+identically on every retry, since it depends on santos's own alert
+content, not randomness. Retraining the ContextBuilder on a broader/
+different corpus would be a separate, deliberate decision, not something
+this module should paper over silently.
 """
 
 from __future__ import annotations

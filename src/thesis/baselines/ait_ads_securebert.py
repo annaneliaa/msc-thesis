@@ -11,7 +11,10 @@ _ait_ads_data.py) and cscas_securebert.py's docstring for why SecureBERT
 2.0 loads cleanly through the same Auto* classes as DistilBERT (ModernBERT
 architecture, requires transformers>=4.48). Also resumable the same way --
 skips a (grouping_method, scenario) combo whose results/*.json already
-exists (AIT_ADS_FORCE=1 to force a re-run).
+exists (AIT_ADS_FORCE=1 to force a re-run). Same class_weighted pool cap
+(AIT_ADS_CLASS_WEIGHTED_POOL_CAP, default 15000) and device diagnostics /
+AIT_ADS_REQUIRE_GPU fail-fast as ait_ads_bert.py -- see that module's
+docstring for the full rationale on both.
 
 Run:
     cd src/thesis/baselines
@@ -58,7 +61,12 @@ NUM_EPOCHS = 3
 VAL_FRAC_WITHIN_POOL = 0.15
 
 _cap_env = os.environ.get("AIT_ADS_CLASS_WEIGHTED_POOL_CAP")
-CLASS_WEIGHTED_POOL_CAP = int(_cap_env) if _cap_env else None
+if _cap_env is None:
+    CLASS_WEIGHTED_POOL_CAP = 15000  # default cap -- see module docstring
+elif _cap_env.strip().lower() in ("", "none", "uncapped", "0"):
+    CLASS_WEIGHTED_POOL_CAP = None
+else:
+    CLASS_WEIGHTED_POOL_CAP = int(_cap_env)
 
 QUICK_SANITY_CHECK = os.environ.get("AIT_ADS_QUICK_SANITY_CHECK", "1") == "1"
 QUICK_SEEDS = 1
@@ -79,12 +87,26 @@ GROUPING_METHODS = (
     else ALL_GROUPING_METHODS
 )
 
-device = (
-    "mps"
-    if torch.backends.mps.is_available()
-    else ("cuda" if torch.cuda.is_available() else "cpu")
-)
+REQUIRE_GPU = os.environ.get("AIT_ADS_REQUIRE_GPU", "0") == "1"
+
+_mps_ok = torch.backends.mps.is_available()
+_cuda_ok = torch.cuda.is_available()
+device = "mps" if _mps_ok else ("cuda" if _cuda_ok else "cpu")
 print(f"Using device: {device}")
+print(
+    f"  [device diagnostics] torch={torch.__version__} cuda_build={torch.version.cuda} "
+    f"mps_available={_mps_ok} cuda_available={_cuda_ok} "
+    f"cuda_device_count={torch.cuda.device_count() if _cuda_ok else 0}"
+)
+if REQUIRE_GPU and device == "cpu":
+    raise RuntimeError(
+        "AIT_ADS_REQUIRE_GPU=1 but neither MPS nor CUDA is available (see the "
+        "[device diagnostics] line above) -- refusing to silently fine-tune on "
+        "CPU. Fix the container's GPU/CUDA visibility first (check `nvidia-smi` "
+        'and `python3 -c "import torch; print(torch.cuda.is_available())"` '
+        "inside the container), or unset AIT_ADS_REQUIRE_GPU to proceed on CPU "
+        "anyway."
+    )
 
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 
