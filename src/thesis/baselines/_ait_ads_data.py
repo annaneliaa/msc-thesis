@@ -14,10 +14,11 @@ work completely unmodified:
   - text: one string per alert_group, built by joining AlertGroup.raw_items
     tokens (human-readable sig:/host:/short: tags -- see
     preprocessing/tokenization.py) plus n_alerts/hour_of_day -- the AIT-ADS
-    analog of CSCAS's SignatureText field, for the BERT/SecureBERT/zero-shot
-    scripts only. Tabular models don't use this loader at all -- their
-    results already come from run_model_comparison_attribute.py, see
-    ait_ads_from_model_comparison.py.
+    analog of CSCAS's SignatureText field, used by the BERT/SecureBERT/
+    zero-shot scripts. All six ait_ads_*.py model scripts (rf, logreg,
+    xgboost, bert, securebert, zeroshot) call this same function, so every
+    model family scores the identical rows for a given (scenario,
+    grouping_method) -- not just similarly-configured pipelines.
 
 Reuses the exact same ingest/cache calls experiments/baseline.py runs (its
 steps 1-5, schema_name="base") for the fixed_window/time_delta/
@@ -37,6 +38,25 @@ which needs a frozen 20k-row subsample because its test set is 1.25M rows):
 there's no paper to replicate here, and AIT-ADS scenarios are far smaller.
 Callers that need a size cap (e.g. for the class-weighted fine-tuning pool)
 should do it themselves, same as CLASS_WEIGHTED_POOL_CAP in cscas_bert.py.
+
+Known, accepted exclusion -- 'harrison' and 'santos' produce no baseline
+result under ANY grouping method, and 'russellmitchell' produces one only
+under 'deepcase': the split above is a fixed chronological
+test_frac-from-the-end cut, no search for a "valid" boundary, and for
+these scenarios every attack-labelled alert_group falls within that last
+test_frac -- train ends up 100% benign regardless of grouping method,
+since that's a property of *when* the attacks happen in the raw alert
+timeline, not how the alerts get grouped. Callers detect this themselves
+(train["Label"].nunique() < 2) and skip with a clear message rather than
+this function raising -- deliberately not "fixed" by searching for a
+different split point (a considered decision, not an oversight): doing
+so would give these 3 scenarios a different, potentially far-from-70/30
+effective train/test ratio than the other 5, which stay at a clean
+test_frac=0.3 split throughout. Documented here, not just left to the
+runtime skip message, the same way _ait_ads_grouping.py documents why
+alertbert/deepcase exclude shaw/wardbeck/wheeler/wilson -- two structurally
+different reasons (leakage vs. temporal attack concentration), same
+"accepted exclusion, not a bug" treatment.
 """
 
 from __future__ import annotations
@@ -88,26 +108,18 @@ def _build_text_column(alert_groups: list[AlertGroup]) -> list[str]:
     return texts
 
 
-def load_ait_ads_baseline_split(
+def _load_encoded_ait_ads(
     scenario: str,
-    grouping_method: str = "fixed_window",
-    test_frac: float = 0.3,
-    cache_dir: Path | None = None,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
+    grouping_method: str,
+    cache_dir: Path | None,
+) -> tuple[pd.DataFrame, list[AlertGroup]]:
     """Ingest (if not already cached) + encode `scenario` under the AIT-ADS
-    base schema for the given `grouping_method`, chronologically split
-    train/test, return (train, test) DataFrames with `Label` (0/1) and
-    `text` columns.
-
-    grouping_method must be one of GROUPING_METHODS. alertbert/deepcase
-    raise ValueError for scenario in
-    thesis.baselines._ait_ads_grouping.LEAKAGE_SCENARIOS -- see that
-    module's docstring.
-
-    Mirrors experiments/baseline.py's steps 1-5 (same ingest/cache calls,
-    same schema_name="base") for fixed_window/time_delta/cscas_grouping, so
-    this is scored on the identical alert_groups every other AIT-ADS
-    experiment already uses for this (scenario, grouping_method) pair.
+    base schema for `grouping_method`, returning the labeled df (`Label`/
+    `text` columns added, unlabelled/mixed rows dropped) alongside the
+    AlertGroup list filtered and ordered to match it 1:1 by position --
+    the shared core both load_ait_ads_baseline_split and
+    load_ait_ads_baseline_split_with_groups slice identically, so the two
+    functions can never disagree about which rows a given split contains.
     """
     if grouping_method not in GROUPING_METHODS:
         raise ValueError(
@@ -146,10 +158,60 @@ def load_ait_ads_baseline_split(
         print(
             f"  [warn] Dropping {n_unlabelled} alert_groups with unlabelled/mixed group_label"
         )
-        df = df[df["Label"].notna()].reset_index(drop=True)
+        keep_mask = df["Label"].notna().to_numpy()
+        df = df[keep_mask].reset_index(drop=True)
+        alert_groups = [tx for tx, keep in zip(alert_groups, keep_mask) if keep]
     df["Label"] = df["Label"].astype(int)
 
+    return df, alert_groups
+
+
+def load_ait_ads_baseline_split(
+    scenario: str,
+    grouping_method: str = "fixed_window",
+    test_frac: float = 0.3,
+    cache_dir: Path | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Ingest (if not already cached) + encode `scenario` under the AIT-ADS
+    base schema for the given `grouping_method`, chronologically split
+    train/test, return (train, test) DataFrames with `Label` (0/1) and
+    `text` columns.
+
+    grouping_method must be one of GROUPING_METHODS. alertbert/deepcase
+    raise ValueError for scenario in
+    thesis.baselines._ait_ads_grouping.LEAKAGE_SCENARIOS -- see that
+    module's docstring.
+
+    Mirrors experiments/baseline.py's steps 1-5 (same ingest/cache calls,
+    same schema_name="base") for fixed_window/time_delta/cscas_grouping, so
+    this is scored on the identical alert_groups every other AIT-ADS
+    experiment already uses for this (scenario, grouping_method) pair.
+    """
+    df, _alert_groups = _load_encoded_ait_ads(scenario, grouping_method, cache_dir)
     split_idx = int(len(df) * (1 - test_frac))
     train = df.iloc[:split_idx].reset_index(drop=True)
     test = df.iloc[split_idx:].reset_index(drop=True)
     return train, test
+
+
+def load_ait_ads_baseline_split_with_groups(
+    scenario: str,
+    grouping_method: str = "fixed_window",
+    test_frac: float = 0.3,
+    cache_dir: Path | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, list[AlertGroup], list[AlertGroup]]:
+    """Same split as load_ait_ads_baseline_split (same helper, same
+    test_frac cut), but also returns the (train_groups, test_groups)
+    AlertGroup lists aligned 1:1 by position with (train, test) -- for
+    ait_ads_mining.py, which needs the actual AlertGroup objects (not just
+    the encoded base-schema columns) to run
+    thesis.mining.attribute_mining_job.run_alert_group_attribute_mining_job
+    on the train split, the same way cscas_mining.py does for CSCAS.
+    """
+    df, alert_groups = _load_encoded_ait_ads(scenario, grouping_method, cache_dir)
+    split_idx = int(len(df) * (1 - test_frac))
+    train = df.iloc[:split_idx].reset_index(drop=True)
+    test = df.iloc[split_idx:].reset_index(drop=True)
+    train_groups = alert_groups[:split_idx]
+    test_groups = alert_groups[split_idx:]
+    return train, test, train_groups, test_groups

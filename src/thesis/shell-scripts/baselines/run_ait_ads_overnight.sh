@@ -2,7 +2,8 @@
 # Full AIT-ADS system-task baseline comparison, unattended, for the DGX --
 # chains every piece needed to populate ait_ads_baseline_comparison.ipynb
 # for all 8 AIT-ADS scenarios: tabular models, then the two fine-tuned
-# LLM baselines, then zero-shot. Mirrors
+# LLM baselines, then zero-shot, then the anomaly baseline, then the two
+# mining baselines. Mirrors
 # shell-scripts/system_eval/run_overnight.sh's "label:script" chaining
 # pattern -- every step runs regardless of earlier failures, failures are
 # reported at the end, not abandoned mid-batch.
@@ -11,8 +12,8 @@
 #   1. run_ait_ads_tabular.sh -- RF/LogReg/XGBoost, all 5 grouping methods
 #      x 8 scenarios (minus alertbert/deepcase leakage skips) x 2 pool
 #      conditions x 5 seeds. Shares the exact same split
-#      (_ait_ads_data.load_ait_ads_baseline_split) as stages 2-3 below, so
-#      results are directly comparable across all three model families --
+#      (_ait_ads_data.load_ait_ads_baseline_split) as stages 2-4 below, so
+#      results are directly comparable across all four model families --
 #      see ait_ads_rf.py's module docstring for why this replaced the
 #      earlier run_model_comparison_attribute.py-based approach (that
 #      pipeline is fixed_window-only and a separate codepath, so it could
@@ -25,6 +26,16 @@
 #      scenarios x 4 Ollama models. Requires Ollama reachable at
 #      OLLAMA_HOST (default http://localhost:11434) with --network host if
 #      containerized -- see that script's own header.
+#   4. run_ait_ads_anomaly.sh -- OneClassSVM fit on benign-only rows, same
+#      grouping method x scenario grid as stage 1 but no pool
+#      conditions/seeds (single deterministic run per combo). Produces a
+#      result for harrison/santos/russellmitchell -- see
+#      ait_ads_anomaly.py's module docstring.
+#   5. run_ait_ads_mining.sh -- ait_ads_mining.py (RF on base schema +
+#      attribute-mined symbolic features, same pool conditions x seeds as
+#      stage 1) and ait_ads_mining_anomaly.py (OneClassSVM sibling of
+#      stage 4, same test-side-only guard -- the only mining-based script
+#      that also produces a harrison/santos/russellmitchell result).
 #
 # Every stage is resumable: each ait_ads_*.py script skips a
 # (grouping_method, scenario) combo whose results/*.json already exists,
@@ -74,6 +85,8 @@ steps=(
   "1. Tabular models (run_ait_ads_tabular.sh):$HERE/run_ait_ads_tabular.sh"
   "2. BERT/SecureBERT (run_ait_ads_bert_securebert.sh):$HERE/run_ait_ads_bert_securebert.sh"
   "3. Zero-shot (run_ait_ads_zeroshot.sh):$HERE/run_ait_ads_zeroshot.sh"
+  "4. Anomaly (run_ait_ads_anomaly.sh):$HERE/run_ait_ads_anomaly.sh"
+  "5. Mining (run_ait_ads_mining.sh):$HERE/run_ait_ads_mining.sh"
 )
 
 overall_failed=0

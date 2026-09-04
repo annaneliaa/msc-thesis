@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Overnight batch runner: every implemented baseline (cscas.py,
 # cscas_base.py, cscas_mining.py, cscas_logreg.py, cscas_xgboost.py,
-# cscas_bert.py, cscas_securebert.py), followed by re-executing the
-# comparison notebook so every plot is baked in and ready to look at in the
-# morning.
+# cscas_bert.py, cscas_securebert.py, cscas_anomaly.py,
+# cscas_mining_anomaly.py), followed by re-executing the comparison
+# notebook so every plot is baked in and ready to look at in the morning.
 #
 # Does NOT run cscas_zeroshot.py -- gated (needs a Llama 3.1 license
 # acceptance + your own Hugging Face auth) and not yet run for real here.
@@ -74,6 +74,8 @@ run_step() {
     run_step "cscas_xgboost.py" "$PYTHON" cscas_xgboost.py
     run_step "cscas_bert.py" "$PYTHON" cscas_bert.py
     run_step "cscas_securebert.py" "$PYTHON" cscas_securebert.py
+    run_step "cscas_anomaly.py" "$PYTHON" cscas_anomaly.py
+    run_step "cscas_mining_anomaly.py" "$PYTHON" cscas_mining_anomaly.py
     run_step "notebook execution" "$PYTHON" -m jupyter nbconvert \
         --to notebook --execute --inplace \
         ../notebooks/baselines/cscas_baseline_comparison.ipynb

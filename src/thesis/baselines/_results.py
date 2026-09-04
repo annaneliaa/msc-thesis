@@ -84,6 +84,38 @@ def save_zeroshot_results(
     return out_path
 
 
+def save_anomaly_results(
+    name: str,
+    description: str,
+    metrics: dict[str, float],
+) -> Path:
+    """Save the anomaly-detector baseline's flat {auc, precision, recall,
+    f1} -- no conditions, no seed-averaging, same "single deterministic
+    run" shape as save_zeroshot_results (the anomaly model factories have
+    no seed/random_state concept to average over either), but with `auc`
+    included since that's this method's headline metric, not just a
+    byproduct."""
+    RESULTS_DIR.mkdir(exist_ok=True)
+    out_path = RESULTS_DIR / f"{name}.json"
+
+    with out_path.open("w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "name": name,
+                "description": description,
+                "kind": "anomaly",
+                "auc": float(metrics["auc"]),
+                "precision": float(metrics["precision"]),
+                "recall": float(metrics["recall"]),
+                "f1": float(metrics["f1"]),
+            },
+            f,
+            indent=2,
+        )
+    print(f"Results written to {out_path}")
+    return out_path
+
+
 def load_baseline_results(name: str) -> dict:
     path = RESULTS_DIR / f"{name}.json"
     if not path.exists():
@@ -98,6 +130,14 @@ def is_zero_shot(data: dict) -> bool:
     """True if `data` (as returned by load_baseline_results) is a flat
     zero-shot result rather than a trainable multi-condition result."""
     return data.get("kind") == "zero_shot"
+
+
+def is_anomaly(data: dict) -> bool:
+    """True if `data` (as returned by load_baseline_results) is a flat
+    anomaly-detector result -- same "no conditions" shape as
+    is_zero_shot, but a semantically distinct kind (carries `auc`, comes
+    from a benign-only-trained one-class model, not a prompted LLM)."""
+    return data.get("kind") == "anomaly"
 
 
 def results_exist(name: str) -> bool:

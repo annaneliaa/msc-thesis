@@ -3,6 +3,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.neural_network import MLPClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
+from sklearn.svm import OneClassSVM
 from xgboost import XGBClassifier
 from typing import Callable, Any
 
@@ -124,6 +125,17 @@ MODEL_FACTORIES = {
         max_iter=500,
         contamination=0.05,
         random_state=42,
+    ),
+    # Unlike bernoulli_oc/autoencoder_oc (both built for binary feature
+    # vectors -- see anomaly_models.py's module docstring), OneClassSVM
+    # handles raw numeric features directly, so it's scaled the same way
+    # "logreg" above is (distance-based, not scale-invariant). nu=0.05
+    # matches the other two anomaly models' contamination=0.05 convention.
+    "ocsvm": lambda **_: Pipeline(
+        [
+            ("scaler", StandardScaler()),
+            ("clf", OneClassSVM(kernel="rbf", nu=0.05)),
+        ]
     ),
 }
 
