@@ -1,0 +1,23 @@
+\begin{table}[htbp]
+\centering
+\small
+\caption{CSCAS anomaly detectors at a tuned operating point. \textbf{AUC} is the
+threshold-free ranking quality. \textbf{F1 (default cut)} is at the detector's own
+$\nu$ / contamination $= 0.05$ rejection rate (the summary-table value). The last
+three columns report the detector at the threshold that achieves 90\% recall: the
+precision an analyst sees at that cut, the false-positive count on the shared eval
+subsample (306 attack / 19{,}694 benign), and \emph{Workload$-$} = the fraction of
+alerts the model lets the analyst skip while still catching 90\% of attacks.
+IsolationForest rows are seed-averaged (5 seeds).}
+\label{tab:cscas-anomaly-operating-points}
+\begin{tabular}{lllccrrr}
+\toprule
+\textbf{Baseline} & \textbf{Model} & \textbf{Features} & \textbf{AUC} & \textbf{F1 (def.\ cut)} & \textbf{P@R$\geq$.90} & \textbf{FP@R$\geq$.90} & \textbf{Workload$-$@R$\geq$.90} \\
+\midrule
+Anomaly & OneClassSVM & Base (5) & 0.681 & 0.066 & 0.018 & 14,672 & 0.253 \\
+Anomaly & IsolationForest & Base (5) & 0.825 & 0.076 & 0.044 & 6,054 & 0.683 \\
+Anomaly + mining & OneClassSVM & Base (5) + mined & 0.995 & 0.275 & 0.552 & 224 & 0.975 \\
+Anomaly + mining & IsolationForest & Base (5) + mined & 0.928 & 0.176 & 0.094 & 2,684 & 0.852 \\
+\bottomrule
+\end{tabular}
+\end{table}

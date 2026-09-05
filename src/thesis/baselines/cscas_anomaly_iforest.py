@@ -12,12 +12,21 @@ Tree-based like RandomForestClassifier/XGBClassifier -- scale-invariant, so
 unlike OneClassSVM's model_factory entry, "iforest" isn't wrapped in a
 StandardScaler Pipeline (see model_factory.py's own comment on this).
 
-Same "single deterministic run" contract as cscas_anomaly.py: no pool
-conditions, no seeds. IsolationForest's own randomness (tree bootstrap
-sampling) is pinned by its fixed random_state=42 in model_factory.py --
-unlike OneClassSVM (deterministic with no seed concept at all), this one
-genuinely needs a fixed seed to be reproducible, but still reports exactly
-one run, not an average over several.
+No pool conditions (fit is benign-only, natural count -- nothing to
+undersample). But unlike OneClassSVM (a deterministic convex fit, no
+random_state), IsolationForest's tree bootstrap sampling is genuinely
+stochastic, so this runs the same 5-seed protocol the trainable baselines
+use -- IsolationForest(random_state=seed) for seed in range(5), fit on the
+identical benign rows every seed -- and reports the seed mean plus the
+per-seed breakdown so the comparison notebook can show mean +/- sd. The
+OneClassSVM sibling (cscas_anomaly.py) stays a single run: its sd is
+exactly 0.
+
+Scoring convention identical to cscas_anomaly.py -- verified empirically
+that IsolationForest exposes the same fit/decision_function/predict(-1/+1)
+interface OneClassSVM does, so no scoring-logic changes were needed:
+  scores = -model.decision_function(X_test)   # higher = more anomalous
+  y_pred = (model.predict(X_test) == -1)      # 1 = anomaly = attack
 
 Scoring convention identical to cscas_anomaly.py -- verified empirically
 that IsolationForest exposes the same fit/decision_function/predict(-1/+1)
@@ -34,11 +43,15 @@ file's location), so it must be run from src/thesis/baselines/.
 """
 
 import pandas as pd
+from sklearn.ensemble import IsolationForest
 from sklearn.metrics import f1_score, precision_score, recall_score, roc_auc_score
 
 from thesis.baselines._results import save_anomaly_results
 from thesis.baselines._sampling import get_cscas_eval_subsample
-from thesis.training.model_factory import get_model_factory
+from thesis.training.workload import (
+    average_workload_at_recall,
+    compute_workload_at_recall,
+)
 
 print("Using device: cpu")
 
@@ -95,20 +108,47 @@ print(
     f"Evaluating on shared eval subsample: {len(eval_df)} rows, {int(eval_df['Label'].sum())} positive"
 )
 
-# 7) Fit + score
-model = get_model_factory("iforest")()
-model.fit(X_train)
+# 7) Fit + score -- 5 seeds, IsolationForest(random_state=seed), identical
+# benign training rows every seed (nothing to resample -- benign-only fit).
+# Also collect the tuned-operating-point view per seed (precision / FP /
+# workload-reduction at each target recall), seed-averaged before saving.
+seed_metrics: list[dict[str, float]] = []
+seed_workloads: list[dict] = []
+for seed in range(5):
+    model = IsolationForest(
+        n_estimators=100, contamination=0.05, random_state=seed, n_jobs=-1
+    )
+    model.fit(X_train)
 
-scores = -model.decision_function(X_test)  # higher = more anomalous
-y_pred = (model.predict(X_test) == -1).astype(int)  # 1 = anomaly = attack
+    scores = -model.decision_function(X_test)  # higher = more anomalous
+    y_pred = (model.predict(X_test) == -1).astype(int)  # 1 = anomaly = attack
 
-auc = roc_auc_score(y_test, scores)
-p = precision_score(y_test, y_pred, zero_division=0)
-r = recall_score(y_test, y_pred, zero_division=0)
-f = f1_score(y_test, y_pred, zero_division=0)
+    m = {
+        "auc": roc_auc_score(y_test, scores),
+        "precision": precision_score(y_test, y_pred, zero_division=0),
+        "recall": recall_score(y_test, y_pred, zero_division=0),
+        "f1": f1_score(y_test, y_pred, zero_division=0),
+    }
+    seed_metrics.append(m)
+    seed_workloads.append(compute_workload_at_recall(y_test, scores))
+    print(
+        f"  seed={seed}: AUC={m['auc']:.3f} P={m['precision']:.3f} "
+        f"R={m['recall']:.3f} F1={m['f1']:.3f}"
+    )
 
-print("\n=== cscas_anomaly_iforest ===")
-print(f"AUC={auc:.3f} P={p:.3f} R={r:.3f} F1={f:.3f}")
+workload = average_workload_at_recall(seed_workloads)
+
+avg = pd.DataFrame(seed_metrics).mean()
+print("\n=== cscas_anomaly_iforest (mean of 5 seeds) ===")
+print(
+    f"AUC={avg.auc:.3f} P={avg.precision:.3f} R={avg.recall:.3f} F1={avg.f1:.3f}  (default cut)"
+)
+if workload.get("0.90"):
+    w = workload["0.90"]
+    print(
+        f"  @recall>=0.90: P={w['precision']:.3f} FP={w['fp']:.0f} "
+        f"workload_reduction={w['workload_reduction']:.3f}"
+    )
 
 save_anomaly_results(
     name="cscas_anomaly_iforest",
@@ -118,7 +158,11 @@ save_anomaly_results(
         "features -- SignatureID, SCAS, and all Similarity columns "
         "removed, same as cscas_base.py), evaluated on the shared eval "
         "subsample. No attack rows used in training -- second anomaly-"
-        "detector model family alongside cscas_anomaly.py's OneClassSVM."
+        "detector model family alongside cscas_anomaly.py's OneClassSVM. "
+        "Mean over 5 seeds (random_state=0..4). precision/recall/f1 at the "
+        "default contamination=0.05 cut; workload_at_recall is the tuned-"
+        "threshold view (seed-averaged)."
     ),
-    metrics={"auc": auc, "precision": p, "recall": r, "f1": f},
+    seeds=seed_metrics,
+    workload=workload,
 )

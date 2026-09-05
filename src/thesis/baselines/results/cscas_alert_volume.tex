@@ -1,0 +1,68 @@
+\begin{table}[htbp]
+\centering
+\small
+\caption{Confusion-count and alert-volume view of every row in
+Table~\ref{tab:cscas-baseline-summary}. TP/FP/FN are on the shared eval-subsample
+basis (306 attack / 19{,}694 benign alerts) -- precision and recall projected onto
+that fixed composition, so the paper-reproduced rows (scored on the full test set)
+stay comparable. \emph{Est.\ FP/day} scales the benign false-positive rate to the
+full test stream ($1{,}236{,}605$ benign alerts over ${\sim}53.7$ days,
+${\approx}23$k alerts/day) -- the analyst-load axis that F1 hides. The
+\texttt{always-alert} row is the ceiling.}
+\label{tab:cscas-alert-volume}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lllrrrccr}
+\toprule
+\textbf{Baseline} & \textbf{Model} & \textbf{Training} & \textbf{TP} & \textbf{FP} & \textbf{FN} & \textbf{Precision} & \textbf{Recall} & \textbf{Est. FP/day} \\
+\midrule
+Paper (target) & Random Forest & natural ratio & 291 & 44 & 15 & 0.868 & 0.952 & 51 \\
+\addlinespace
+Paper (reproduced) & Random Forest & random & 297 & 135 & 9 & 0.687 & 0.970 & 158 \\
+ &  & class-weighted & 261 & 9 & 45 & 0.965 & 0.854 & 11 \\
+ &  & guided & 295 & 43 & 11 & 0.872 & 0.963 & 50 \\
+\midrule
+Internal system & Logistic Regression & random & 304 & 3577 & 2 & 0.078 & 0.993 & 4,180 \\
+ &  & class-weighted & 306 & 1865 & 0 & 0.141 & 1.000 & 2,180 \\
+ &  & guided & 303 & 3553 & 3 & 0.079 & 0.991 & 4,152 \\
+\addlinespace
+Internal system & Random Forest & random & 303 & 303 & 3 & 0.500 & 0.992 & 354 \\
+ &  & class-weighted & 212 & 76 & 94 & 0.736 & 0.693 & 89 \\
+ &  & guided & 287 & 227 & 19 & 0.558 & 0.939 & 265 \\
+\addlinespace
+Internal system & XGBoost & random & 298 & 286 & 8 & 0.511 & 0.974 & 334 \\
+ &  & class-weighted & 253 & 111 & 53 & 0.695 & 0.827 & 130 \\
+ &  & guided & 282 & 203 & 24 & 0.581 & 0.921 & 237 \\
+\midrule
+Internal + mining & Random Forest & random & 297 & 276 & 9 & 0.518 & 0.972 & 323 \\
+ &  & class-weighted & 216 & 74 & 90 & 0.746 & 0.705 & 86 \\
+ &  & guided & 289 & 227 & 17 & 0.560 & 0.943 & 265 \\
+\midrule
+LLM (zero-shot) & Llama-3.1-8B-Instruct & none & 55 & 608 & 251 & 0.083 & 0.180 & 711 \\
+\addlinespace
+LLM (zero-shot) & Llama-3.1-70B-Instruct & none & 82 & 562 & 224 & 0.127 & 0.268 & 657 \\
+\addlinespace
+LLM (zero-shot) & Qwen2.5-7B-Instruct & none & 144 & 2353 & 162 & 0.058 & 0.471 & 2,750 \\
+\addlinespace
+LLM (zero-shot) & Qwen2.5-72B-Instruct & none & 84 & 2194 & 222 & 0.037 & 0.275 & 2,564 \\
+\addlinespace
+LLM (general) & DistilBERT & random & 297 & 233 & 9 & 0.561 & 0.971 & 272 \\
+ &  & class-weighted & 277 & 35 & 29 & 0.888 & 0.905 & 41 \\
+ &  & guided & 304 & 181 & 2 & 0.627 & 0.994 & 212 \\
+\addlinespace
+LLM (domain-specific) & SecureBERT 2.0 & random & 304 & 190 & 2 & 0.615 & 0.994 & 222 \\
+ &  & class-weighted & 273 & 21 & 33 & 0.930 & 0.893 & 25 \\
+ &  & guided & 293 & 112 & 13 & 0.723 & 0.958 & 131 \\
+\midrule
+Anomaly & OneClassSVM & benign-only & 72 & 1803 & 234 & 0.038 & 0.235 & 2,107 \\
+\addlinespace
+Anomaly & IsolationForest & benign-only & 82 & 1776 & 224 & 0.044 & 0.269 & 2,076 \\
+\addlinespace
+Anomaly + mining & OneClassSVM & benign-only & 306 & 1611 & 0 & 0.160 & 1.000 & 1,883 \\
+\addlinespace
+Anomaly + mining & IsolationForest & benign-only & 134 & 1081 & 172 & 0.110 & 0.437 & 1,263 \\
+\midrule
+always-alert & -- & -- & 306 & 19694 & 0 & 0.015 & 1.000 & 23,015 \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}

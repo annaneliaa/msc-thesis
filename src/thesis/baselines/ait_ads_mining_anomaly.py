@@ -25,15 +25,21 @@ to the plain 5-column base schema here, same numbers ait_ads_anomaly.py
 would produce. Every other scenario gets whatever mined features the
 attack-vs-benign contrast in its train split actually supports.
 
-No pool conditions, no seeds -- same "single deterministic run" precedent
-as ait_ads_anomaly.py/cscas_mining_anomaly.py.
+No pool conditions, no seeds -- OneClassSVM is a deterministic convex fit
+(per-seed sd exactly 0), same "single deterministic run" precedent as
+ait_ads_anomaly.py/cscas_mining_anomaly.py. The IsolationForest sibling
+(ait_ads_mining_anomaly_iforest.py) runs the 5-seed protocol. Each result
+also stores `workload_at_recall` -- the tuned-threshold view (precision /
+FP / analyst-workload-reduction at each target recall).
 
 Set AIT_ADS_SCENARIOS / AIT_ADS_GROUPING_METHODS (comma-separated) to run a
 subset of either axis.
 
 Resumable: skips a (grouping_method, scenario) combo whose results/*.json
-already exists, so a partial run followed by a restart doesn't redo
-everything from scratch. Set AIT_ADS_FORCE=1 to force a full re-run.
+already exists *and is in the current format* (has workload_at_recall, and
+for the IsolationForest scripts a 5-seed breakdown) -- a stale-format
+result left over from an older run is recomputed automatically, no need to
+hand-delete it. Set AIT_ADS_FORCE=1 to force a full re-run.
 
 Run:
     cd src/thesis/baselines
@@ -45,13 +51,16 @@ import traceback
 
 import pandas as pd
 from sklearn.metrics import f1_score, precision_score, recall_score, roc_auc_score
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.svm import OneClassSVM
 
 from thesis.baselines._ait_ads_data import (
     GROUPING_METHODS as ALL_GROUPING_METHODS,
     load_ait_ads_baseline_split_with_groups,
 )
 from thesis.baselines._ait_ads_grouping import LEAKAGE_SCENARIOS, LEARNED_METHODS
-from thesis.baselines._results import results_exist, save_anomaly_results
+from thesis.baselines._results import anomaly_results_current, save_anomaly_results
 from thesis.configs import load_scenarios
 from thesis.encoders.symbolic import SymbolicFeatureEncoder
 from thesis.features.schema_builder import build_symbolic_feature_schema
@@ -59,7 +68,7 @@ from thesis.mining.attribute_mining_job import run_alert_group_attribute_mining_
 from thesis.paths import CACHE_DIR
 from thesis.pipeline.pipeline import save_alert_groups_json
 from thesis.schemas.mining import AttributeMiningConfig
-from thesis.training.model_factory import get_model_factory
+from thesis.training.workload import compute_workload_at_recall
 
 FEATURE_COLS = ["hour_of_day", "n_alerts", "n_sigs", "n_hosts", "n_shorts"]
 
@@ -88,7 +97,7 @@ def run_scenario(scenario: str, grouping_method: str) -> None:
     print(
         f"\n{'=' * 70}\n  SCENARIO: {scenario} / GROUPING: {grouping_method}\n{'=' * 70}"
     )
-    if not FORCE and results_exist(result_name):
+    if not FORCE and anomaly_results_current(result_name):
         print(
             f"  [skip] {run_tag}: {result_name}.json already exists (set AIT_ADS_FORCE=1 to re-run)."
         )
@@ -178,7 +187,11 @@ def run_scenario(scenario: str, grouping_method: str) -> None:
     ).values
     y_test = test["Label"].values
 
-    model = get_model_factory("ocsvm")()
+    # Same estimator as model_factory's "ocsvm", built inline to avoid the
+    # classifier factory's heavier deps. Deterministic convex fit, no seed.
+    model = Pipeline(
+        [("scaler", StandardScaler()), ("clf", OneClassSVM(kernel="rbf", nu=0.05))]
+    )
     model.fit(X_train)
 
     scores = -model.decision_function(X_test)  # higher = more anomalous
@@ -188,7 +201,16 @@ def run_scenario(scenario: str, grouping_method: str) -> None:
     p = precision_score(y_test, y_pred, zero_division=0)
     r = recall_score(y_test, y_pred, zero_division=0)
     f = f1_score(y_test, y_pred, zero_division=0)
-    print(f"  AUC={auc:.3f} P={p:.3f} R={r:.3f} F1={f:.3f}")
+    workload = compute_workload_at_recall(y_test, scores)
+    w90 = workload.get("0.90")
+    print(
+        f"  AUC={auc:.3f} P={p:.3f} R={r:.3f} F1={f:.3f} (default nu=0.05 cut)"
+        + (
+            f"  |  @recall>=0.90: P={w90['precision']:.3f} FP={int(w90['fp'])}"
+            if w90
+            else ""
+        )
+    )
 
     save_anomaly_results(
         name=result_name,
@@ -199,9 +221,12 @@ def run_scenario(scenario: str, grouping_method: str) -> None:
             "split), OneClassSVM(kernel='rbf', nu=0.05) fit on benign-only "
             "train rows, evaluated on the scenario's full test split. "
             "Test-side-only single-class guard -- recovers scenarios "
-            "excluded from ait_ads_mining.py by its train-side guard."
+            "excluded from ait_ads_mining.py by its train-side guard. "
+            "precision/recall/f1 at the default nu=0.05 cut; "
+            "workload_at_recall is the tuned-threshold view."
         ),
         metrics={"auc": auc, "precision": p, "recall": r, "f1": f},
+        workload=workload,
     )
 
 

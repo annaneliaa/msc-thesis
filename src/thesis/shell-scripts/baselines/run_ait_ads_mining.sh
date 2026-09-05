@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Overnight batch runner for the AIT-ADS mining baselines (ait_ads_mining.py,
-# ait_ads_mining_anomaly.py) -- the AIT-ADS counterpart to
+# ait_ads_mining_anomaly.py -- OneClassSVM, ait_ads_mining_anomaly_iforest.py
+# -- IsolationForest, 5-seeded) -- the AIT-ADS counterpart to
 # baselines/run_overnight.sh's cscas_mining.py/cscas_mining_anomaly.py
 # steps. Each script already loops every AIT-ADS scenario x grouping method
 # internally (AIT_ADS_SCENARIOS / AIT_ADS_GROUPING_METHODS below to run a
@@ -69,7 +70,7 @@ run_step() {
     echo "AIT_ADS_SCENARIOS=${AIT_ADS_SCENARIOS:-<all>}"
     echo "Non-alertbert grouping methods (plain venv): $NON_ALERTBERT_METHODS"
 
-    for script in ait_ads_mining.py ait_ads_mining_anomaly.py; do
+    for script in ait_ads_mining.py ait_ads_mining_anomaly.py ait_ads_mining_anomaly_iforest.py; do
         AIT_ADS_GROUPING_METHODS="$NON_ALERTBERT_METHODS" \
             run_step "$script (fixed_window/time_delta/cscas_grouping/deepcase)" "$PYTHON" "$script"
         run_step "$script (alertbert)" \

@@ -20,8 +20,9 @@
 # (usually already there from the tabular scripts' setup -- see
 # setup_container.sh's thesis-alertbert branch).
 #
-# Cheap (CPU, one deterministic model fit per combo, no seeds/pool
-# conditions to sweep) -- comparable cost to run_ait_ads_tabular.sh, not
+# Cheap (CPU, no pool conditions to sweep -- OneClassSVM is one
+# deterministic fit per combo; IsolationForest is 5 fits per combo, one per
+# seed, still fast) -- comparable cost to run_ait_ads_tabular.sh, not
 # run_ait_ads_bert_securebert.sh.
 #
 # Does not abort on a single script's failure (no `set -e`) -- if the

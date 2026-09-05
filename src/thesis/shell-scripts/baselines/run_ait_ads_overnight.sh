@@ -26,24 +26,32 @@
 #      scenarios x 4 Ollama models. Requires Ollama reachable at
 #      OLLAMA_HOST (default http://localhost:11434) with --network host if
 #      containerized -- see that script's own header.
-#   4. run_ait_ads_anomaly.sh -- OneClassSVM (ait_ads_anomaly.py) and
-#      IsolationForest (ait_ads_anomaly_iforest.py), each fit on
-#      benign-only rows, same grouping method x scenario grid as stage 1
-#      but no pool conditions/seeds (single deterministic run per combo).
-#      Both produce a result for harrison/santos/russellmitchell -- see
-#      ait_ads_anomaly.py's module docstring.
+#   4. run_ait_ads_anomaly.sh -- OneClassSVM (ait_ads_anomaly.py, one
+#      deterministic fit per combo) and IsolationForest
+#      (ait_ads_anomaly_iforest.py, 5-seeded), each fit on benign-only
+#      rows, same grouping method x scenario grid as stage 1 but no pool
+#      conditions. Both produce a result for harrison/santos/
+#      russellmitchell -- see ait_ads_anomaly.py's module docstring. Every
+#      anomaly result also carries a tuned-operating-point view
+#      (workload_at_recall).
 #   5. run_ait_ads_mining.sh -- ait_ads_mining.py (RF on base schema +
 #      attribute-mined symbolic features, same pool conditions x seeds as
-#      stage 1) and ait_ads_mining_anomaly.py (OneClassSVM sibling of
-#      stage 4, same test-side-only guard -- the only mining-based script
-#      that also produces a harrison/santos/russellmitchell result).
+#      stage 1), ait_ads_mining_anomaly.py (OneClassSVM sibling of stage 4)
+#      and ait_ads_mining_anomaly_iforest.py (IsolationForest sibling,
+#      5-seeded) -- both anomaly siblings use the same test-side-only guard,
+#      the only mining-based scripts that also produce a harrison/santos/
+#      russellmitchell result.
 #
 # Every stage is resumable: each ait_ads_*.py script skips a
 # (grouping_method, scenario) combo whose results/*.json already exists,
 # so restarting this script after a crash or an interrupted run only
 # redoes what's still missing. Set AIT_ADS_FORCE=1 (exported before
 # calling this script, or edited into the stage scripts directly) to force
-# a full re-run from scratch instead.
+# a full re-run from scratch instead. The four anomaly scripts go further
+# -- they also recompute a combo whose result JSON is in an older format
+# (missing workload_at_recall, or a per-seed breakdown for the
+# IsolationForest scripts), so a resume after this change picks those up
+# without AIT_ADS_FORCE.
 #
 # /!\ Total runtime: expect this to run for many hours to well over a day
 # depending on GPU/CPU -- every stage is N_SEEDS x 2-condition training (or

@@ -1,0 +1,22 @@
+\begin{table}[htbp]
+\centering
+\small
+\caption{Zero-shot LLM sweep on the shared CSCAS eval subsample: the same six
+reduced fields serialized to the same prompt, no fine-tuning, greedy decoding via
+Ollama. Increasing the model 8--10$\times$ in parameters does not lift zero-shot
+classification out of the degenerate regime -- every configuration stays far
+below the trained baselines and barely above a trivial always-positive predictor
+(F1 ${\approx}0.03$ at 1.5\% prevalence). Same four rows as the zero-shot block of
+Table~\ref{tab:cscas-baseline-summary}, with parameter counts called out.}
+\label{tab:cscas-zeroshot-sweep}
+\begin{tabular}{llccc}
+\toprule
+\textbf{Model} & \textbf{Params} & \textbf{Precision} & \textbf{Recall} & \textbf{F1} \\
+\midrule
+Llama-3.1-8B-Instruct & 8B & 0.083 & 0.180 & 0.114 \\
+Llama-3.1-70B-Instruct & 70B & 0.127 & 0.268 & 0.173 \\
+Qwen2.5-7B-Instruct & 7B & 0.058 & 0.471 & 0.103 \\
+Qwen2.5-72B-Instruct & 72B & 0.037 & 0.275 & 0.065 \\
+\bottomrule
+\end{tabular}
+\end{table}

@@ -1,0 +1,67 @@
+\begin{table}[htbp]
+\centering
+\small
+\caption{Summary of baseline performance on the CSCAS test set. Trainable
+classifiers report all three training-pool sampling conditions (random
+undersampling, class-weighted natural-ratio, guided by CSCAS's SCAS clusters) as
+mean$_{\pm\text{sd}}$ over 5 seeds; the paper target is the published result, the
+anomaly detectors are fit on benign rows only, and the zero-shot LLMs have no
+training step. Precision/recall/F1 are at each model's own decision threshold; the
+guided condition systematically trades precision for recall across every
+classifier. The paper-reproduced rows are scored on the full test set to match the
+published protocol; all other rows use the shared eval subsample. The anomaly rows are at the detectors' default rejection rate (nu / contamination = 0.05), which over-flags relative to the 1.5\% attack prevalence; Table~\ref{tab:cscas-anomaly-operating-points} reports them at a tuned threshold.}
+\label{tab:cscas-baseline-summary}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{llllccc}
+\toprule
+\textbf{Baseline} & \textbf{Model} & \textbf{Features} & \textbf{Training} & \textbf{Precision} & \textbf{Recall} & \textbf{F1} \\
+\midrule
+Paper (target) & Random Forest & Paper (42) & natural ratio & 0.868 & 0.952 & 0.908 \\
+\addlinespace
+Paper (reproduced) & Random Forest & Paper (42) & random & $0.687_{\pm 0.032}$ & $0.970_{\pm 0.010}$ & $0.804_{\pm 0.022}$ \\
+ &  &  & class-weighted & $0.965_{\pm 0.003}$ & $0.854_{\pm 0.014}$ & $0.906_{\pm 0.009}$ \\
+ &  &  & guided & $0.872_{\pm 0.012}$ & $0.963_{\pm 0.011}$ & $0.915_{\pm 0.009}$ \\
+\midrule
+Internal system & Logistic Regression & Base (5) & random & $0.078_{\pm 0.000}$ & $0.993_{\pm 0.000}$ & $0.145_{\pm 0.000}$ \\
+ &  &  & class-weighted & $0.141_{\pm 0.000}$ & $1.000_{\pm 0.000}$ & $0.247_{\pm 0.000}$ \\
+ &  &  & guided & $0.079_{\pm 0.000}$ & $0.991_{\pm 0.004}$ & $0.146_{\pm 0.001}$ \\
+\addlinespace
+Internal system & Random Forest & Base (5) & random & $0.500_{\pm 0.019}$ & $0.992_{\pm 0.005}$ & $0.665_{\pm 0.017}$ \\
+ &  &  & class-weighted & $0.736_{\pm 0.028}$ & $0.693_{\pm 0.008}$ & $0.714_{\pm 0.016}$ \\
+ &  &  & guided & $0.558_{\pm 0.026}$ & $0.939_{\pm 0.015}$ & $0.700_{\pm 0.024}$ \\
+\addlinespace
+Internal system & XGBoost & Base (5) & random & $0.511_{\pm 0.021}$ & $0.974_{\pm 0.012}$ & $0.670_{\pm 0.020}$ \\
+ &  &  & class-weighted & $0.695_{\pm 0.000}$ & $0.827_{\pm 0.000}$ & $0.755_{\pm 0.000}$ \\
+ &  &  & guided & $0.581_{\pm 0.035}$ & $0.921_{\pm 0.029}$ & $0.712_{\pm 0.031}$ \\
+\midrule
+Internal + mining & Random Forest & Base (5) + mined & random & $0.518_{\pm 0.012}$ & $0.972_{\pm 0.004}$ & $0.676_{\pm 0.009}$ \\
+ &  &  & class-weighted & $0.746_{\pm 0.008}$ & $0.705_{\pm 0.009}$ & $0.724_{\pm 0.006}$ \\
+ &  &  & guided & $0.560_{\pm 0.012}$ & $0.943_{\pm 0.007}$ & $0.703_{\pm 0.009}$ \\
+\midrule
+LLM (zero-shot) & Llama-3.1-8B-Instruct & Base (6) as text & none & 0.083 & 0.180 & 0.114 \\
+\addlinespace
+LLM (zero-shot) & Llama-3.1-70B-Instruct & Base (6) as text & none & 0.127 & 0.268 & 0.173 \\
+\addlinespace
+LLM (zero-shot) & Qwen2.5-7B-Instruct & Base (6) as text & none & 0.058 & 0.471 & 0.103 \\
+\addlinespace
+LLM (zero-shot) & Qwen2.5-72B-Instruct & Base (6) as text & none & 0.037 & 0.275 & 0.065 \\
+\addlinespace
+LLM (general) & DistilBERT & Base (6) as text & random & $0.561_{\pm 0.093}$ & $0.971_{\pm 0.017}$ & $0.707_{\pm 0.073}$ \\
+ &  &  & class-weighted & $0.888_{\pm 0.094}$ & $0.905_{\pm 0.075}$ & $0.893_{\pm 0.064}$ \\
+ &  &  & guided & $0.627_{\pm 0.091}$ & $0.994_{\pm 0.010}$ & $0.766_{\pm 0.064}$ \\
+\addlinespace
+LLM (domain-specific) & SecureBERT 2.0 & Base (6) as text & random & $0.615_{\pm 0.091}$ & $0.994_{\pm 0.010}$ & $0.756_{\pm 0.066}$ \\
+ &  &  & class-weighted & $0.930_{\pm 0.056}$ & $0.893_{\pm 0.054}$ & $0.910_{\pm 0.038}$ \\
+ &  &  & guided & $0.723_{\pm 0.091}$ & $0.958_{\pm 0.038}$ & $0.820_{\pm 0.056}$ \\
+\midrule
+Anomaly & OneClassSVM & Base (5) & benign-only & $0.038_{\pm 0.000}$ & $0.235_{\pm 0.000}$ & $0.066_{\pm 0.000}$ \\
+\addlinespace
+Anomaly & IsolationForest & Base (5) & benign-only & $0.044_{\pm 0.004}$ & $0.269_{\pm 0.037}$ & $0.076_{\pm 0.006}$ \\
+\addlinespace
+Anomaly + mining & OneClassSVM & Base (5) + mined & benign-only & $0.160_{\pm 0.000}$ & $1.000_{\pm 0.000}$ & $0.275_{\pm 0.000}$ \\
+\addlinespace
+Anomaly + mining & IsolationForest & Base (5) + mined & benign-only & $0.110_{\pm 0.018}$ & $0.437_{\pm 0.091}$ & $0.176_{\pm 0.030}$ \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}

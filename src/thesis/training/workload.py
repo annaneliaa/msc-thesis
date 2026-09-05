@@ -61,3 +61,37 @@ def compute_workload_at_recall(
         }
 
     return result
+
+
+def average_workload_at_recall(
+    per_run: list[dict[str, dict | None]],
+) -> dict[str, dict | None]:
+    """Average several compute_workload_at_recall() results (e.g. one per
+    seed) target-by-target. A target is None in the output only if it was
+    unreachable in *every* run; otherwise the mean is over the runs that
+    reached it. `n` records how many runs contributed.
+    """
+    if not per_run:
+        return {}
+
+    targets = list(per_run[0].keys())
+    fields = (
+        "threshold",
+        "recall",
+        "precision",
+        "tp",
+        "fp",
+        "tn",
+        "fn",
+        "workload_reduction",
+        "fp_rate",
+    )
+    out: dict[str, dict | None] = {}
+    for t in targets:
+        rows = [run[t] for run in per_run if run.get(t) is not None]
+        if not rows:
+            out[t] = None
+            continue
+        out[t] = {f: float(np.mean([row[f] for row in rows])) for f in fields}
+        out[t]["n"] = len(rows)
+    return out

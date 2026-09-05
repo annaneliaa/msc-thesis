@@ -12,8 +12,6 @@ so both notebooks can call the same functions instead of duplicating logic.
 
 from __future__ import annotations
 
-from collections import Counter
-from itertools import combinations
 from pathlib import Path
 
 import numpy as np
@@ -23,17 +21,20 @@ from thesis.data.alert_groups import build_labeled_window_alert_groups
 
 from thesis.visualization.eda import (
     classify_signatures,
-    plot_alert_group_size_distribution,
-    plot_pair_support_scatter,
-    plot_signature_event_raster,
     plot_occurrence_burst_raster,
-    plot_signature_purity_pie,
     plot_signature_activity_bins,
     plot_signature_vocabulary_churn,
     plot_signature_activity_heatmap,
     plot_attack_temporal_concentration,
 )
 
+from thesis.visualization.eda import (
+    plot_alert_volume_concatenated,
+    plot_attack_phase_zoom,
+    plot_attack_type_heatmap,
+    plot_signature_event_raster,
+    plot_temporal_attack_overview,
+)
 
 # Gap threshold used by AlertBERT time-delta chaining (seconds); also the
 # default stream/burst-splitting threshold for the per-host analysis.
@@ -84,77 +85,6 @@ def annotate_and_save(fig, out_path: Path, label: str) -> None:
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
 
 
-# ---------------------------------------------------------------------------
-# Item-pair statistics (used by run_scenario_eda)
-# ---------------------------------------------------------------------------
-
-
-def count_pair_frequency(df: pd.DataFrame, items_col: str = "items") -> pd.DataFrame:
-    pair_counter: Counter = Counter()
-    for items in df[items_col]:
-        for pair in combinations(sorted(set(items)), 2):
-            pair_counter[pair] += 1
-    out = pd.DataFrame(
-        [{"pair": pair, "pair_count": count} for pair, count in pair_counter.items()]
-    ).sort_values("pair_count", ascending=False)
-    return out.reset_index(drop=True)
-
-
-def all_pair_metrics(
-    groups: pd.DataFrame,
-    items_col: str = "items",
-    label_col: str = "group_label",
-    min_total_count: int = 1,
-) -> pd.DataFrame:
-    attack_df = groups[groups[label_col] == "attack"]
-    benign_df = groups[groups[label_col] == "benign"]
-
-    attack_pairs = count_pair_frequency(attack_df, items_col).rename(
-        columns={"pair_count": "attack_count"}
-    )
-    benign_pairs = count_pair_frequency(benign_df, items_col).rename(
-        columns={"pair_count": "benign_count"}
-    )
-
-    pair_df = attack_pairs.merge(benign_pairs, on="pair", how="outer").fillna(0)
-    pair_df["attack_count"] = pair_df["attack_count"].astype(int)
-    pair_df["benign_count"] = pair_df["benign_count"].astype(int)
-    pair_df["total_count"] = pair_df["attack_count"] + pair_df["benign_count"]
-
-    n_attack = len(attack_df)
-    n_benign = len(benign_df)
-
-    pair_df["support_attack"] = pair_df["attack_count"] / n_attack if n_attack else 0.0
-    pair_df["support_benign"] = pair_df["benign_count"] / n_benign if n_benign else 0.0
-
-    denom = pair_df["support_attack"] + pair_df["support_benign"]
-    pair_df["confidence_attack"] = pair_df["support_attack"] / denom.replace(0, pd.NA)
-    pair_df["confidence_benign"] = pair_df["support_benign"] / denom.replace(0, pd.NA)
-    pair_df["confidence_attack"] = pair_df["confidence_attack"].fillna(0.0)
-    pair_df["confidence_benign"] = pair_df["confidence_benign"].fillna(0.0)
-
-    pair_df = pair_df[pair_df["total_count"] >= min_total_count].copy()
-    return pair_df.sort_values(
-        ["attack_count", "support_attack", "total_count"], ascending=False
-    ).reset_index(drop=True)
-
-
-def compute_pair_tfidf_by_class(
-    pair_df: pd.DataFrame,
-    n_attack_windows: int,
-    n_benign_windows: int,
-) -> pd.DataFrame:
-    df = pair_df.copy()
-    N = n_attack_windows + n_benign_windows
-    df["window_frequency"] = df["attack_count"] + df["benign_count"]
-    df["tf_attack"] = df["attack_count"] / max(n_attack_windows, 1)
-    df["tf_benign"] = df["benign_count"] / max(n_benign_windows, 1)
-    df["idf_global"] = np.log((N + 1) / (1 + df["window_frequency"])).clip(lower=0)
-    df["tfidf_attack"] = df["tf_attack"] * df["idf_global"]
-    df["tfidf_benign"] = df["tf_benign"] * df["idf_global"]
-    return df
-
-
 def compute_uniq_signature_counts(df: pd.DataFrame, sig_col: str) -> pd.DataFrame:
     counts = df[sig_col].value_counts().reset_index()
     counts.columns = ["signature", "count"]
@@ -171,22 +101,19 @@ def run_scenario_eda(
     scenario: str,
     out_path: Path,
     summary_path: Path,
-    alert_groups_base_dir: Path,
-    balanced: str | None = None,
-    groups_balanced: str | None = None,
-    skip_grouping: bool = False,
 ) -> None:
-    """Per-scenario stats, pair-frequency tables, and the per-scenario plots
-    (signature event raster, short-descriptor event raster [only if `df` has
-    a 'short' column], alert_group size distribution, pair support scatter --
-    the rasters only for datasets with per-alert grouping, i.e.
-    skip_grouping=False). Writes a text summary to
-    summary_path/<scenario>_eda_summary.txt and plots to out_path."""
+    """Basic per-scenario stats (row/column counts, missing values, time
+    label distribution, timestamp range, unique-signature counts). Writes a
+    text summary to summary_path/<scenario>_eda_summary.txt. Alert_group
+    construction lives in build_scenario_alert_groups instead -- this
+    function no longer builds or caches alert_groups (see git history for
+    the pair-frequency/alert_group-size analysis that used to live here,
+    removed as unused: nothing downstream read that part of the text
+    summary back in)."""
 
     print(f"  Running EDA for scenario '{scenario}' (n={len(df):,} rows)...")
     out_path.mkdir(parents=True, exist_ok=True)
     summary_path.mkdir(parents=True, exist_ok=True)
-    label = data_label(balanced, groups_balanced)
 
     with open(summary_path / f"{scenario}_eda_summary.txt", "w") as f:
         f.write(f"Exploratory Data Analysis for {scenario} scenario\n")
@@ -208,124 +135,42 @@ def run_scenario_eda(
             f.write(f"Min timestamp: {df['time'].min()}\n")
             f.write(f"Max timestamp: {df['time'].max()}\n\n")
 
-        if not skip_grouping:
-            fig, _ = plot_signature_event_raster(df, time_unit="hours")
-            annotate_and_save(
-                fig, out_path / f"{scenario}_signature_event_raster.png", label
-            )
-
-            if "short" in df.columns:
-                fig, _ = plot_signature_event_raster(
-                    df, group_col="short", time_unit="hours"
-                )
-                annotate_and_save(
-                    fig, out_path / f"{scenario}_short_event_raster.png", label
-                )
-
-            alert_groups = build_labeled_window_alert_groups(df, window_size_s=2)
-            group_cache_dir = groups_dir(
-                alert_groups_base_dir, balanced, groups_balanced
-            )
-            group_cache_dir.mkdir(parents=True, exist_ok=True)
-            alert_groups.to_csv(
-                group_cache_dir / f"{scenario}_alert_groups.csv", index=False
-            )
-
-            benign_groups = alert_groups[alert_groups["group_label"] == "benign"].copy()
-            attack_groups = alert_groups[alert_groups["group_label"] == "attack"].copy()
-
-            f.write("AlertGroup label distribution:\n")
-            f.write(alert_groups["group_label"].value_counts().to_string() + "\n\n")
-
-            groups = alert_groups.copy()
-            groups["group_size"] = groups["items"].apply(len)
-
-            size_summary = groups.groupby("group_label")["group_size"].describe()
-            size_counts = (
-                groups.groupby(["group_label", "group_size"])
-                .size()
-                .reset_index(name="count")
-                .sort_values(["group_label", "group_size"])
-            )
-
-            f.write("AlertGroup Size Summary:\n")
-            f.write(size_summary.to_string() + "\n\n")
-            f.write("AlertGroup Size Counts:\n")
-            f.write(size_counts.to_string(index=False) + "\n\n")
-
-            fig, _ = plot_alert_group_size_distribution(alert_groups, scenario)
-            annotate_and_save(
-                fig, out_path / f"{scenario}_alert_group_size_distribution.png", label
-            )
-
-            pair_freq_all = count_pair_frequency(groups)
-            f.write("Top 20 most common item pairs across all alert_groups:\n")
-            f.write(pair_freq_all.head(20).to_string(index=False) + "\n\n")
-
-            pair_freq_benign = count_pair_frequency(benign_groups)
-            f.write("Top 20 most common item pairs in BENIGN alert_groups:\n")
-            f.write(pair_freq_benign.head(20).to_string(index=False) + "\n\n")
-
-            pair_freq_attack = count_pair_frequency(attack_groups)
-            f.write("Top 20 most common item pairs in ATTACK alert_groups:\n")
-            f.write(pair_freq_attack.head(20).to_string(index=False) + "\n\n")
-
-            intersection = pd.merge(
-                pair_freq_benign.rename(columns={"pair_count": "benign_count"}),
-                pair_freq_attack.rename(columns={"pair_count": "attack_count"}),
-                on="pair",
-                how="inner",
-            ).fillna(0)
-
-            total_pairs = len(pair_freq_all)
-            intersection_pairs = len(intersection)
-            f.write(f"Total unique pairs: {total_pairs}\n")
-            f.write(f"Pairs in both classes: {intersection_pairs}\n")
-            f.write(
-                f"Percentage of pairs in both classes: {intersection_pairs / total_pairs:.2%}\n\n"
-            )
-            f.write(
-                "Top 20 most common item pairs in both BENIGN and ATTACK alert_groups:\n"
-            )
-            f.write(intersection.head(20).to_string(index=False) + "\n\n")
-
-            pair_metrics_df = all_pair_metrics(groups)
-            f.write("Top 20 item pairs by attack count + attack support:\n")
-            f.write(pair_metrics_df.head(20).to_string(index=False) + "\n\n")
-
-            fig, _ = plot_pair_support_scatter(pair_metrics_df, scenario)
-            annotate_and_save(
-                fig, out_path / f"{scenario}_pair_support_scatter.png", label
-            )
-
-            pair_tfidf = compute_pair_tfidf_by_class(
-                pair_df=pair_metrics_df[
-                    ["pair", "attack_count", "benign_count"]
-                ].copy(),
-                n_attack_windows=len(attack_groups),
-                n_benign_windows=len(benign_groups),
-            )
-            f.write("Top 20 item pairs by attack TF-IDF score:\n")
-            f.write(
-                pair_tfidf.sort_values("tfidf_attack", ascending=False)
-                .head(20)
-                .to_string(index=False)
-                + "\n\n"
-            )
-            f.write("Top 20 item pairs by benign TF-IDF score:\n")
-            f.write(
-                pair_tfidf.sort_values("tfidf_benign", ascending=False)
-                .head(20)
-                .to_string(index=False)
-                + "\n\n"
-            )
-
         sig_counts = compute_uniq_signature_counts(df, sig_col="signature")
         f.write(f"Unique signature counts in data: {len(sig_counts)}\n")
         f.write("Top 30 most common signatures:\n")
         f.write(sig_counts.head(30).to_string(index=False) + "\n\n")
 
     print(f"  {scenario}: done → {out_path}")
+
+
+def build_scenario_alert_groups(
+    df: pd.DataFrame,
+    scenario: str,
+    alert_groups_base_dir: Path,
+    balanced: str | None = None,
+    groups_balanced: str | None = None,
+    window_size_s: int = 2,
+    force: bool = False,
+) -> None:
+    """
+    Build the fixed `window_size_s`-window alert_groups for one scenario and
+    cache them to <alert_groups_base_dir>/.../<scenario>_alert_groups.csv
+    (path from groups_dir) -- the cache Phase 2's alert_group volume plots
+    read via visualization.eda.load_alert_groups. Skips rebuilding if a
+    cached CSV already exists, unless force=True.
+    """
+    group_cache_dir = groups_dir(alert_groups_base_dir, balanced, groups_balanced)
+    cache_path = group_cache_dir / f"{scenario}_alert_groups.csv"
+
+    if cache_path.exists() and not force:
+        print(f"  {scenario}: alert_groups cache exists → {cache_path} (skipping)")
+        return
+
+    print(f"  Building alert_groups for scenario '{scenario}' (n={len(df):,} rows)...")
+    alert_groups = build_labeled_window_alert_groups(df, window_size_s=window_size_s)
+    group_cache_dir.mkdir(parents=True, exist_ok=True)
+    alert_groups.to_csv(cache_path, index=False)
+    print(f"  {scenario}: alert_groups cached → {cache_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -509,9 +354,9 @@ def run_signature_behaviour_eda(
     write-ups can quote comparable plots and tables. Writes:
       - <scenario>_signature_behaviour_summary.txt (table + LaTeX) to
         summary_path
-      - <scenario>_signature_purity_pie.png, _signature_activity_bins.png,
-        _vocabulary_churn.png, _signature_activity_heatmap.png,
-        _attack_temporal_concentration.png to out_path
+      - <scenario>_signature_activity_bins.png, _vocabulary_churn.png,
+        _signature_activity_heatmap.png, _attack_temporal_concentration.png
+        to out_path
       - <scenario>_signature_overview.csv,
         _signature_activity_per_day.csv, _signature_activity_per_hour.csv,
         _signature_activity_summary.csv to overview_dir
@@ -535,9 +380,6 @@ def run_signature_behaviour_eda(
             )
         )
 
-    fig, _ = plot_signature_purity_pie(df)
-    annotate_and_save(fig, out_path / f"{scenario}_signature_purity_pie.png", label)
-
     fig, _ = plot_signature_activity_bins(
         df, scenario, sig_col=sig_col, bin_freq=bin_freq
     )
@@ -548,7 +390,9 @@ def run_signature_behaviour_eda(
     )
     annotate_and_save(fig, out_path / f"{scenario}_vocabulary_churn.png", label)
 
-    fig, _ = plot_signature_activity_heatmap(df, scenario, sig_col=sig_col)
+    fig, _ = plot_signature_activity_heatmap(
+        df, scenario, group_cols=(sig_col, "short")
+    )
     annotate_and_save(
         fig, out_path / f"{scenario}_signature_activity_heatmap.png", label
     )
@@ -618,6 +462,62 @@ def compute_overview_table(all_df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def compute_ait_eda_summary_table(
+    all_df: pd.DataFrame,
+    scenarios: list[str],
+    alert_groups_base_dir: Path,
+    sig_col: str = "signature",
+) -> pd.DataFrame:
+    """
+    Headline per-scenario overview table for the AIT-ADS write-up: duration,
+    raw-alert counts + attack %, fixed-2s-window alert_group counts +
+    attack % (ensures each scenario's alert_groups cache exists via
+    build_scenario_alert_groups, building it if missing), signature counts
+    (total + benign-only/attack-only/mixed split, see classify_signatures),
+    and how many distinct attack labels ("attack stages") occur. One row
+    per scenario, in the given `scenarios` order -- the numbers behind
+    Table~\\ref{tab:ait-eda-summary} in the write-up.
+    """
+    overview = compute_overview_table(all_df).set_index("scenario")
+
+    rows = []
+    for sc in scenarios:
+        sub = all_df[all_df["scenario"] == sc]
+        row = overview.loc[sc]
+
+        cls = classify_signatures(sub, sig_col)
+        n_benign_sig = int((cls == "benign").sum())
+        n_attack_sig = int((cls == "attack").sum())
+        n_mixed_sig = int((cls == "mixed").sum())
+
+        build_scenario_alert_groups(
+            sub, sc, alert_groups_base_dir=alert_groups_base_dir
+        )
+        cache_path = groups_dir(alert_groups_base_dir) / f"{sc}_alert_groups.csv"
+        group_labels = pd.read_csv(cache_path, usecols=["group_label"])["group_label"]
+        n_groups = len(group_labels)
+        n_groups_attack = int((group_labels == "attack").sum())
+
+        rows.append(
+            {
+                "scenario": sc,
+                "duration_days": int(round(row["duration_days"])),
+                "total_alerts": int(row["total_alerts"]),
+                "benign_alerts": int(row["benign_alerts"]),
+                "attack_alerts": int(row["attack_alerts"]),
+                "attack_pct": row["attack_pct"],
+                "n_groups_2s": n_groups,
+                "attack_pct_groups": round(100 * n_groups_attack / n_groups, 1)
+                if n_groups
+                else None,
+                "n_signatures": int(row["unique_signatures"]),
+                "signatures_benign_attack_mixed": f"{n_benign_sig} / {n_attack_sig} / {n_mixed_sig}",
+                "n_attack_stages": int(row["attack_types"]),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def compute_label_distribution_table(all_df: pd.DataFrame) -> pd.DataFrame:
     """
     Tidy per-scenario/per-label breakdown: count, % of scenario's total rows,
@@ -663,6 +563,168 @@ def compute_label_distribution_table(all_df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def compute_attack_temporal_concentration_summary(
+    all_df: pd.DataFrame, scenarios: list[str] | None = None
+) -> pd.DataFrame:
+    """
+    Per-scenario burstiness stats behind plot_attack_temporal_concentration /
+    plot_attack_temporal_concentration_multi:
+      - how far the cumulative-attack curve deviates from uniform arrival,
+        and what share of all attack alerts falls in the busiest 1/5/10% of
+        the timeline (1h-bin resolution) -- panels (a)/(b);
+      - the tail of the inter-arrival-gap distribution behind panel (c)'s
+        survival function: what fraction of gaps between consecutive attack
+        alerts exceed 1s / 1 minute, and the 99th-percentile gap. Gaps are
+        floored to 1s (matching the plot) before these are computed, so
+        "pct_gaps_over_1s" reads as "longer than the timestamp's 1s
+        resolution", not literally >1s.
+    Meant to carry the numbers the multi-scenario plot omits as in-plot
+    annotations (too many scenarios overlapping to label individually).
+    """
+    if scenarios is None:
+        scenarios = sorted(all_df["scenario"].unique())
+
+    edges = np.linspace(0, 1, 1001)
+    rows = []
+    for sc in scenarios:
+        sub = all_df[all_df["scenario"] == sc]
+        att = sub.loc[sub["is_attack"]].sort_values("time")
+        if len(att) < 2:
+            rows.append({"scenario": sc, "n_attack": len(att)})
+            continue
+
+        t0, t1 = att["time"].min(), sub["time"].max()
+        frac_time = (att["time"].values.astype(float) - t0) / (t1 - t0)
+        frac_att = np.arange(1, len(att) + 1) / len(att)
+        max_dev = float(np.max(np.abs(frac_att - frac_time)))
+
+        binned = np.histogram(frac_time, bins=edges)[0]
+        busiest = np.sort(binned)[::-1].cumsum() / max(binned.sum(), 1)
+
+        gap = np.diff(att["time"].values.astype(float))
+        gs = np.clip(gap, 1, None) if len(gap) else np.array([])
+
+        rows.append(
+            {
+                "scenario": sc,
+                "n_attack": len(att),
+                "max_deviation_from_uniform_pct": round(max_dev * 100, 1),
+                "busiest_1pct_share_pct": round(float(busiest[9]) * 100, 1),
+                "busiest_5pct_share_pct": round(float(busiest[49]) * 100, 1),
+                "busiest_10pct_share_pct": round(float(busiest[99]) * 100, 1),
+                "pct_gaps_over_1s": round(float((gs > 1).mean()) * 100, 2)
+                if len(gs)
+                else None,
+                "pct_gaps_over_1min": round(float((gs > 60).mean()) * 100, 3)
+                if len(gs)
+                else None,
+                "p99_gap_s": round(float(np.percentile(gs, 99)), 1)
+                if len(gs)
+                else None,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def compute_signature_behaviour_summary_multi(
+    all_df: pd.DataFrame,
+    scenarios: list[str] | None = None,
+    sig_col: str = "signature",
+    host_col: str = "host",
+) -> pd.DataFrame:
+    """
+    One row per scenario, the numbers behind the "signature behaviour" EDA
+    question: (i) volume concentration, (ii) class purity (benign-only /
+    attack-only / mixed), (iii) persistence across the collection window
+    (by class), and (iv) host spread. Numbers-only counterpart to eyeballing
+    per-scenario plots -- every claim in the signature-behaviour writeup
+    should be traceable to a column here.
+    """
+    if scenarios is None:
+        scenarios = sorted(all_df["scenario"].unique())
+
+    rows = []
+    for sc in scenarios:
+        sub = all_df[all_df["scenario"] == sc]
+
+        # (i) volume concentration
+        vc = sub[sig_col].value_counts().sort_values(ascending=False)
+        cum = vc.cumsum() / vc.sum() if len(vc) else pd.Series(dtype=float)
+        top5 = (
+            round(float(cum.iloc[min(4, len(cum) - 1)]) * 100, 1) if len(cum) else None
+        )
+        top10 = (
+            round(float(cum.iloc[min(9, len(cum) - 1)]) * 100, 1) if len(cum) else None
+        )
+        n90 = int((cum < 0.9).sum() + 1) if len(cum) else None
+
+        # (ii) class purity
+        cls = classify_signatures(sub, sig_col)
+        n_benign = int((cls == "benign").sum())
+        n_attack = int((cls == "attack").sum())
+        n_mixed = int((cls == "mixed").sum())
+        n_total = len(cls)
+        pct_mixed = round(100 * n_mixed / n_total, 1) if n_total else None
+
+        # (iii) persistence: days active / scenario duration, by class
+        total_days = (sub["timestamp"].max() - sub["timestamp"].min()).days + 1
+        day = sub["timestamp"].dt.normalize()
+        days_active = day.groupby(sub[sig_col]).nunique()
+        frac = days_active / max(total_days, 1)
+
+        def _class_persistence(c):
+            ids = cls.index[cls == c]
+            f = frac.reindex(ids).dropna()
+            n_every_day = int((f >= 0.999).sum())
+            median = round(float(f.median()), 2) if len(f) else None
+            return n_every_day, median
+
+        n_ed_benign, med_benign = _class_persistence("benign")
+        n_ed_attack, med_attack = _class_persistence("attack")
+        n_ed_mixed, med_mixed = _class_persistence("mixed")
+
+        # (iv) host spread
+        if host_col in sub.columns:
+            n_hosts_per_sig = sub.groupby(sig_col)[host_col].nunique()
+            pct_exclusive = (
+                round(100 * float((n_hosts_per_sig == 1).mean()), 1)
+                if len(n_hosts_per_sig)
+                else None
+            )
+            median_hosts = (
+                round(float(n_hosts_per_sig.median()), 1)
+                if len(n_hosts_per_sig)
+                else None
+            )
+            n_hosts_total = int(sub[host_col].nunique())
+        else:
+            pct_exclusive = median_hosts = n_hosts_total = None
+
+        rows.append(
+            {
+                "scenario": sc,
+                "n_signatures": n_total,
+                "top5_share_pct": top5,
+                "top10_share_pct": top10,
+                "n_sigs_for_90pct_volume": n90,
+                "n_benign_only": n_benign,
+                "n_attack_only": n_attack,
+                "n_mixed": n_mixed,
+                "pct_mixed": pct_mixed,
+                "median_days_active_frac_benign": med_benign,
+                "median_days_active_frac_attack": med_attack,
+                "median_days_active_frac_mixed": med_mixed,
+                "n_active_every_day_benign": n_ed_benign,
+                "n_active_every_day_attack": n_ed_attack,
+                "n_active_every_day_mixed": n_ed_mixed,
+                "n_hosts": n_hosts_total,
+                "pct_sigs_exclusive_1_host": pct_exclusive,
+                "median_hosts_per_sig": median_hosts,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 # ---------------------------------------------------------------------------
 # Phase 2: overview plots
 # ---------------------------------------------------------------------------
@@ -672,28 +734,11 @@ def build_overview_plots(
     scenarios: list[str],
     all_df: pd.DataFrame,
     dataset: str,
-    groups_df: pd.DataFrame | None = None,
     bin_hours: float = 1.0,
-    top_k: int = 20,
 ) -> list[tuple[str, str, object]]:
     """Build every overview-phase figure. Returns [(label, name, fig), ...];
     doesn't save -- caller annotates + persists (see annotate_and_save) or
     just displays inline in a notebook."""
-    from thesis.visualization.eda import (
-        plot_alert_group_volume_attack_zoom,
-        plot_alert_group_volume_concatenated,
-        plot_alert_volume_concatenated,
-        plot_attack_phase_zoom,
-        plot_attack_type_heatmap,
-        plot_class_balance,
-        plot_group_size_distribution,
-        plot_inter_arrival_time_cdf,
-        plot_scenario_overview,
-        plot_signature_event_raster,
-        plot_signature_purity_pie,
-        plot_temporal_attack_overview,
-        plot_top_alert_signatures,
-    )
 
     zoom_params = _ZOOM_PARAMS.get(dataset, {})
     plots: list[tuple[str, str, object]] = []
@@ -730,58 +775,15 @@ def build_overview_plots(
                 "signature_burst_raster",
                 lambda: plot_occurrence_burst_raster(all_df, time_unit="days"),
             ),
-            (
-                "signature purity pie",
-                "signature_purity_pie",
-                lambda: plot_signature_purity_pie(all_df),
-            ),
         ]
 
     plots += [
-        ("class balance", "class_balance", lambda: plot_class_balance(all_df)),
         (
             "attack type heatmap",
             "attack_type_heatmap",
             lambda: plot_attack_type_heatmap(all_df),
         ),
-        (
-            "top alert signatures",
-            "top_alert_signatures",
-            lambda: plot_top_alert_signatures(all_df, top_k=top_k),
-        ),
-        (
-            "inter-arrival time CDF",
-            "inter_arrival_cdf",
-            lambda: plot_inter_arrival_time_cdf(all_df),
-        ),
-        (
-            "group size distribution",
-            "group_size_dist",
-            lambda: plot_group_size_distribution(all_df),
-        ),
-        (
-            "scenario overview table",
-            "scenario_overview",
-            lambda: plot_scenario_overview(all_df, groups_df=groups_df),
-        ),
     ]
-
-    if groups_df is not None:
-        groups_bin = zoom_params.get("bin_hours", bin_hours)
-        plots += [
-            (
-                "alert_group volume (concatenated timeline)",
-                "groups_volume_concatenated",
-                lambda: plot_alert_group_volume_concatenated(
-                    groups_df, bin_hours=groups_bin
-                ),
-            ),
-            (
-                "alert_group volume (attack phase zoom)",
-                "groups_volume_attack_zoom",
-                lambda: plot_alert_group_volume_attack_zoom(groups_df, **zoom_params),
-            ),
-        ]
 
     return [(label, name, fn()[0]) for label, name, fn in plots]
 

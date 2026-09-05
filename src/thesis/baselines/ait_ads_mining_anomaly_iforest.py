@@ -1,28 +1,26 @@
 """
-Second anomaly-detector model family alongside baselines/ait_ads_anomaly.py
-(OneClassSVM) -- IsolationForest(n_estimators=100, contamination=0.05) fit
-on benign-only rows of the 5-column AIT-ADS base schema, evaluated per
-(grouping_method, scenario). Isolates model choice within the anomaly-
-detector family the same way ait_ads_logreg.py/ait_ads_xgboost.py isolate
-model choice within the classifier family.
+IsolationForest counterpart to baselines/ait_ads_mining_anomaly.py: the
+same 5-column AIT-ADS base schema extended with attribute-mined symbolic
+features (contrast-set + decision-tree rules) on the train split, but fit
+as a one-class IsolationForest on benign-only rows instead of a
+OneClassSVM.
 
-Uses _ait_ads_data.load_ait_ads_baseline_split -- the same function every
-other ait_ads_*.py script calls, so this scores the identical rows those do
-for a given (scenario, grouping_method).
+Stands to ait_ads_mining_anomaly.py as ait_ads_anomaly_iforest.py stands to
+ait_ads_anomaly.py -- isolates the anomaly-detector model choice within the
+mining scenario. Uses the same group-returning loader and the same mining
+step (same run_name / cache namespace), so the mined predicates are shared
+with the OneClassSVM sibling.
 
-Same test-side-only single-class guard as ait_ads_anomaly.py (not the
-train-side guard the classifier scripts use) -- see that module's
-docstring for why; this script is equally exempt from the harrison/santos/
-russellmitchell exclusion.
+Guard is TEST-SIDE ONLY (test["Label"].nunique() < 2), same as
+ait_ads_anomaly.py -- a 0-attack train split is fine (the model is fit on
+benign rows only regardless), and mining degrades to 0 predicates rather
+than raising when train has no attack rows to contrast against.
 
-No pool conditions. Unlike the OneClassSVM sibling (a deterministic convex
-fit), IsolationForest's tree bootstrapping is stochastic, so this runs the
-5-seed protocol the trainable baselines use -- IsolationForest(random_state
-=seed) for seed in range(5), fit on the identical benign rows every seed --
-and stores the seed mean plus the per-seed breakdown (see
-cscas_anomaly_iforest.py's module docstring for the fuller reasoning).
-
-Alongside the default-cut precision/recall/f1, each result also stores
+Unlike the OneClassSVM sibling (a deterministic convex fit), IsolationForest
+tree bootstrapping is stochastic, so this runs the 5-seed protocol the
+trainable baselines use -- IsolationForest(random_state=seed) for seed in
+range(5), fit on the identical (base + mined) benign rows every seed -- and
+stores the seed mean plus the per-seed breakdown. Each result also stores
 `workload_at_recall` (seed-averaged): precision / FP / analyst-workload-
 reduction at the threshold that hits each target recall.
 
@@ -37,22 +35,29 @@ hand-delete it. Set AIT_ADS_FORCE=1 to force a full re-run.
 
 Run:
     cd src/thesis/baselines
-    python ait_ads_anomaly_iforest.py
+    python ait_ads_mining_anomaly_iforest.py
 """
 
 import os
 import traceback
 
+import pandas as pd
 from sklearn.ensemble import IsolationForest
 from sklearn.metrics import f1_score, precision_score, recall_score, roc_auc_score
 
 from thesis.baselines._ait_ads_data import (
     GROUPING_METHODS as ALL_GROUPING_METHODS,
-    load_ait_ads_baseline_split,
+    load_ait_ads_baseline_split_with_groups,
 )
 from thesis.baselines._ait_ads_grouping import LEAKAGE_SCENARIOS, LEARNED_METHODS
 from thesis.baselines._results import anomaly_results_current, save_anomaly_results
 from thesis.configs import load_scenarios
+from thesis.encoders.symbolic import SymbolicFeatureEncoder
+from thesis.features.schema_builder import build_symbolic_feature_schema
+from thesis.mining.attribute_mining_job import run_alert_group_attribute_mining_job
+from thesis.paths import CACHE_DIR
+from thesis.pipeline.pipeline import save_alert_groups_json
+from thesis.schemas.mining import AttributeMiningConfig
 from thesis.training.workload import (
     average_workload_at_recall,
     compute_workload_at_recall,
@@ -81,7 +86,7 @@ GROUPING_METHODS = (
 
 def run_scenario(scenario: str, grouping_method: str) -> None:
     run_tag = f"{grouping_method}_{scenario}"
-    result_name = f"ait_ads_anomaly_{run_tag}_iforest"
+    result_name = f"ait_ads_mining_anomaly_{run_tag}_iforest"
     print(
         f"\n{'=' * 70}\n  SCENARIO: {scenario} / GROUPING: {grouping_method}\n{'=' * 70}"
     )
@@ -98,7 +103,9 @@ def run_scenario(scenario: str, grouping_method: str) -> None:
         )
         return
 
-    train, test = load_ait_ads_baseline_split(scenario, grouping_method=grouping_method)
+    train, test, train_groups, test_groups = load_ait_ads_baseline_split_with_groups(
+        scenario, grouping_method=grouping_method
+    )
     print(
         f"  {len(train)} train / {len(test)} test alert_groups, "
         f"{int(train['Label'].sum())} train positive, "
@@ -113,16 +120,63 @@ def run_scenario(scenario: str, grouping_method: str) -> None:
         print(f"  [skip] {run_tag}: no benign rows in train split.")
         return
 
-    X_train = train_benign[FEATURE_COLS].values
-    X_test = test[FEATURE_COLS].values
+    # train.index equals positional row order; train_groups is aligned 1:1
+    # by position -- train_benign.index gives positions into symbolic_train_df.
+    assert list(train.index) == list(range(len(train)))
+
+    train_alert_groups_path = (
+        CACHE_DIR
+        / scenario
+        / "groups"
+        / grouping_method
+        / "mining_anomaly"
+        / "train_alert_groups.json"
+    )
+    train_alert_groups_path.parent.mkdir(parents=True, exist_ok=True)
+    save_alert_groups_json(train_groups, train_alert_groups_path)
+
+    print(f"  Mining attribute schema on {run_tag} train split...")
+    mining_result = run_alert_group_attribute_mining_job(
+        alert_groups_path=train_alert_groups_path,
+        scenario_name=scenario,
+        run_name=f"ait_ads_mining_anomaly_{run_tag}",
+        config=AttributeMiningConfig(),
+    )
+    print(f"    Mined {len(mining_result.predicates)} predicates from train split.")
+
+    symbolic_schema = build_symbolic_feature_schema(
+        df=mining_result.mined_df,
+        source_label="attack",
+        schema_name=f"ait_ads_mining_anomaly_symbolic_{run_tag}",
+        schema_version="0.1.0",
+        predicates=mining_result.predicates,
+    )
+    print(f"    Built {len(symbolic_schema.features)} symbolic features.")
+
+    encoder = SymbolicFeatureEncoder(feature_schema=symbolic_schema)
+    symbolic_train_df = encoder.transform(train_groups)
+    symbolic_test_df = encoder.transform(test_groups)
+
+    print(f"  Training on {len(train_benign)} benign-only rows (natural count)")
+    X_train = pd.concat(
+        [
+            train_benign[FEATURE_COLS].reset_index(drop=True),
+            symbolic_train_df.iloc[train_benign.index].reset_index(drop=True),
+        ],
+        axis=1,
+    ).values
+    X_test = pd.concat(
+        [
+            test[FEATURE_COLS].reset_index(drop=True),
+            symbolic_test_df.reset_index(drop=True),
+        ],
+        axis=1,
+    ).values
     y_test = test["Label"].values
 
-    print(f"\n=== {run_tag} / anomaly (IsolationForest, base schema) ===")
-    print(f"  Training on {len(train_benign)} benign-only rows (natural count)")
-
-    # 5 seeds -- IsolationForest(random_state=seed), identical benign rows
-    # every seed (nothing to resample); default-cut metrics + tuned
-    # operating point per seed, seed-averaged before saving.
+    # 5 seeds -- IsolationForest(random_state=seed), identical (base + mined)
+    # benign rows every seed; default-cut metrics + tuned operating point per
+    # seed, seed-averaged before saving.
     seed_metrics: list[dict[str, float]] = []
     seed_workloads: list[dict] = []
     for seed in range(5):
@@ -160,14 +214,15 @@ def run_scenario(scenario: str, grouping_method: str) -> None:
         name=result_name,
         description=(
             f"AIT-ADS scenario '{scenario}' grouped with '{grouping_method}': "
-            "5-column base schema, IsolationForest(n_estimators=100, "
-            "contamination=0.05) fit on benign-only train rows, evaluated "
-            "on the scenario's full test split. Test-side-only single-"
-            "class guard -- same exemption as ait_ads_anomaly.py's "
-            "OneClassSVM from the classifier baselines' train-side guard. "
-            "Mean over 5 seeds (random_state=0..4); precision/recall/f1 at "
-            "the default contamination=0.05 cut; workload_at_recall is the "
-            "seed-averaged tuned-threshold view."
+            "5-column base schema + attribute-mined symbolic features "
+            "(contrast-set + decision-tree rules, mined on the same train "
+            "split), IsolationForest(n_estimators=100, contamination=0.05) "
+            "fit on benign-only train rows, evaluated on the scenario's full "
+            "test split. Test-side-only single-class guard -- IsolationForest "
+            "sibling of ait_ads_mining_anomaly.py's OneClassSVM. Mean over 5 "
+            "seeds (random_state=0..4); precision/recall/f1 at the default "
+            "contamination=0.05 cut; workload_at_recall is the seed-averaged "
+            "tuned-threshold view."
         ),
         seeds=seed_metrics,
         workload=workload,

@@ -180,6 +180,7 @@ import yaml
 from thesis.grouping.group_alerts import CSCAS_PREGROUPED_METHOD
 from thesis.mining.attribute_schema_cache import (
     compute_fingerprint_from_identity,
+    lookup,
     mine_or_reuse_attribute_schema,
 )
 from thesis.paths import CACHE_DIR
@@ -237,9 +238,22 @@ STEP1_GROWTH_RATES_ATTACK = [2.0, 5.0, 10.0]
 STEP2_MAX_DEPTHS = [1, 2, 3]
 STEP2_MAX_DEPTHS_ATTACK = [1, 2, 3, 4, 5]
 STEP2_CLASS_WEIGHTS = ["balanced", "none"]
-# min_samples_leaf is not swept at all here -- negligible on every
-# structural metric in the single-tree analysis (attribute_mining_sweep_eda
-# .ipynb section 4.1), fixed at STEP2_DEFAULT_MIN_SAMPLES_LEAF everywhere.
+# class_weight x depth: class_weight="none" was originally mined only at both
+# trees' anchor depths, so its independence from max_depth / max_depth_attack was
+# assumed. These add class_weight="none" at the off-anchor depths so
+# attribute_mining_sweep_eda.ipynb's section 3.6 / 5.3 can measure it. "balanced"
+# at those depths already exists from the depth sweeps above.
+CLASS_WEIGHT_DEPTH_CHECK_MAX_DEPTHS = [
+    d for d in STEP2_MAX_DEPTHS if d != STEP2_DEFAULT_MAX_DEPTH
+]
+CLASS_WEIGHT_DEPTH_CHECK_MAX_DEPTHS_ATTACK = [
+    1,
+    5,
+]  # attack-tree depth extremes; widen to STEP2_MAX_DEPTHS_ATTACK for a full sweep
+# min_samples_leaf: fixed at STEP2_DEFAULT_MIN_SAMPLES_LEAF (20) in the original
+# grid on the strength of the single-tree analysis (negligible on every
+# structural metric). These two values re-confirm that under two-tree fitting.
+STEP2_MIN_SAMPLES_LEAVES = [5, 10]
 
 # Small growth_rate x max_depth_attack cross-check -- see module docstring
 # for why this one script keeps a cross-check where the single-tree version
@@ -510,8 +524,7 @@ def build_jobs(mine_fracs_windows: dict[float, int]) -> list[MineJob]:
             )
 
     # Step 2 grid: class_weight, one axis at a time, same Step-1 anchor and
-    # both trees' default depths. min_samples_leaf is not swept -- see
-    # module docstring.
+    # both trees' default depths.
     for mine_frac in MINE_FRACS:
         for class_weight in STEP2_CLASS_WEIGHTS:
             add(
@@ -520,6 +533,48 @@ def build_jobs(mine_fracs_windows: dict[float, int]) -> list[MineJob]:
                 STEP2_DEFAULT_MAX_DEPTH_ATTACK,
                 mine_frac,
                 class_weight,
+                attack_coverage=STEP1_DEFAULT_ATTACK_COVERAGE,
+                benign_coverage=STEP1_DEFAULT_BENIGN_COVERAGE,
+            )
+
+    # Step 2 grid: class_weight x depth -- class_weight="none" at the off-anchor
+    # depths, so section 3.6 / 5.3 can measure whether class_weight's effect
+    # depends on either tree's depth (it was only mined at the anchor before).
+    # "balanced" at these depths already exists from the depth sweeps above.
+    for mine_frac in MINE_FRACS:
+        for max_depth in CLASS_WEIGHT_DEPTH_CHECK_MAX_DEPTHS:
+            add(
+                STEP1_DEFAULT_GROWTH_RATE,
+                max_depth,
+                STEP2_DEFAULT_MAX_DEPTH_ATTACK,
+                mine_frac,
+                "none",
+                attack_coverage=STEP1_DEFAULT_ATTACK_COVERAGE,
+                benign_coverage=STEP1_DEFAULT_BENIGN_COVERAGE,
+            )
+        for max_depth_attack in CLASS_WEIGHT_DEPTH_CHECK_MAX_DEPTHS_ATTACK:
+            add(
+                STEP1_DEFAULT_GROWTH_RATE,
+                STEP2_DEFAULT_MAX_DEPTH,
+                max_depth_attack,
+                mine_frac,
+                "none",
+                attack_coverage=STEP1_DEFAULT_ATTACK_COVERAGE,
+                benign_coverage=STEP1_DEFAULT_BENIGN_COVERAGE,
+            )
+
+    # Step 2 grid: min_samples_leaf -- swept alone at the full anchor, to
+    # re-confirm under two-tree fitting the single-tree analysis's finding that
+    # it's negligible on every structural metric.
+    for mine_frac in MINE_FRACS:
+        for min_samples_leaf in STEP2_MIN_SAMPLES_LEAVES:
+            add(
+                STEP1_DEFAULT_GROWTH_RATE,
+                STEP2_DEFAULT_MAX_DEPTH,
+                STEP2_DEFAULT_MAX_DEPTH_ATTACK,
+                mine_frac,
+                STEP2_DEFAULT_CLASS_WEIGHT,
+                min_samples_leaf=min_samples_leaf,
                 attack_coverage=STEP1_DEFAULT_ATTACK_COVERAGE,
                 benign_coverage=STEP1_DEFAULT_BENIGN_COVERAGE,
             )
@@ -718,6 +773,16 @@ def main() -> None:
             "the module docstring and run_job's docstring."
         ),
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help=(
+            "Load alert_groups and build the grid, then report per (config, "
+            "window) whether the fingerprint cache would hit or mine fresh -- "
+            "and flag any EXISTING result that would be re-mined. No windows "
+            "materialized, nothing mined."
+        ),
+    )
     args = parser.parse_args()
 
     LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -762,6 +827,78 @@ def main() -> None:
             f"\n--repair-missing: {n_grid - len(jobs)}/{n_grid} combos already have a "
             f"valid run_dir, {len(jobs)} to force-remine"
         )
+
+    if args.dry_run:
+        _window_bounds: dict[tuple[float, int], tuple[int, int]] = {}
+        cache_hit, would_mine = [], []
+        for job in jobs:
+            wk = (job.mine_frac, job.win_idx)
+            if wk not in _window_bounds:
+                s0, s1, _ = compute_window_bounds(
+                    len(alert_groups), job.mine_frac, job.win_idx
+                )
+                _window_bounds[wk] = (s0, s1)
+            s0, s1 = _window_bounds[wk]
+            fp = window_fingerprint(
+                alert_groups_path, job.mine_frac, job.win_idx, s0, s1, job.config
+            )
+            (cache_hit if lookup(SCENARIO, fp) is not None else would_mine).append(job)
+
+        prior_keys = scan_existing_job_keys()
+        mine_new = [
+            j
+            for j in would_mine
+            if job_key(j.config, j.mine_frac, j.win_idx) not in prior_keys
+        ]
+        mine_stale = [
+            j
+            for j in would_mine
+            if job_key(j.config, j.mine_frac, j.win_idx) in prior_keys
+        ]
+
+        scope = (
+            "after --repair-missing filtering"
+            if args.repair_missing
+            else "in the full grid"
+        )
+        print(
+            f"\n{'=' * 60}\n  DRY RUN -- cache check, nothing mined ({scope})\n{'=' * 60}"
+        )
+        print(f"  {len(jobs):>4} (config, window) combos queued")
+        print(
+            f"  {len(cache_hit):>4} fingerprint cache hit  -> schema reused, no mining"
+        )
+        print(
+            f"  {len(would_mine):>4} would be mined         -> {len(mine_new)} genuinely new "
+            f"(no run_dir), {len(mine_stale)} existing run_dir but stale fingerprint"
+        )
+        if mine_stale and not args.repair_missing:
+            print(
+                "\n  NOTE: the stale-fingerprint combos below have a valid run_dir already;"
+            )
+            print(
+                "  a plain run re-mines them (same data + config -> identical output, wasted"
+            )
+            print(
+                "  compute). Run with --repair-missing to mine ONLY the genuinely-new combos:"
+            )
+            for tag in sorted({j.tag.rsplit("_win", 1)[0] for j in mine_stale})[:20]:
+                print(f"    ~ {tag}")
+            more = len({j.tag.rsplit("_win", 1)[0] for j in mine_stale}) - 20
+            if more > 0:
+                print(f"    ... and {more} more config(s)")
+        if mine_stale and args.repair_missing:
+            raise SystemExit(
+                "dry-run: --repair-missing still wants to re-mine an existing run_dir -- "
+                "its config.yaml disagrees with the grid; investigate"
+            )
+        print(
+            f"\n  A real run{' with --repair-missing' if args.repair_missing else ''} mines "
+            f"{len(would_mine)} combo(s):"
+        )
+        for tag in sorted({j.tag.rsplit("_win", 1)[0] for j in would_mine}):
+            print(f"    + {tag}")
+        return
 
     total = len(jobs)
     print(f"\n{total} mining attempts queued, {args.workers} worker thread(s)\n")

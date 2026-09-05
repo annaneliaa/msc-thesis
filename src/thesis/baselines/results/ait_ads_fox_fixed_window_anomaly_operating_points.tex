@@ -1,0 +1,22 @@
+\begin{table}[htbp]
+\centering
+\small
+\caption{AIT-ADS anomaly detectors at a tuned operating point (scenario fox, grouping fixed_window). \textbf{AUC} is
+threshold-free ranking quality; \textbf{F1 (default cut)} is at the detector's own
+$\nu$ / contamination $= 0.05$ rejection rate. The last three columns report the
+detector at the threshold achieving 90\% recall: the precision at that cut, the
+false-positive count on this scenario's test split, and \emph{Workload $-$} = the
+fraction of alerts the analyst can skip while still catching 90\% of attacks.
+IsolationForest rows are seed-averaged (5 seeds).}
+\label{tab:ait-ads-fox-fixed_window-anomaly-operating-points}
+\begin{tabular}{llccrrr}
+\toprule
+\textbf{Baseline} & \textbf{Model} & \textbf{AUC} & \textbf{F1 (def.\ cut)} & \textbf{P@R$\geq$.90} & \textbf{FP@R$\geq$.90} & \textbf{Workload$-$@R$\geq$.90} \\
+\midrule
+Anomaly & OneClassSVM & 0.895 & 0.564 & 0.205 & 812 & 0.670 \\
+Anomaly & IsolationForest & 0.820 & 0.609 & 0.074 & 2,810 & 0.019 \\
+Anomaly + mining & OneClassSVM & 0.794 & 0.589 & 0.075 & 2,759 & 0.036 \\
+Anomaly + mining & IsolationForest & 0.811 & 0.544 & 0.076 & 2,745 & 0.040 \\
+\bottomrule
+\end{tabular}
+\end{table}

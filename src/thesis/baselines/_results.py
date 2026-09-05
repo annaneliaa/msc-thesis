@@ -87,31 +87,55 @@ def save_zeroshot_results(
 def save_anomaly_results(
     name: str,
     description: str,
-    metrics: dict[str, float],
+    metrics: dict[str, float] | None = None,
+    *,
+    seeds: list[dict[str, float]] | None = None,
+    workload: dict[str, dict | None] | None = None,
 ) -> Path:
     """Save the anomaly-detector baseline's flat {auc, precision, recall,
-    f1} -- no conditions, no seed-averaging, same "single deterministic
-    run" shape as save_zeroshot_results (the anomaly model factories have
-    no seed/random_state concept to average over either), but with `auc`
-    included since that's this method's headline metric, not just a
-    byproduct."""
+    f1} -- no pool conditions, same "no three-condition structure" shape as
+    save_zeroshot_results, but with `auc` included (this method's headline
+    metric) and an optional per-seed breakdown.
+
+    Pass `seeds` (a list of per-seed {auc, precision, recall, f1} dicts) to
+    record the same 5-seed protocol the trainable baselines use: the
+    headline auc/precision/recall/f1 become the seed mean and the raw
+    per-seed dicts are persisted under "seeds" so the comparison notebook
+    can report mean +/- sd. Pass `metrics` instead for a genuinely
+    single-run detector (e.g. OneClassSVM, a deterministic convex fit with
+    no random_state -- its "sd" is exactly 0). Exactly one of
+    `metrics`/`seeds` must be given.
+
+    `workload` (a training.workload.compute_workload_at_recall result, or a
+    seed-averaged one via average_workload_at_recall) is persisted under
+    "workload_at_recall": precision / FP / analyst-workload-reduction at the
+    threshold that hits each target recall. The headline precision/recall/f1
+    above are still at the model's own default cut (nu / contamination =
+    0.05); this is the tuned-operating-point view that's comparable to the
+    classifier baselines.
+    """
+    if (metrics is None) == (seeds is None):
+        raise ValueError("pass exactly one of `metrics` or `seeds`")
+
+    keys = ("auc", "precision", "recall", "f1")
+    if seeds is not None:
+        if not seeds:
+            raise ValueError("`seeds` is empty")
+        agg = {k: float(sum(s[k] for s in seeds) / len(seeds)) for k in keys}
+    else:
+        agg = {k: float(metrics[k]) for k in keys}
+
     RESULTS_DIR.mkdir(exist_ok=True)
     out_path = RESULTS_DIR / f"{name}.json"
 
+    payload = {"name": name, "description": description, "kind": "anomaly", **agg}
+    if seeds is not None:
+        payload["seeds"] = [{k: float(s[k]) for k in keys} for s in seeds]
+    if workload is not None:
+        payload["workload_at_recall"] = workload
+
     with out_path.open("w", encoding="utf-8") as f:
-        json.dump(
-            {
-                "name": name,
-                "description": description,
-                "kind": "anomaly",
-                "auc": float(metrics["auc"]),
-                "precision": float(metrics["precision"]),
-                "recall": float(metrics["recall"]),
-                "f1": float(metrics["f1"]),
-            },
-            f,
-            indent=2,
-        )
+        json.dump(payload, f, indent=2)
     print(f"Results written to {out_path}")
     return out_path
 
@@ -147,3 +171,29 @@ def results_exist(name: str) -> bool:
     scripts/system_eval/run_model_comparison_attribute.py skips existing
     compare_*.json files unless --force is passed."""
     return (RESULTS_DIR / f"{name}.json").exists()
+
+
+def anomaly_results_current(name: str, *, require_seeds: bool = False) -> bool:
+    """Like results_exist(), but also checks the on-disk anomaly result is
+    in the *current* format so a resumed overnight run re-does combos left
+    over from an older run.
+
+    Current format = has `workload_at_recall` (the tuned-operating-point
+    view) and, when `require_seeds` (the IsolationForest scripts), a
+    non-trivial `seeds` list. A stale-format file returns False so the
+    caller recomputes it -- no need to hand-delete old JSONs or force a
+    full re-run.
+    """
+    path = RESULTS_DIR / f"{name}.json"
+    if not path.exists():
+        return False
+    try:
+        with path.open(encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return False
+    if "workload_at_recall" not in data:
+        return False
+    if require_seeds and len(data.get("seeds") or []) < 2:
+        return False
+    return True

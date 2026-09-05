@@ -12,9 +12,12 @@ project's own cscas_*.py baseline convention instead, the same way
 cscas_base.py/cscas_bert.py/cscas_zeroshot.py all do.
 
 No pool-condition loop, no seeds: anomaly detection doesn't need class
-balance (it's fit on benign rows only, natural count), and OneClassSVM has
-no random_state-driven variance worth averaging over -- same "single
-deterministic run" precedent as cscas_zeroshot.py.
+balance (it's fit on benign rows only, natural count), and OneClassSVM
+(kernel='rbf', nu=0.05) is a deterministic convex fit with no random_state
+-- there is genuinely nothing to average over, so its per-seed sd is
+exactly 0. The IsolationForest siblings (cscas_anomaly_iforest.py /
+cscas_mining_anomaly_iforest.py) DO run the 5-seed protocol the trainable
+baselines use, since tree bootstrapping is stochastic.
 
 Scoring convention (matches experiments/anomaly.py::_compute_anomaly_metrics):
   scores = -model.decision_function(X_test)   # higher = more anomalous
@@ -32,10 +35,13 @@ file's location), so it must be run from src/thesis/baselines/.
 
 import pandas as pd
 from sklearn.metrics import f1_score, precision_score, recall_score, roc_auc_score
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.svm import OneClassSVM
 
 from thesis.baselines._results import save_anomaly_results
 from thesis.baselines._sampling import get_cscas_eval_subsample
-from thesis.training.model_factory import get_model_factory
+from thesis.training.workload import compute_workload_at_recall
 
 print("Using device: cpu")
 
@@ -92,8 +98,13 @@ print(
     f"Evaluating on shared eval subsample: {len(eval_df)} rows, {int(eval_df['Label'].sum())} positive"
 )
 
-# 7) Fit + score
-model = get_model_factory("ocsvm")()
+# 7) Fit + score. Same estimator as model_factory's "ocsvm" (StandardScaler
+# + OneClassSVM(kernel='rbf', nu=0.05)) -- built inline so this script
+# doesn't pull in the classifier factory's heavier deps. Deterministic
+# convex fit, no random_state: a genuine single run.
+model = Pipeline(
+    [("scaler", StandardScaler()), ("clf", OneClassSVM(kernel="rbf", nu=0.05))]
+)
 model.fit(X_train)
 
 scores = -model.decision_function(X_test)  # higher = more anomalous
@@ -104,8 +115,20 @@ p = precision_score(y_test, y_pred, zero_division=0)
 r = recall_score(y_test, y_pred, zero_division=0)
 f = f1_score(y_test, y_pred, zero_division=0)
 
+# Tuned-operating-point view: precision / FP / analyst-workload-reduction at
+# the threshold that hits each target recall (default 0.90/0.95/0.99). The
+# default nu=0.05 cut caps precision because it flags ~3x the true 1.5%
+# attack prevalence -- this reports the model at a sensible cut instead.
+workload = compute_workload_at_recall(y_test, scores)
+
 print("\n=== cscas_anomaly_ocsvm ===")
-print(f"AUC={auc:.3f} P={p:.3f} R={r:.3f} F1={f:.3f}")
+print(f"AUC={auc:.3f} P={p:.3f} R={r:.3f} F1={f:.3f}  (default nu=0.05 cut)")
+if workload.get("0.90"):
+    w = workload["0.90"]
+    print(
+        f"  @recall>=0.90: P={w['precision']:.3f} FP={int(w['fp'])} "
+        f"workload_reduction={w['workload_reduction']:.3f}"
+    )
 
 save_anomaly_results(
     name="cscas_anomaly_ocsvm",
@@ -115,7 +138,10 @@ save_anomaly_results(
         "SCAS, and all Similarity columns removed, same as cscas_base.py), "
         "evaluated on the shared eval subsample. No attack rows used in "
         "training -- a workaround baseline for splits where train has zero "
-        "attack examples (see _ait_ads_data.py's AIT-ADS counterpart)."
+        "attack examples (see _ait_ads_data.py's AIT-ADS counterpart). "
+        "precision/recall/f1 are at the default nu=0.05 cut; "
+        "workload_at_recall is the tuned-threshold view."
     ),
     metrics={"auc": auc, "precision": p, "recall": r, "f1": f},
+    workload=workload,
 )

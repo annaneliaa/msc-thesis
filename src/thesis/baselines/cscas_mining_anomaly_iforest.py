@@ -1,41 +1,44 @@
 """
-Anomaly-detection counterpart to baselines/cscas_mining.py, and the mining
-sibling of baselines/cscas_anomaly.py: the same 5-feature reduced base
-schema extended with symbolic features mined by the attribute-mining
-pipeline (contrast-set + decision-tree rules) on the train split, but fit
-as a one-class OneClassSVM on benign-only rows instead of a
-RandomForestClassifier on a class-balanced pool.
+IsolationForest counterpart to baselines/cscas_mining_anomaly.py: the same
+5-feature reduced base schema extended with symbolic features mined by the
+attribute-mining pipeline (contrast-set + decision-tree rules) on the train
+split, but fit as a one-class IsolationForest on benign-only rows instead
+of a OneClassSVM.
+
+This is to cscas_mining_anomaly.py (OneClassSVM) what
+cscas_anomaly_iforest.py is to cscas_anomaly.py -- it isolates model
+choice within the anomaly-detector family for the *mining* scenario the
+same way, rather than treating "the mining anomaly baseline" as a single
+fixed model. Tree-based, so unlike OneClassSVM's model_factory entry
+"iforest" isn't wrapped in a StandardScaler Pipeline.
 
 Mining runs on the FULL train split (both classes) -- attack rows are still
 needed to mine informative attack-vs-benign contrast predicates, even
 though the model itself only ever fits on the benign subset of the
-resulting (base + mined) feature matrix afterwards. This mirrors
-cscas_mining.py's own mining step exactly (same LEAKY_ATTRIBUTE_FIELDS
-exclusion, same train split, same in-memory schema -- not the on-disk
-registry shared with real experiments on scenario "cscas").
+resulting (base + mined) feature matrix afterwards. Same
+LEAKY_ATTRIBUTE_FIELDS exclusion, same train split, same in-memory schema,
+same cache namespace as cscas_mining_anomaly.py, so the mined predicates
+are shared between the two scripts.
 
 No pool-condition loop, no seeds -- same "single deterministic run"
-precedent as cscas_anomaly.py (OneClassSVM is a deterministic convex fit,
-per-seed sd exactly 0). The IsolationForest sibling
-(cscas_mining_anomaly_iforest.py) runs the 5-seed protocol.
+precedent as cscas_anomaly.py / cscas_mining_anomaly.py. IsolationForest's
+own randomness is pinned by its fixed random_state=42 in model_factory.py.
 
-Scoring convention (matches cscas_anomaly.py / experiments/anomaly.py):
+Scoring convention (matches cscas_anomaly.py / cscas_mining_anomaly.py):
   scores = -model.decision_function(X_test)   # higher = more anomalous
   y_pred = (model.predict(X_test) == -1)      # 1 = anomaly = attack
 
 Run:
     cd src/thesis/baselines
-    python cscas_mining_anomaly.py
+    python cscas_mining_anomaly_iforest.py
 
 The data path below is relative to the current working directory (not this
 file's location), so it must be run from src/thesis/baselines/.
 """
 
 import pandas as pd
+from sklearn.ensemble import IsolationForest
 from sklearn.metrics import f1_score, precision_score, recall_score, roc_auc_score
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
-from sklearn.svm import OneClassSVM
 
 from thesis.baselines._results import save_anomaly_results
 from thesis.baselines._sampling import get_cscas_eval_subsample
@@ -46,7 +49,10 @@ from thesis.paths import CACHE_DIR
 from thesis.pipeline.pipeline import rows_to_cscas_alert_groups, save_alert_groups_json
 from thesis.schemas.mining import AttributeMiningConfig
 from thesis.schemas.preprocessing import ATTR_SIMILARITY_COLUMNS
-from thesis.training.workload import compute_workload_at_recall
+from thesis.training.workload import (
+    average_workload_at_recall,
+    compute_workload_at_recall,
+)
 
 print("Using device: cpu")
 
@@ -125,6 +131,8 @@ save_alert_groups_json(train_groups, train_alert_groups_path)
 # rows are needed to mine informative contrast predicates even though the
 # model below only ever fits on the benign subset), excluding SCAS/
 # Similarity-derived candidate fields -- same reasoning as cscas_mining.py.
+# Same run_name/config/exclude_fields as cscas_mining_anomaly.py, so the
+# mined predicates are cache-shared between the two scripts.
 LEAKY_ATTRIBUTE_FIELDS = {
     "scas",
     "similarity",
@@ -182,47 +190,62 @@ X_test = pd.concat(
 ).values
 y_test = eval_df["Label"].values
 
-# 9) Fit + score. Same estimator as model_factory's "ocsvm" (StandardScaler
-# + OneClassSVM(kernel='rbf', nu=0.05)), built inline to avoid the classifier
-# factory's heavier deps. Deterministic convex fit, no random_state.
-model = Pipeline(
-    [("scaler", StandardScaler()), ("clf", OneClassSVM(kernel="rbf", nu=0.05))]
+# 9) Fit + score -- 5 seeds, IsolationForest(random_state=seed), identical
+# (base + mined) benign training rows every seed (nothing to resample).
+# Also collect the tuned-operating-point view per seed, seed-averaged before
+# saving.
+seed_metrics: list[dict[str, float]] = []
+seed_workloads: list[dict] = []
+for seed in range(5):
+    model = IsolationForest(
+        n_estimators=100, contamination=0.05, random_state=seed, n_jobs=-1
+    )
+    model.fit(X_train)
+
+    scores = -model.decision_function(X_test)  # higher = more anomalous
+    y_pred = (model.predict(X_test) == -1).astype(int)  # 1 = anomaly = attack
+
+    m = {
+        "auc": roc_auc_score(y_test, scores),
+        "precision": precision_score(y_test, y_pred, zero_division=0),
+        "recall": recall_score(y_test, y_pred, zero_division=0),
+        "f1": f1_score(y_test, y_pred, zero_division=0),
+    }
+    seed_metrics.append(m)
+    seed_workloads.append(compute_workload_at_recall(y_test, scores))
+    print(
+        f"  seed={seed}: AUC={m['auc']:.3f} P={m['precision']:.3f} "
+        f"R={m['recall']:.3f} F1={m['f1']:.3f}"
+    )
+
+workload = average_workload_at_recall(seed_workloads)
+
+avg = pd.DataFrame(seed_metrics).mean()
+print("\n=== cscas_mining_anomaly_iforest (mean of 5 seeds) ===")
+print(
+    f"AUC={avg.auc:.3f} P={avg.precision:.3f} R={avg.recall:.3f} F1={avg.f1:.3f}  (default cut)"
 )
-model.fit(X_train)
-
-scores = -model.decision_function(X_test)  # higher = more anomalous
-y_pred = (model.predict(X_test) == -1).astype(int)  # 1 = anomaly = attack
-
-auc = roc_auc_score(y_test, scores)
-p = precision_score(y_test, y_pred, zero_division=0)
-r = recall_score(y_test, y_pred, zero_division=0)
-f = f1_score(y_test, y_pred, zero_division=0)
-
-# Tuned-operating-point view (see cscas_anomaly.py for the rationale):
-# precision / FP / workload-reduction at the threshold hitting each target
-# recall, not the default nu=0.05 cut.
-workload = compute_workload_at_recall(y_test, scores)
-
-print("\n=== cscas_mining_anomaly_ocsvm ===")
-print(f"AUC={auc:.3f} P={p:.3f} R={r:.3f} F1={f:.3f}  (default nu=0.05 cut)")
 if workload.get("0.90"):
     w = workload["0.90"]
     print(
-        f"  @recall>=0.90: P={w['precision']:.3f} FP={int(w['fp'])} "
+        f"  @recall>=0.90: P={w['precision']:.3f} FP={w['fp']:.0f} "
         f"workload_reduction={w['workload_reduction']:.3f}"
     )
 
 save_anomaly_results(
-    name="cscas_mining_anomaly_ocsvm",
+    name="cscas_mining_anomaly_iforest",
     description=(
-        "OneClassSVM(kernel='rbf', nu=0.05) fit on benign-only rows of "
-        "the base schema (5 features) + attribute-mined symbolic features "
-        "(contrast-set + decision-tree rules, mined on the same train "
-        "split as cscas_mining; SCAS/Similarity-derived fields excluded "
-        "from mining), evaluated on the shared eval subsample. No attack "
-        "rows used in training. precision/recall/f1 at the default nu=0.05 "
-        "cut; workload_at_recall is the tuned-threshold view."
+        "IsolationForest(n_estimators=100, contamination=0.05) fit on "
+        "benign-only rows of the base schema (5 features) + attribute-mined "
+        "symbolic features (contrast-set + decision-tree rules, mined on "
+        "the same train split as cscas_mining; SCAS/Similarity-derived "
+        "fields excluded from mining), evaluated on the shared eval "
+        "subsample. No attack rows used in training -- IsolationForest "
+        "sibling of cscas_mining_anomaly.py's OneClassSVM. Mean over 5 "
+        "seeds (random_state=0..4). precision/recall/f1 at the default "
+        "contamination=0.05 cut; workload_at_recall is the tuned-threshold "
+        "view (seed-averaged)."
     ),
-    metrics={"auc": auc, "precision": p, "recall": r, "f1": f},
+    seeds=seed_metrics,
     workload=workload,
 )
