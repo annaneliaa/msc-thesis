@@ -1,0 +1,173 @@
+\begin{table}[htbp]
+\centering
+\small
+\caption{AIT-ADS F1 by scenario, grouping \texttt{fixed\_window}. Trainable rows: seed-mean over 5 seeds, per training-pool condition; anomaly / zero-shot: single run, at the detector's default cut. A blank cell means that (scenario, grouping) produced no result (temporal-concentration or alertbert/deepcase leakage exclusion -- see the intro).}
+\label{tab:ait-ads-cross-fixed_window-f1}
+\resizebox{\ifdim\width>\linewidth\linewidth\else\width\fi}{!}{%
+\begin{tabular}{lllcccccccc}
+\toprule
+\textbf{Baseline} & \textbf{Model} & \textbf{Training} & \textbf{fox} & \textbf{harrison} & \textbf{russellmitchell} & \textbf{santos} & \textbf{shaw} & \textbf{wardbeck} & \textbf{wheeler} & \textbf{wilson} \\
+\midrule
+Internal system & LogReg & random & 0.727 &  &  &  & 0.011 & 0.004 & 0.679 & 0.043 \\
+ &  & class-weighted & 0.751 &  &  &  & 0.045 & 0.000 & 0.719 & 0.044 \\
+Internal system & RF & random & 0.522 &  &  &  & 0.000 & 0.000 & 0.000 & 0.442 \\
+ &  & class-weighted & 0.526 &  &  &  & 0.000 & 0.000 & 0.000 & 0.171 \\
+Internal system & XGBoost & random & 0.527 &  &  &  & 0.000 & 0.000 & 0.000 & 0.458 \\
+ &  & class-weighted & 0.495 &  &  &  & 0.000 & 0.000 & 0.000 & 0.181 \\
+\midrule
+Internal + mining & RF & random & 0.520 &  &  &  & 0.010 & 0.003 & 0.124 & 0.332 \\
+ &  & class-weighted & 0.528 &  &  &  & 0.000 & 0.000 & 0.000 & 0.171 \\
+Internal + mining & LogReg & random & 0.724 &  &  &  &  &  &  &  \\
+ &  & class-weighted & 0.715 &  &  &  &  &  &  &  \\
+Internal + mining & XGBoost & random & 0.529 &  &  &  &  &  &  &  \\
+ &  & class-weighted & 0.501 &  &  &  &  &  &  &  \\
+\midrule
+LLM (general) & DistilBERT & random & 0.522 &  &  &  & 0.016 & 0.055 & 0.046 & 0.581 \\
+ &  & class-weighted & 0.793 &  &  &  & 0.000 & 0.000 & 0.000 & 0.000 \\
+LLM (domain-specific) & SecureBERT 2.0 & random & 0.569 &  &  &  & 0.013 & 0.090 & 0.236 & 0.586 \\
+ &  & class-weighted & 0.795 &  &  &  & 0.000 & 0.000 & 0.000 & 0.000 \\
+\midrule
+Anomaly & OneClassSVM & benign-only & 0.564 & 0.541 & 0.245 & 0.136 & 0.149 & 0.211 & 0.688 & 0.714 \\
+Anomaly & IsolationForest & benign-only & 0.609 & 0.584 & 0.232 & 0.116 & 0.115 & 0.148 & 0.742 & 0.717 \\
+Anomaly + mining & OneClassSVM & benign-only & 0.589 & 0.541 & 0.245 & 0.136 & 0.159 & 0.172 & 0.682 & 0.719 \\
+Anomaly + mining & IsolationForest & benign-only & 0.544 & 0.582 & 0.234 & 0.111 & 0.116 & 0.162 & 0.741 & 0.715 \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{AIT-ADS F1 by scenario, grouping \texttt{time\_delta}. Trainable rows: seed-mean over 5 seeds, per training-pool condition; anomaly / zero-shot: single run, at the detector's default cut. A blank cell means that (scenario, grouping) produced no result (temporal-concentration or alertbert/deepcase leakage exclusion -- see the intro).}
+\label{tab:ait-ads-cross-time_delta-f1}
+\resizebox{\ifdim\width>\linewidth\linewidth\else\width\fi}{!}{%
+\begin{tabular}{lllcccccccc}
+\toprule
+\textbf{Baseline} & \textbf{Model} & \textbf{Training} & \textbf{fox} & \textbf{harrison} & \textbf{russellmitchell} & \textbf{santos} & \textbf{shaw} & \textbf{wardbeck} & \textbf{wheeler} & \textbf{wilson} \\
+\midrule
+Internal system & LogReg & random & 0.028 &  &  &  & 0.015 & 0.006 & 0.071 & 0.049 \\
+ &  & class-weighted & 0.026 &  &  &  & 0.015 & 0.000 & 0.059 & 0.049 \\
+Internal system & RF & random & 0.150 &  &  &  & 0.000 & 0.012 & 0.008 & 0.252 \\
+ &  & class-weighted & 0.141 &  &  &  & 0.000 & 0.000 & 0.000 & 0.232 \\
+Internal system & XGBoost & random & 0.169 &  &  &  & 0.000 & 0.000 & 0.000 & 0.267 \\
+ &  & class-weighted & 0.149 &  &  &  & 0.000 & 0.000 & 0.000 & 0.238 \\
+\midrule
+Internal + mining & RF & random & 0.142 &  &  &  & 0.000 & 0.021 & 0.026 & 0.245 \\
+ &  & class-weighted & 0.132 &  &  &  & 0.000 & 0.000 & 0.000 & 0.233 \\
+\midrule
+LLM (general) & DistilBERT & random & 0.091 &  &  &  & 0.048 & 0.044 & 0.012 & 0.250 \\
+ &  & class-weighted & 0.000 &  &  &  & 0.000 & 0.000 & 0.000 & 0.000 \\
+LLM (domain-specific) & SecureBERT 2.0 & random & 0.087 &  &  &  & 0.033 & 0.065 & 0.009 & 0.250 \\
+ &  & class-weighted & 0.000 &  &  &  & 0.000 & 0.000 & 0.000 & 0.058 \\
+\midrule
+Anomaly & OneClassSVM & benign-only & 0.093 & 0.110 & 0.135 & 0.088 & 0.106 & 0.133 & 0.078 & 0.063 \\
+Anomaly & IsolationForest & benign-only & 0.077 & 0.153 & 0.122 & 0.089 & 0.082 & 0.078 & 0.056 & 0.043 \\
+Anomaly + mining & OneClassSVM & benign-only & 0.057 & 0.110 & 0.135 & 0.088 & 0.114 & 0.074 & 0.059 & 0.043 \\
+Anomaly + mining & IsolationForest & benign-only & 0.065 & 0.149 & 0.122 & 0.083 & 0.073 & 0.077 & 0.052 & 0.047 \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{AIT-ADS F1 by scenario, grouping \texttt{cscas\_grouping}. Trainable rows: seed-mean over 5 seeds, per training-pool condition; anomaly / zero-shot: single run, at the detector's default cut. A blank cell means that (scenario, grouping) produced no result (temporal-concentration or alertbert/deepcase leakage exclusion -- see the intro).}
+\label{tab:ait-ads-cross-cscas_grouping-f1}
+\resizebox{\ifdim\width>\linewidth\linewidth\else\width\fi}{!}{%
+\begin{tabular}{lllcccccccc}
+\toprule
+\textbf{Baseline} & \textbf{Model} & \textbf{Training} & \textbf{fox} & \textbf{harrison} & \textbf{russellmitchell} & \textbf{santos} & \textbf{shaw} & \textbf{wardbeck} & \textbf{wheeler} & \textbf{wilson} \\
+\midrule
+Internal system & LogReg & random &  &  &  &  & 0.072 & 0.125 & 0.066 & 0.117 \\
+ &  & class-weighted &  &  &  &  & 0.080 & 0.128 & 0.060 & 0.120 \\
+Internal system & RF & random &  &  &  &  & 0.068 & 0.133 & 0.066 & 0.132 \\
+ &  & class-weighted &  &  &  &  & 0.067 & 0.134 & 0.064 & 0.120 \\
+Internal system & XGBoost & random &  &  &  &  & 0.076 & 0.131 & 0.066 & 0.136 \\
+ &  & class-weighted &  &  &  &  & 0.066 & 0.134 & 0.063 & 0.119 \\
+\midrule
+Internal + mining & RF & random &  &  &  &  & 0.067 & 0.129 & 0.067 & 0.131 \\
+ &  & class-weighted &  &  &  &  & 0.067 & 0.134 & 0.064 & 0.120 \\
+\midrule
+LLM (general) & DistilBERT & random &  &  &  &  & 0.047 & 0.054 & 0.105 & 0.498 \\
+ &  & class-weighted &  &  &  &  & 0.000 & 0.000 & 0.000 & 0.000 \\
+LLM (domain-specific) & SecureBERT 2.0 & random &  &  &  &  & 0.050 & 0.108 & 0.093 & 0.484 \\
+ &  & class-weighted &  &  &  &  & 0.000 & 0.000 & 0.000 & 0.000 \\
+\midrule
+Anomaly & OneClassSVM & benign-only & 0.194 & 0.179 & 0.079 & 0.058 & 0.109 & 0.057 & 0.174 & 0.163 \\
+Anomaly & IsolationForest & benign-only & 0.273 & 0.192 & 0.077 & 0.089 & 0.096 & 0.038 & 0.177 & 0.170 \\
+Anomaly + mining & OneClassSVM & benign-only & 0.216 & 0.179 & 0.079 & 0.058 & 0.063 & 0.115 & 0.087 & 0.134 \\
+Anomaly + mining & IsolationForest & benign-only & 0.273 & 0.192 & 0.081 & 0.087 & 0.077 & 0.073 & 0.169 & 0.166 \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{AIT-ADS F1 by scenario, grouping \texttt{alertbert}. Trainable rows: seed-mean over 5 seeds, per training-pool condition; anomaly / zero-shot: single run, at the detector's default cut. A blank cell means that (scenario, grouping) produced no result (temporal-concentration or alertbert/deepcase leakage exclusion -- see the intro).}
+\label{tab:ait-ads-cross-alertbert-f1}
+\resizebox{\ifdim\width>\linewidth\linewidth\else\width\fi}{!}{%
+\begin{tabular}{lllcccc}
+\toprule
+\textbf{Baseline} & \textbf{Model} & \textbf{Training} & \textbf{fox} & \textbf{harrison} & \textbf{russellmitchell} & \textbf{santos} \\
+\midrule
+Internal system & LogReg & random & 0.635 &  &  &  \\
+ &  & class-weighted & 0.634 &  &  &  \\
+Internal system & RF & random & 0.864 &  &  &  \\
+ &  & class-weighted & 0.865 &  &  &  \\
+Internal system & XGBoost & random & 0.862 &  &  &  \\
+ &  & class-weighted & 0.864 &  &  &  \\
+\midrule
+Internal + mining & RF & random & 0.865 &  &  &  \\
+ &  & class-weighted & 0.866 &  &  &  \\
+\midrule
+LLM (general) & DistilBERT & random & 0.826 &  &  &  \\
+ &  & class-weighted & 0.908 &  &  &  \\
+LLM (domain-specific) & SecureBERT 2.0 & random & 0.839 &  &  &  \\
+ &  & class-weighted & 0.906 &  &  &  \\
+\midrule
+Anomaly & OneClassSVM & benign-only & 0.661 & 0.502 & 0.220 & 0.080 \\
+Anomaly & IsolationForest & benign-only & 0.571 & 0.531 & 0.207 & 0.117 \\
+Anomaly + mining & OneClassSVM & benign-only & 0.653 & 0.502 & 0.220 & 0.080 \\
+Anomaly + mining & IsolationForest & benign-only & 0.363 & 0.532 & 0.208 & 0.111 \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{AIT-ADS F1 by scenario, grouping \texttt{deepcase}. Trainable rows: seed-mean over 5 seeds, per training-pool condition; anomaly / zero-shot: single run, at the detector's default cut. A blank cell means that (scenario, grouping) produced no result (temporal-concentration or alertbert/deepcase leakage exclusion -- see the intro).}
+\label{tab:ait-ads-cross-deepcase-f1}
+\resizebox{\ifdim\width>\linewidth\linewidth\else\width\fi}{!}{%
+\begin{tabular}{lllccc}
+\toprule
+\textbf{Baseline} & \textbf{Model} & \textbf{Training} & \textbf{fox} & \textbf{harrison} & \textbf{russellmitchell} \\
+\midrule
+Internal system & LogReg & random & 0.659 &  & 0.915 \\
+ &  & class-weighted & 0.661 &  & 0.862 \\
+Internal system & RF & random & 0.976 &  & 0.936 \\
+ &  & class-weighted & 0.976 &  & 0.881 \\
+Internal system & XGBoost & random & 0.976 &  & 0.919 \\
+ &  & class-weighted & 0.977 &  & 0.892 \\
+\midrule
+Internal + mining & RF & random & 0.977 &  & 0.930 \\
+ &  & class-weighted & 0.976 &  & 0.878 \\
+\midrule
+LLM (general) & DistilBERT & random & 0.985 &  & 0.629 \\
+ &  & class-weighted & 0.983 &  & 0.891 \\
+LLM (domain-specific) & SecureBERT 2.0 & random & 0.982 &  & 0.723 \\
+ &  & class-weighted & 0.983 &  & 0.865 \\
+\midrule
+Anomaly & OneClassSVM & benign-only & 0.659 & 0.798 & 0.490 \\
+Anomaly & IsolationForest & benign-only & 0.693 & 0.803 & 0.543 \\
+Anomaly + mining & OneClassSVM & benign-only & 0.695 & 0.798 & 0.565 \\
+Anomaly + mining & IsolationForest & benign-only & 0.710 & 0.805 & 0.492 \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}

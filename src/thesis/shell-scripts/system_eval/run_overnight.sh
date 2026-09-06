@@ -4,7 +4,7 @@
 # Experiment 4 (run_monitor_drift.sh) back-to-back, unattended -- so both
 # can be kicked off before bed instead of babysitting the first one to
 # finish before manually starting the second. The two are independent (both
-# just cross feasible_configs_all.csv x GRANULARITIES on their own), so a
+# just cross the mining-settings grid x GRANULARITIES on their own), so a
 # failure in the first doesn't block the second -- this script runs every
 # step regardless and reports failures at the end. Doesn't touch
 # run_temporal_decay.sh (Experiment 2) -- start/queue that separately if

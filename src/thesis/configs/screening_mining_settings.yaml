@@ -1,33 +1,35 @@
-# Named (mining_setting x granularity) axis for the in-window screening sweep
-# (src/thesis/experiments/screening_sweep.py). Each entry is one point in
-# the (mining_setting x granularity) grid: a name plus overrides for the
+# THE downstream parameter grid. Each entry is one named point in the
+# (mining_setting x granularity) grid: a name plus overrides for the
 # two-stage attribute mining pipeline's thresholds (contrast-set filter +
 # decision-tree rule extraction -- see schemas.mining.AttributeMiningConfig).
 # Fields left out fall back to AttributeMiningConfig's defaults.
 #
-# This is the SHORTLIST from attribute_mining_sweep_eda.ipynb's two-tree
-# feasible-region analysis (section 5.3), not a fresh grid search -- every
-# entry below already clears both quality floors on the mining-structural
-# metrics alone (mean_tree_precision_attack >= 0.65, mean_tree_recall_benign
-# >= 0.5), exported to
-# artifacts/experiments/attribute_mining_parameter_grid/feasible_configs_all.csv.
-# Promoting them here runs each through the REAL evaluation pipeline (screening
-# models, not just leaf-level precision/recall) to see which structural passes
-# hold up. This replaces the old single-tree min_growth_rate x max_depth grid
-# (mirrored from shell-scripts/sweep_attribute_schema.sh) -- that grid predates
-# the two-tree redesign (DecisionTreeRuleConfig.max_depth_attack /
-# ContrastSetFilterConfig.min_growth_rate_attack) and is no longer representative
-# of how this pipeline mines.
+# This file is the single input to every system-eval experiment that takes a
+# mining grid:
+#   - run_screening_sweep.py          (in-window screening)
+#   - run_temporal_decay.py           (Exp 2, rolling-horizon decay)
+#   - run_rolling_walk_forward.py     (Exp 3, always-retrain anchor)
+#   - run_monitor_drift.py            (Exp 4, drift monitor, observe-only)
+# Each of those crosses every entry here with its own --granularities x
+# --models (+ a baseline row per granularity). There is no intermediate
+# feasible-config CSV and no separate real-evaluation ranking step -- to
+# change what those experiments evaluate, edit this file.
 #
-# max_depth=2 entries (md2_*) passed the recall_benign floor only narrowly and
-# with much higher across-window variance than max_depth=1 (0.546, std 0.123 vs.
-# 0.988-0.990, std 0.005 -- see the notebook's section 5.3 addendum) -- kept in
-# the shortlist rather than pre-filtered out, since that's exactly the kind of
-# near-miss this real evaluation pass should be the one to confirm or reject.
+# The current entries are the two-tree feasible set from
+# attribute_mining_sweep_eda.ipynb (section 5.3 / 6.3): max_depth in {1,2} x
+# max_depth_attack in {2,3,4} at the growth_rate=3 / coverage=0.05 /
+# class_weight=balanced anchor -- every one clears both mining-structural
+# floors (mean_tree_precision_attack >= 0.65, mean_tree_recall_benign >= 0.5).
+# The max_depth=2 entries (md2_*) clear the recall_benign floor only narrowly
+# and with much higher across-window variance (0.546, std 0.123 vs. 0.99, std
+# 0.005 -- section 5.3 addendum) -- kept in the grid rather than pre-filtered
+# out, since the real evaluation is the right place to confirm or reject that
+# near-miss.
 #
-# Granularity (that script's MINE_FRACS) is the sweep's other, separate axis --
-# pass it via run_screening_sweep.py's --granularities, not here, e.g.:
-#   --granularities 0.1 0.2 0.33 0.5 1.0
+# min_samples_leaf is 10 (EDA section 5.4: +0.02-0.03 precision_attack over 20
+# at no other cost). The mining-sweep script keeps its own anchor at 20 -- msl
+# is ~inert on every other axis there, and the sweep mines through a different
+# cache key than these experiments, so the two need not match.
 
 settings:
   - name: gr3_md1_mda2
@@ -39,7 +41,7 @@ settings:
       max_depth: 1
       max_depth_attack: 2
       class_weight: "balanced"
-      min_samples_leaf: 20
+      min_samples_leaf: 10
 
   - name: gr3_md1_mda3
     contrast:
@@ -50,7 +52,7 @@ settings:
       max_depth: 1
       max_depth_attack: 3
       class_weight: "balanced"
-      min_samples_leaf: 20
+      min_samples_leaf: 10
 
   - name: gr3_md1_mda4
     contrast:
@@ -61,7 +63,7 @@ settings:
       max_depth: 1
       max_depth_attack: 4
       class_weight: "balanced"
-      min_samples_leaf: 20
+      min_samples_leaf: 10
 
   - name: gr3_md2_mda2
     contrast:
@@ -72,7 +74,7 @@ settings:
       max_depth: 2
       max_depth_attack: 2
       class_weight: "balanced"
-      min_samples_leaf: 20
+      min_samples_leaf: 10
 
   - name: gr3_md2_mda3
     contrast:
@@ -83,7 +85,7 @@ settings:
       max_depth: 2
       max_depth_attack: 3
       class_weight: "balanced"
-      min_samples_leaf: 20
+      min_samples_leaf: 10
 
   - name: gr3_md2_mda4
     contrast:
@@ -94,4 +96,4 @@ settings:
       max_depth: 2
       max_depth_attack: 4
       class_weight: "balanced"
-      min_samples_leaf: 20
+      min_samples_leaf: 10

@@ -1,0 +1,739 @@
+\begin{table}[htbp]
+\centering
+\small
+\caption{AIT-ADS F1 for scenario \texttt{fox} -- every (baseline, model, training condition, grouping method) that produced a result. Split is the fixed last-30\%-of-timeline chronological cut (train / test fraction, with alert\_group counts where the grouping cache is local). alertbert / deepcase are restricted to fox / russellmitchell (held out of the learned groupers' training). Anomaly rows are at the default $\nu$ / contamination cut.}
+\label{tab:ait-ads-per-scenario-fox-f1}
+\resizebox{\ifdim\width>\linewidth\linewidth\else\width\fi}{!}{%
+\begin{tabular}{lllllc}
+\toprule
+\textbf{Baseline} & \textbf{Model} & \textbf{Training} & \textbf{Grouping} & \textbf{Split (tr/te)} & \textbf{F1} \\
+\midrule
+Internal system & LogReg & random & fixed\_window & 0.70 / 0.30 (7216 / 3094) & 0.727 \\
+ &  &  & time\_delta & 0.70 / 0.30 (5840 / 2504) & 0.028 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (4264 / 1828) &  \\
+ &  &  & alertbert & 0.70 / 0.30 & 0.635 \\
+ &  &  & deepcase & 0.70 / 0.30 & 0.659 \\
+\addlinespace
+Internal system & LogReg & class-weighted & fixed\_window & 0.70 / 0.30 (7216 / 3094) & 0.751 \\
+ &  &  & time\_delta & 0.70 / 0.30 (5840 / 2504) & 0.026 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (4264 / 1828) &  \\
+ &  &  & alertbert & 0.70 / 0.30 & 0.634 \\
+ &  &  & deepcase & 0.70 / 0.30 & 0.661 \\
+\addlinespace
+Internal system & RF & random & fixed\_window & 0.70 / 0.30 (7216 / 3094) & 0.522 \\
+ &  &  & time\_delta & 0.70 / 0.30 (5840 / 2504) & 0.150 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (4264 / 1828) &  \\
+ &  &  & alertbert & 0.70 / 0.30 & 0.864 \\
+ &  &  & deepcase & 0.70 / 0.30 & 0.976 \\
+\addlinespace
+Internal system & RF & class-weighted & fixed\_window & 0.70 / 0.30 (7216 / 3094) & 0.526 \\
+ &  &  & time\_delta & 0.70 / 0.30 (5840 / 2504) & 0.141 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (4264 / 1828) &  \\
+ &  &  & alertbert & 0.70 / 0.30 & 0.865 \\
+ &  &  & deepcase & 0.70 / 0.30 & 0.976 \\
+\addlinespace
+Internal system & XGBoost & random & fixed\_window & 0.70 / 0.30 (7216 / 3094) & 0.527 \\
+ &  &  & time\_delta & 0.70 / 0.30 (5840 / 2504) & 0.169 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (4264 / 1828) &  \\
+ &  &  & alertbert & 0.70 / 0.30 & 0.862 \\
+ &  &  & deepcase & 0.70 / 0.30 & 0.976 \\
+\addlinespace
+Internal system & XGBoost & class-weighted & fixed\_window & 0.70 / 0.30 (7216 / 3094) & 0.495 \\
+ &  &  & time\_delta & 0.70 / 0.30 (5840 / 2504) & 0.149 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (4264 / 1828) &  \\
+ &  &  & alertbert & 0.70 / 0.30 & 0.864 \\
+ &  &  & deepcase & 0.70 / 0.30 & 0.977 \\
+\midrule
+Internal + mining & RF & random & fixed\_window & 0.70 / 0.30 (7216 / 3094) & 0.520 \\
+ &  &  & time\_delta & 0.70 / 0.30 (5840 / 2504) & 0.142 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (4264 / 1828) &  \\
+ &  &  & alertbert & 0.70 / 0.30 & 0.865 \\
+ &  &  & deepcase & 0.70 / 0.30 & 0.977 \\
+\addlinespace
+Internal + mining & RF & class-weighted & fixed\_window & 0.70 / 0.30 (7216 / 3094) & 0.528 \\
+ &  &  & time\_delta & 0.70 / 0.30 (5840 / 2504) & 0.132 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (4264 / 1828) &  \\
+ &  &  & alertbert & 0.70 / 0.30 & 0.866 \\
+ &  &  & deepcase & 0.70 / 0.30 & 0.976 \\
+\addlinespace
+Internal + mining & LogReg & random & fixed\_window & 0.70 / 0.30 (7216 / 3094) & 0.724 \\
+ &  &  & time\_delta & 0.70 / 0.30 (5840 / 2504) & 0.024 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (4264 / 1828) &  \\
+ &  &  & alertbert & 0.70 / 0.30 & 0.623 \\
+ &  &  & deepcase & 0.70 / 0.30 & 0.702 \\
+\addlinespace
+Internal + mining & LogReg & class-weighted & fixed\_window & 0.70 / 0.30 (7216 / 3094) & 0.715 \\
+ &  &  & time\_delta & 0.70 / 0.30 (5840 / 2504) & 0.022 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (4264 / 1828) &  \\
+ &  &  & alertbert & 0.70 / 0.30 & 0.626 \\
+ &  &  & deepcase & 0.70 / 0.30 & 0.700 \\
+\addlinespace
+Internal + mining & XGBoost & random & fixed\_window & 0.70 / 0.30 (7216 / 3094) & 0.529 \\
+ &  &  & time\_delta & 0.70 / 0.30 (5840 / 2504) & 0.169 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (4264 / 1828) &  \\
+ &  &  & alertbert & 0.70 / 0.30 & 0.861 \\
+ &  &  & deepcase & 0.70 / 0.30 & 0.977 \\
+\addlinespace
+Internal + mining & XGBoost & class-weighted & fixed\_window & 0.70 / 0.30 (7216 / 3094) & 0.501 \\
+ &  &  & time\_delta & 0.70 / 0.30 (5840 / 2504) & 0.149 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (4264 / 1828) &  \\
+ &  &  & alertbert & 0.70 / 0.30 & 0.863 \\
+ &  &  & deepcase & 0.70 / 0.30 & 0.977 \\
+\midrule
+LLM (general) & DistilBERT & random & fixed\_window & 0.70 / 0.30 (7216 / 3094) & 0.522 \\
+ &  &  & time\_delta & 0.70 / 0.30 (5840 / 2504) & 0.091 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (4264 / 1828) &  \\
+ &  &  & alertbert & 0.70 / 0.30 & 0.826 \\
+ &  &  & deepcase & 0.70 / 0.30 & 0.985 \\
+\addlinespace
+LLM (general) & DistilBERT & class-weighted & fixed\_window & 0.70 / 0.30 (7216 / 3094) & 0.793 \\
+ &  &  & time\_delta & 0.70 / 0.30 (5840 / 2504) & 0.000 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (4264 / 1828) &  \\
+ &  &  & alertbert & 0.70 / 0.30 & 0.908 \\
+ &  &  & deepcase & 0.70 / 0.30 & 0.983 \\
+\addlinespace
+LLM (domain-specific) & SecureBERT 2.0 & random & fixed\_window & 0.70 / 0.30 (7216 / 3094) & 0.569 \\
+ &  &  & time\_delta & 0.70 / 0.30 (5840 / 2504) & 0.087 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (4264 / 1828) &  \\
+ &  &  & alertbert & 0.70 / 0.30 & 0.839 \\
+ &  &  & deepcase & 0.70 / 0.30 & 0.982 \\
+\addlinespace
+LLM (domain-specific) & SecureBERT 2.0 & class-weighted & fixed\_window & 0.70 / 0.30 (7216 / 3094) & 0.795 \\
+ &  &  & time\_delta & 0.70 / 0.30 (5840 / 2504) & 0.000 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (4264 / 1828) &  \\
+ &  &  & alertbert & 0.70 / 0.30 & 0.906 \\
+ &  &  & deepcase & 0.70 / 0.30 & 0.983 \\
+\addlinespace
+LLM (zero-shot) & Llama-3.1-8B & none & fixed\_window & 0.70 / 0.30 (7216 / 3094) & 0.431 \\
+ &  &  & time\_delta & 0.70 / 0.30 (5840 / 2504) & 0.068 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (4264 / 1828) &  \\
+ &  &  & alertbert & 0.70 / 0.30 &  \\
+ &  &  & deepcase & 0.70 / 0.30 &  \\
+\midrule
+Anomaly & OneClassSVM & benign-only & fixed\_window & 0.70 / 0.30 (7216 / 3094) & 0.564 \\
+ &  &  & time\_delta & 0.70 / 0.30 (5840 / 2504) & 0.093 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (4264 / 1828) & 0.194 \\
+ &  &  & alertbert & 0.70 / 0.30 & 0.661 \\
+ &  &  & deepcase & 0.70 / 0.30 & 0.659 \\
+\addlinespace
+Anomaly & IsolationForest & benign-only & fixed\_window & 0.70 / 0.30 (7216 / 3094) & 0.609 \\
+ &  &  & time\_delta & 0.70 / 0.30 (5840 / 2504) & 0.077 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (4264 / 1828) & 0.273 \\
+ &  &  & alertbert & 0.70 / 0.30 & 0.571 \\
+ &  &  & deepcase & 0.70 / 0.30 & 0.693 \\
+\addlinespace
+Anomaly + mining & OneClassSVM & benign-only & fixed\_window & 0.70 / 0.30 (7216 / 3094) & 0.589 \\
+ &  &  & time\_delta & 0.70 / 0.30 (5840 / 2504) & 0.057 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (4264 / 1828) & 0.216 \\
+ &  &  & alertbert & 0.70 / 0.30 & 0.653 \\
+ &  &  & deepcase & 0.70 / 0.30 & 0.695 \\
+\addlinespace
+Anomaly + mining & IsolationForest & benign-only & fixed\_window & 0.70 / 0.30 (7216 / 3094) & 0.544 \\
+ &  &  & time\_delta & 0.70 / 0.30 (5840 / 2504) & 0.065 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (4264 / 1828) & 0.273 \\
+ &  &  & alertbert & 0.70 / 0.30 & 0.363 \\
+ &  &  & deepcase & 0.70 / 0.30 & 0.710 \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{AIT-ADS F1 for scenario \texttt{harrison} -- every (baseline, model, training condition, grouping method) that produced a result. Split is the fixed last-30\%-of-timeline chronological cut (train / test fraction, with alert\_group counts where the grouping cache is local). alertbert / deepcase are restricted to fox / russellmitchell (held out of the learned groupers' training). Anomaly rows are at the default $\nu$ / contamination cut.}
+\label{tab:ait-ads-per-scenario-harrison-f1}
+\resizebox{\ifdim\width>\linewidth\linewidth\else\width\fi}{!}{%
+\begin{tabular}{lllllc}
+\toprule
+\textbf{Baseline} & \textbf{Model} & \textbf{Training} & \textbf{Grouping} & \textbf{Split (tr/te)} & \textbf{F1} \\
+\midrule
+LLM (zero-shot) & Llama-3.1-8B & none & fixed\_window & 0.70 / 0.30 (24215 / 10379) & 0.551 \\
+ &  &  & time\_delta & 0.70 / 0.30 (21284 / 9123) & 0.143 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (11203 / 4802) &  \\
+\midrule
+Anomaly & OneClassSVM & benign-only & fixed\_window & 0.70 / 0.30 (24215 / 10379) & 0.541 \\
+ &  &  & time\_delta & 0.70 / 0.30 (21284 / 9123) & 0.110 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (11203 / 4802) & 0.179 \\
+\addlinespace
+Anomaly & IsolationForest & benign-only & fixed\_window & 0.70 / 0.30 (24215 / 10379) & 0.584 \\
+ &  &  & time\_delta & 0.70 / 0.30 (21284 / 9123) & 0.153 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (11203 / 4802) & 0.192 \\
+\addlinespace
+Anomaly + mining & OneClassSVM & benign-only & fixed\_window & 0.70 / 0.30 (24215 / 10379) & 0.541 \\
+ &  &  & time\_delta & 0.70 / 0.30 (21284 / 9123) & 0.110 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (11203 / 4802) & 0.179 \\
+\addlinespace
+Anomaly + mining & IsolationForest & benign-only & fixed\_window & 0.70 / 0.30 (24215 / 10379) & 0.582 \\
+ &  &  & time\_delta & 0.70 / 0.30 (21284 / 9123) & 0.149 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (11203 / 4802) & 0.192 \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{AIT-ADS F1 for scenario \texttt{russellmitchell} -- every (baseline, model, training condition, grouping method) that produced a result. Split is the fixed last-30\%-of-timeline chronological cut (train / test fraction, with alert\_group counts where the grouping cache is local). alertbert / deepcase are restricted to fox / russellmitchell (held out of the learned groupers' training). Anomaly rows are at the default $\nu$ / contamination cut.}
+\label{tab:ait-ads-per-scenario-russellmitchell-f1}
+\resizebox{\ifdim\width>\linewidth\linewidth\else\width\fi}{!}{%
+\begin{tabular}{lllllc}
+\toprule
+\textbf{Baseline} & \textbf{Model} & \textbf{Training} & \textbf{Grouping} & \textbf{Split (tr/te)} & \textbf{F1} \\
+\midrule
+Internal system & LogReg & random & fixed\_window & 0.70 / 0.30 (3915 / 1678) &  \\
+ &  &  & time\_delta & 0.70 / 0.30 (3372 / 1446) &  \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (3150 / 1350) &  \\
+ &  &  & alertbert & 0.70 / 0.30 &  \\
+ &  &  & deepcase & 0.70 / 0.30 & 0.915 \\
+\addlinespace
+Internal system & LogReg & class-weighted & fixed\_window & 0.70 / 0.30 (3915 / 1678) &  \\
+ &  &  & time\_delta & 0.70 / 0.30 (3372 / 1446) &  \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (3150 / 1350) &  \\
+ &  &  & alertbert & 0.70 / 0.30 &  \\
+ &  &  & deepcase & 0.70 / 0.30 & 0.862 \\
+\addlinespace
+Internal system & RF & random & fixed\_window & 0.70 / 0.30 (3915 / 1678) &  \\
+ &  &  & time\_delta & 0.70 / 0.30 (3372 / 1446) &  \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (3150 / 1350) &  \\
+ &  &  & alertbert & 0.70 / 0.30 &  \\
+ &  &  & deepcase & 0.70 / 0.30 & 0.936 \\
+\addlinespace
+Internal system & RF & class-weighted & fixed\_window & 0.70 / 0.30 (3915 / 1678) &  \\
+ &  &  & time\_delta & 0.70 / 0.30 (3372 / 1446) &  \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (3150 / 1350) &  \\
+ &  &  & alertbert & 0.70 / 0.30 &  \\
+ &  &  & deepcase & 0.70 / 0.30 & 0.881 \\
+\addlinespace
+Internal system & XGBoost & random & fixed\_window & 0.70 / 0.30 (3915 / 1678) &  \\
+ &  &  & time\_delta & 0.70 / 0.30 (3372 / 1446) &  \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (3150 / 1350) &  \\
+ &  &  & alertbert & 0.70 / 0.30 &  \\
+ &  &  & deepcase & 0.70 / 0.30 & 0.919 \\
+\addlinespace
+Internal system & XGBoost & class-weighted & fixed\_window & 0.70 / 0.30 (3915 / 1678) &  \\
+ &  &  & time\_delta & 0.70 / 0.30 (3372 / 1446) &  \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (3150 / 1350) &  \\
+ &  &  & alertbert & 0.70 / 0.30 &  \\
+ &  &  & deepcase & 0.70 / 0.30 & 0.892 \\
+\midrule
+Internal + mining & RF & random & fixed\_window & 0.70 / 0.30 (3915 / 1678) &  \\
+ &  &  & time\_delta & 0.70 / 0.30 (3372 / 1446) &  \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (3150 / 1350) &  \\
+ &  &  & alertbert & 0.70 / 0.30 &  \\
+ &  &  & deepcase & 0.70 / 0.30 & 0.930 \\
+\addlinespace
+Internal + mining & RF & class-weighted & fixed\_window & 0.70 / 0.30 (3915 / 1678) &  \\
+ &  &  & time\_delta & 0.70 / 0.30 (3372 / 1446) &  \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (3150 / 1350) &  \\
+ &  &  & alertbert & 0.70 / 0.30 &  \\
+ &  &  & deepcase & 0.70 / 0.30 & 0.878 \\
+\addlinespace
+Internal + mining & LogReg & random & fixed\_window & 0.70 / 0.30 (3915 / 1678) &  \\
+ &  &  & time\_delta & 0.70 / 0.30 (3372 / 1446) &  \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (3150 / 1350) &  \\
+ &  &  & alertbert & 0.70 / 0.30 &  \\
+ &  &  & deepcase & 0.70 / 0.30 & 0.897 \\
+\addlinespace
+Internal + mining & LogReg & class-weighted & fixed\_window & 0.70 / 0.30 (3915 / 1678) &  \\
+ &  &  & time\_delta & 0.70 / 0.30 (3372 / 1446) &  \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (3150 / 1350) &  \\
+ &  &  & alertbert & 0.70 / 0.30 &  \\
+ &  &  & deepcase & 0.70 / 0.30 & 0.841 \\
+\addlinespace
+Internal + mining & XGBoost & random & fixed\_window & 0.70 / 0.30 (3915 / 1678) &  \\
+ &  &  & time\_delta & 0.70 / 0.30 (3372 / 1446) &  \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (3150 / 1350) &  \\
+ &  &  & alertbert & 0.70 / 0.30 &  \\
+ &  &  & deepcase & 0.70 / 0.30 & 0.928 \\
+\addlinespace
+Internal + mining & XGBoost & class-weighted & fixed\_window & 0.70 / 0.30 (3915 / 1678) &  \\
+ &  &  & time\_delta & 0.70 / 0.30 (3372 / 1446) &  \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (3150 / 1350) &  \\
+ &  &  & alertbert & 0.70 / 0.30 &  \\
+ &  &  & deepcase & 0.70 / 0.30 & 0.892 \\
+\midrule
+LLM (general) & DistilBERT & random & fixed\_window & 0.70 / 0.30 (3915 / 1678) &  \\
+ &  &  & time\_delta & 0.70 / 0.30 (3372 / 1446) &  \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (3150 / 1350) &  \\
+ &  &  & alertbert & 0.70 / 0.30 &  \\
+ &  &  & deepcase & 0.70 / 0.30 & 0.629 \\
+\addlinespace
+LLM (general) & DistilBERT & class-weighted & fixed\_window & 0.70 / 0.30 (3915 / 1678) &  \\
+ &  &  & time\_delta & 0.70 / 0.30 (3372 / 1446) &  \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (3150 / 1350) &  \\
+ &  &  & alertbert & 0.70 / 0.30 &  \\
+ &  &  & deepcase & 0.70 / 0.30 & 0.891 \\
+\addlinespace
+LLM (domain-specific) & SecureBERT 2.0 & random & fixed\_window & 0.70 / 0.30 (3915 / 1678) &  \\
+ &  &  & time\_delta & 0.70 / 0.30 (3372 / 1446) &  \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (3150 / 1350) &  \\
+ &  &  & alertbert & 0.70 / 0.30 &  \\
+ &  &  & deepcase & 0.70 / 0.30 & 0.723 \\
+\addlinespace
+LLM (domain-specific) & SecureBERT 2.0 & class-weighted & fixed\_window & 0.70 / 0.30 (3915 / 1678) &  \\
+ &  &  & time\_delta & 0.70 / 0.30 (3372 / 1446) &  \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (3150 / 1350) &  \\
+ &  &  & alertbert & 0.70 / 0.30 &  \\
+ &  &  & deepcase & 0.70 / 0.30 & 0.865 \\
+\addlinespace
+LLM (zero-shot) & Llama-3.1-8B & none & fixed\_window & 0.70 / 0.30 (3915 / 1678) & 0.165 \\
+ &  &  & time\_delta & 0.70 / 0.30 (3372 / 1446) & 0.120 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (3150 / 1350) &  \\
+ &  &  & alertbert & 0.70 / 0.30 &  \\
+ &  &  & deepcase & 0.70 / 0.30 &  \\
+\midrule
+Anomaly & OneClassSVM & benign-only & fixed\_window & 0.70 / 0.30 (3915 / 1678) & 0.245 \\
+ &  &  & time\_delta & 0.70 / 0.30 (3372 / 1446) & 0.135 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (3150 / 1350) & 0.079 \\
+ &  &  & alertbert & 0.70 / 0.30 & 0.220 \\
+ &  &  & deepcase & 0.70 / 0.30 & 0.490 \\
+\addlinespace
+Anomaly & IsolationForest & benign-only & fixed\_window & 0.70 / 0.30 (3915 / 1678) & 0.232 \\
+ &  &  & time\_delta & 0.70 / 0.30 (3372 / 1446) & 0.122 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (3150 / 1350) & 0.077 \\
+ &  &  & alertbert & 0.70 / 0.30 & 0.207 \\
+ &  &  & deepcase & 0.70 / 0.30 & 0.543 \\
+\addlinespace
+Anomaly + mining & OneClassSVM & benign-only & fixed\_window & 0.70 / 0.30 (3915 / 1678) & 0.245 \\
+ &  &  & time\_delta & 0.70 / 0.30 (3372 / 1446) & 0.135 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (3150 / 1350) & 0.079 \\
+ &  &  & alertbert & 0.70 / 0.30 & 0.220 \\
+ &  &  & deepcase & 0.70 / 0.30 & 0.565 \\
+\addlinespace
+Anomaly + mining & IsolationForest & benign-only & fixed\_window & 0.70 / 0.30 (3915 / 1678) & 0.234 \\
+ &  &  & time\_delta & 0.70 / 0.30 (3372 / 1446) & 0.122 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (3150 / 1350) & 0.081 \\
+ &  &  & alertbert & 0.70 / 0.30 & 0.208 \\
+ &  &  & deepcase & 0.70 / 0.30 & 0.492 \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{AIT-ADS F1 for scenario \texttt{santos} -- every (baseline, model, training condition, grouping method) that produced a result. Split is the fixed last-30\%-of-timeline chronological cut (train / test fraction, with alert\_group counts where the grouping cache is local). alertbert / deepcase are restricted to fox / russellmitchell (held out of the learned groupers' training). Anomaly rows are at the default $\nu$ / contamination cut.}
+\label{tab:ait-ads-per-scenario-santos-f1}
+\resizebox{\ifdim\width>\linewidth\linewidth\else\width\fi}{!}{%
+\begin{tabular}{lllllc}
+\toprule
+\textbf{Baseline} & \textbf{Model} & \textbf{Training} & \textbf{Grouping} & \textbf{Split (tr/te)} & \textbf{F1} \\
+\midrule
+LLM (zero-shot) & Llama-3.1-8B & none & fixed\_window & 0.70 / 0.30 (15777 / 6763) & 0.086 \\
+ &  &  & time\_delta & 0.70 / 0.30 (13867 / 5943) & 0.063 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (7730 / 3313) &  \\
+\midrule
+Anomaly & OneClassSVM & benign-only & fixed\_window & 0.70 / 0.30 (15777 / 6763) & 0.136 \\
+ &  &  & time\_delta & 0.70 / 0.30 (13867 / 5943) & 0.088 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (7730 / 3313) & 0.058 \\
+\addlinespace
+Anomaly & IsolationForest & benign-only & fixed\_window & 0.70 / 0.30 (15777 / 6763) & 0.116 \\
+ &  &  & time\_delta & 0.70 / 0.30 (13867 / 5943) & 0.089 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (7730 / 3313) & 0.089 \\
+\addlinespace
+Anomaly + mining & OneClassSVM & benign-only & fixed\_window & 0.70 / 0.30 (15777 / 6763) & 0.136 \\
+ &  &  & time\_delta & 0.70 / 0.30 (13867 / 5943) & 0.088 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (7730 / 3313) & 0.058 \\
+\addlinespace
+Anomaly + mining & IsolationForest & benign-only & fixed\_window & 0.70 / 0.30 (15777 / 6763) & 0.111 \\
+ &  &  & time\_delta & 0.70 / 0.30 (13867 / 5943) & 0.083 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (7730 / 3313) & 0.087 \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{AIT-ADS F1 for scenario \texttt{shaw} -- every (baseline, model, training condition, grouping method) that produced a result. Split is the fixed last-30\%-of-timeline chronological cut (train / test fraction, with alert\_group counts where the grouping cache is local). alertbert / deepcase are restricted to fox / russellmitchell (held out of the learned groupers' training). Anomaly rows are at the default $\nu$ / contamination cut.}
+\label{tab:ait-ads-per-scenario-shaw-f1}
+\resizebox{\ifdim\width>\linewidth\linewidth\else\width\fi}{!}{%
+\begin{tabular}{lllllc}
+\toprule
+\textbf{Baseline} & \textbf{Model} & \textbf{Training} & \textbf{Grouping} & \textbf{Split (tr/te)} & \textbf{F1} \\
+\midrule
+Internal system & LogReg & random & fixed\_window & 0.70 / 0.30 (7277 / 3120) & 0.011 \\
+ &  &  & time\_delta & 0.70 / 0.30 (6203 / 2659) & 0.015 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (4465 / 1914) & 0.072 \\
+\addlinespace
+Internal system & LogReg & class-weighted & fixed\_window & 0.70 / 0.30 (7277 / 3120) & 0.045 \\
+ &  &  & time\_delta & 0.70 / 0.30 (6203 / 2659) & 0.015 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (4465 / 1914) & 0.080 \\
+\addlinespace
+Internal system & RF & random & fixed\_window & 0.70 / 0.30 (7277 / 3120) & 0.000 \\
+ &  &  & time\_delta & 0.70 / 0.30 (6203 / 2659) & 0.000 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (4465 / 1914) & 0.068 \\
+\addlinespace
+Internal system & RF & class-weighted & fixed\_window & 0.70 / 0.30 (7277 / 3120) & 0.000 \\
+ &  &  & time\_delta & 0.70 / 0.30 (6203 / 2659) & 0.000 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (4465 / 1914) & 0.067 \\
+\addlinespace
+Internal system & XGBoost & random & fixed\_window & 0.70 / 0.30 (7277 / 3120) & 0.000 \\
+ &  &  & time\_delta & 0.70 / 0.30 (6203 / 2659) & 0.000 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (4465 / 1914) & 0.076 \\
+\addlinespace
+Internal system & XGBoost & class-weighted & fixed\_window & 0.70 / 0.30 (7277 / 3120) & 0.000 \\
+ &  &  & time\_delta & 0.70 / 0.30 (6203 / 2659) & 0.000 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (4465 / 1914) & 0.066 \\
+\midrule
+Internal + mining & RF & random & fixed\_window & 0.70 / 0.30 (7277 / 3120) & 0.010 \\
+ &  &  & time\_delta & 0.70 / 0.30 (6203 / 2659) & 0.000 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (4465 / 1914) & 0.067 \\
+\addlinespace
+Internal + mining & RF & class-weighted & fixed\_window & 0.70 / 0.30 (7277 / 3120) & 0.000 \\
+ &  &  & time\_delta & 0.70 / 0.30 (6203 / 2659) & 0.000 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (4465 / 1914) & 0.067 \\
+\addlinespace
+Internal + mining & LogReg & random & fixed\_window & 0.70 / 0.30 (7277 / 3120) & 0.017 \\
+ &  &  & time\_delta & 0.70 / 0.30 (6203 / 2659) & 0.022 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (4465 / 1914) & 0.082 \\
+\addlinespace
+Internal + mining & LogReg & class-weighted & fixed\_window & 0.70 / 0.30 (7277 / 3120) & 0.039 \\
+ &  &  & time\_delta & 0.70 / 0.30 (6203 / 2659) & 0.008 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (4465 / 1914) & 0.063 \\
+\addlinespace
+Internal + mining & XGBoost & random & fixed\_window & 0.70 / 0.30 (7277 / 3120) & 0.000 \\
+ &  &  & time\_delta & 0.70 / 0.30 (6203 / 2659) & 0.000 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (4465 / 1914) & 0.072 \\
+\addlinespace
+Internal + mining & XGBoost & class-weighted & fixed\_window & 0.70 / 0.30 (7277 / 3120) & 0.000 \\
+ &  &  & time\_delta & 0.70 / 0.30 (6203 / 2659) & 0.000 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (4465 / 1914) & 0.066 \\
+\midrule
+LLM (general) & DistilBERT & random & fixed\_window & 0.70 / 0.30 (7277 / 3120) & 0.016 \\
+ &  &  & time\_delta & 0.70 / 0.30 (6203 / 2659) & 0.048 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (4465 / 1914) & 0.047 \\
+\addlinespace
+LLM (general) & DistilBERT & class-weighted & fixed\_window & 0.70 / 0.30 (7277 / 3120) & 0.000 \\
+ &  &  & time\_delta & 0.70 / 0.30 (6203 / 2659) & 0.000 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (4465 / 1914) & 0.000 \\
+\addlinespace
+LLM (domain-specific) & SecureBERT 2.0 & random & fixed\_window & 0.70 / 0.30 (7277 / 3120) & 0.013 \\
+ &  &  & time\_delta & 0.70 / 0.30 (6203 / 2659) & 0.033 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (4465 / 1914) & 0.050 \\
+\addlinespace
+LLM (domain-specific) & SecureBERT 2.0 & class-weighted & fixed\_window & 0.70 / 0.30 (7277 / 3120) & 0.000 \\
+ &  &  & time\_delta & 0.70 / 0.30 (6203 / 2659) & 0.000 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (4465 / 1914) & 0.000 \\
+\addlinespace
+LLM (zero-shot) & Llama-3.1-8B & none & fixed\_window & 0.70 / 0.30 (7277 / 3120) & 0.074 \\
+ &  &  & time\_delta & 0.70 / 0.30 (6203 / 2659) & 0.068 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (4465 / 1914) &  \\
+\midrule
+Anomaly & OneClassSVM & benign-only & fixed\_window & 0.70 / 0.30 (7277 / 3120) & 0.149 \\
+ &  &  & time\_delta & 0.70 / 0.30 (6203 / 2659) & 0.106 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (4465 / 1914) & 0.109 \\
+\addlinespace
+Anomaly & IsolationForest & benign-only & fixed\_window & 0.70 / 0.30 (7277 / 3120) & 0.115 \\
+ &  &  & time\_delta & 0.70 / 0.30 (6203 / 2659) & 0.082 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (4465 / 1914) & 0.096 \\
+\addlinespace
+Anomaly + mining & OneClassSVM & benign-only & fixed\_window & 0.70 / 0.30 (7277 / 3120) & 0.159 \\
+ &  &  & time\_delta & 0.70 / 0.30 (6203 / 2659) & 0.114 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (4465 / 1914) & 0.063 \\
+\addlinespace
+Anomaly + mining & IsolationForest & benign-only & fixed\_window & 0.70 / 0.30 (7277 / 3120) & 0.116 \\
+ &  &  & time\_delta & 0.70 / 0.30 (6203 / 2659) & 0.073 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (4465 / 1914) & 0.077 \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{AIT-ADS F1 for scenario \texttt{wardbeck} -- every (baseline, model, training condition, grouping method) that produced a result. Split is the fixed last-30\%-of-timeline chronological cut (train / test fraction, with alert\_group counts where the grouping cache is local). alertbert / deepcase are restricted to fox / russellmitchell (held out of the learned groupers' training). Anomaly rows are at the default $\nu$ / contamination cut.}
+\label{tab:ait-ads-per-scenario-wardbeck-f1}
+\resizebox{\ifdim\width>\linewidth\linewidth\else\width\fi}{!}{%
+\begin{tabular}{lllllc}
+\toprule
+\textbf{Baseline} & \textbf{Model} & \textbf{Training} & \textbf{Grouping} & \textbf{Split (tr/te)} & \textbf{F1} \\
+\midrule
+Internal system & LogReg & random & fixed\_window & 0.70 / 0.30 (8229 / 3528) & 0.004 \\
+ &  &  & time\_delta & 0.70 / 0.30 (6794 / 2912) & 0.006 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (5651 / 2423) & 0.125 \\
+\addlinespace
+Internal system & LogReg & class-weighted & fixed\_window & 0.70 / 0.30 (8229 / 3528) & 0.000 \\
+ &  &  & time\_delta & 0.70 / 0.30 (6794 / 2912) & 0.000 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (5651 / 2423) & 0.128 \\
+\addlinespace
+Internal system & RF & random & fixed\_window & 0.70 / 0.30 (8229 / 3528) & 0.000 \\
+ &  &  & time\_delta & 0.70 / 0.30 (6794 / 2912) & 0.012 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (5651 / 2423) & 0.133 \\
+\addlinespace
+Internal system & RF & class-weighted & fixed\_window & 0.70 / 0.30 (8229 / 3528) & 0.000 \\
+ &  &  & time\_delta & 0.70 / 0.30 (6794 / 2912) & 0.000 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (5651 / 2423) & 0.134 \\
+\addlinespace
+Internal system & XGBoost & random & fixed\_window & 0.70 / 0.30 (8229 / 3528) & 0.000 \\
+ &  &  & time\_delta & 0.70 / 0.30 (6794 / 2912) & 0.000 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (5651 / 2423) & 0.131 \\
+\addlinespace
+Internal system & XGBoost & class-weighted & fixed\_window & 0.70 / 0.30 (8229 / 3528) & 0.000 \\
+ &  &  & time\_delta & 0.70 / 0.30 (6794 / 2912) & 0.000 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (5651 / 2423) & 0.134 \\
+\midrule
+Internal + mining & RF & random & fixed\_window & 0.70 / 0.30 (8229 / 3528) & 0.003 \\
+ &  &  & time\_delta & 0.70 / 0.30 (6794 / 2912) & 0.021 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (5651 / 2423) & 0.129 \\
+\addlinespace
+Internal + mining & RF & class-weighted & fixed\_window & 0.70 / 0.30 (8229 / 3528) & 0.000 \\
+ &  &  & time\_delta & 0.70 / 0.30 (6794 / 2912) & 0.000 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (5651 / 2423) & 0.134 \\
+\addlinespace
+Internal + mining & LogReg & random & fixed\_window & 0.70 / 0.30 (8229 / 3528) & 0.045 \\
+ &  &  & time\_delta & 0.70 / 0.30 (6794 / 2912) & 0.048 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (5651 / 2423) & 0.130 \\
+\addlinespace
+Internal + mining & LogReg & class-weighted & fixed\_window & 0.70 / 0.30 (8229 / 3528) & 0.000 \\
+ &  &  & time\_delta & 0.70 / 0.30 (6794 / 2912) & 0.000 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (5651 / 2423) & 0.134 \\
+\addlinespace
+Internal + mining & XGBoost & random & fixed\_window & 0.70 / 0.30 (8229 / 3528) & 0.000 \\
+ &  &  & time\_delta & 0.70 / 0.30 (6794 / 2912) & 0.000 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (5651 / 2423) & 0.133 \\
+\addlinespace
+Internal + mining & XGBoost & class-weighted & fixed\_window & 0.70 / 0.30 (8229 / 3528) & 0.000 \\
+ &  &  & time\_delta & 0.70 / 0.30 (6794 / 2912) & 0.000 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (5651 / 2423) & 0.134 \\
+\midrule
+LLM (general) & DistilBERT & random & fixed\_window & 0.70 / 0.30 (8229 / 3528) & 0.055 \\
+ &  &  & time\_delta & 0.70 / 0.30 (6794 / 2912) & 0.044 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (5651 / 2423) & 0.054 \\
+\addlinespace
+LLM (general) & DistilBERT & class-weighted & fixed\_window & 0.70 / 0.30 (8229 / 3528) & 0.000 \\
+ &  &  & time\_delta & 0.70 / 0.30 (6794 / 2912) & 0.000 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (5651 / 2423) & 0.000 \\
+\addlinespace
+LLM (domain-specific) & SecureBERT 2.0 & random & fixed\_window & 0.70 / 0.30 (8229 / 3528) & 0.090 \\
+ &  &  & time\_delta & 0.70 / 0.30 (6794 / 2912) & 0.065 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (5651 / 2423) & 0.108 \\
+\addlinespace
+LLM (domain-specific) & SecureBERT 2.0 & class-weighted & fixed\_window & 0.70 / 0.30 (8229 / 3528) & 0.000 \\
+ &  &  & time\_delta & 0.70 / 0.30 (6794 / 2912) & 0.000 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (5651 / 2423) & 0.000 \\
+\addlinespace
+LLM (zero-shot) & Llama-3.1-8B & none & fixed\_window & 0.70 / 0.30 (8229 / 3528) & 0.079 \\
+ &  &  & time\_delta & 0.70 / 0.30 (6794 / 2912) & 0.061 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (5651 / 2423) &  \\
+\midrule
+Anomaly & OneClassSVM & benign-only & fixed\_window & 0.70 / 0.30 (8229 / 3528) & 0.211 \\
+ &  &  & time\_delta & 0.70 / 0.30 (6794 / 2912) & 0.133 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (5651 / 2423) & 0.057 \\
+\addlinespace
+Anomaly & IsolationForest & benign-only & fixed\_window & 0.70 / 0.30 (8229 / 3528) & 0.148 \\
+ &  &  & time\_delta & 0.70 / 0.30 (6794 / 2912) & 0.078 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (5651 / 2423) & 0.038 \\
+\addlinespace
+Anomaly + mining & OneClassSVM & benign-only & fixed\_window & 0.70 / 0.30 (8229 / 3528) & 0.172 \\
+ &  &  & time\_delta & 0.70 / 0.30 (6794 / 2912) & 0.074 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (5651 / 2423) & 0.115 \\
+\addlinespace
+Anomaly + mining & IsolationForest & benign-only & fixed\_window & 0.70 / 0.30 (8229 / 3528) & 0.162 \\
+ &  &  & time\_delta & 0.70 / 0.30 (6794 / 2912) & 0.077 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (5651 / 2423) & 0.073 \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{AIT-ADS F1 for scenario \texttt{wheeler} -- every (baseline, model, training condition, grouping method) that produced a result. Split is the fixed last-30\%-of-timeline chronological cut (train / test fraction, with alert\_group counts where the grouping cache is local). alertbert / deepcase are restricted to fox / russellmitchell (held out of the learned groupers' training). Anomaly rows are at the default $\nu$ / contamination cut.}
+\label{tab:ait-ads-per-scenario-wheeler-f1}
+\resizebox{\ifdim\width>\linewidth\linewidth\else\width\fi}{!}{%
+\begin{tabular}{lllllc}
+\toprule
+\textbf{Baseline} & \textbf{Model} & \textbf{Training} & \textbf{Grouping} & \textbf{Split (tr/te)} & \textbf{F1} \\
+\midrule
+Internal system & LogReg & random & fixed\_window & 0.70 / 0.30 (14686 / 6295) & 0.679 \\
+ &  &  & time\_delta & 0.70 / 0.30 (11546 / 4949) & 0.071 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (12447 / 5335) & 0.066 \\
+\addlinespace
+Internal system & LogReg & class-weighted & fixed\_window & 0.70 / 0.30 (14686 / 6295) & 0.719 \\
+ &  &  & time\_delta & 0.70 / 0.30 (11546 / 4949) & 0.059 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (12447 / 5335) & 0.060 \\
+\addlinespace
+Internal system & RF & random & fixed\_window & 0.70 / 0.30 (14686 / 6295) & 0.000 \\
+ &  &  & time\_delta & 0.70 / 0.30 (11546 / 4949) & 0.008 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (12447 / 5335) & 0.066 \\
+\addlinespace
+Internal system & RF & class-weighted & fixed\_window & 0.70 / 0.30 (14686 / 6295) & 0.000 \\
+ &  &  & time\_delta & 0.70 / 0.30 (11546 / 4949) & 0.000 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (12447 / 5335) & 0.064 \\
+\addlinespace
+Internal system & XGBoost & random & fixed\_window & 0.70 / 0.30 (14686 / 6295) & 0.000 \\
+ &  &  & time\_delta & 0.70 / 0.30 (11546 / 4949) & 0.000 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (12447 / 5335) & 0.066 \\
+\addlinespace
+Internal system & XGBoost & class-weighted & fixed\_window & 0.70 / 0.30 (14686 / 6295) & 0.000 \\
+ &  &  & time\_delta & 0.70 / 0.30 (11546 / 4949) & 0.000 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (12447 / 5335) & 0.063 \\
+\midrule
+Internal + mining & RF & random & fixed\_window & 0.70 / 0.30 (14686 / 6295) & 0.124 \\
+ &  &  & time\_delta & 0.70 / 0.30 (11546 / 4949) & 0.026 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (12447 / 5335) & 0.067 \\
+\addlinespace
+Internal + mining & RF & class-weighted & fixed\_window & 0.70 / 0.30 (14686 / 6295) & 0.000 \\
+ &  &  & time\_delta & 0.70 / 0.30 (11546 / 4949) & 0.000 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (12447 / 5335) & 0.064 \\
+\addlinespace
+Internal + mining & LogReg & random & fixed\_window & 0.70 / 0.30 (14686 / 6295) & 0.535 \\
+ &  &  & time\_delta & 0.70 / 0.30 (11546 / 4949) & 0.045 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (12447 / 5335) & 0.059 \\
+\addlinespace
+Internal + mining & LogReg & class-weighted & fixed\_window & 0.70 / 0.30 (14686 / 6295) & 0.721 \\
+ &  &  & time\_delta & 0.70 / 0.30 (11546 / 4949) & 0.046 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (12447 / 5335) & 0.062 \\
+\addlinespace
+Internal + mining & XGBoost & random & fixed\_window & 0.70 / 0.30 (14686 / 6295) & 0.000 \\
+ &  &  & time\_delta & 0.70 / 0.30 (11546 / 4949) & 0.000 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (12447 / 5335) & 0.066 \\
+\addlinespace
+Internal + mining & XGBoost & class-weighted & fixed\_window & 0.70 / 0.30 (14686 / 6295) & 0.000 \\
+ &  &  & time\_delta & 0.70 / 0.30 (11546 / 4949) & 0.000 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (12447 / 5335) & 0.063 \\
+\midrule
+LLM (general) & DistilBERT & random & fixed\_window & 0.70 / 0.30 (14686 / 6295) & 0.046 \\
+ &  &  & time\_delta & 0.70 / 0.30 (11546 / 4949) & 0.012 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (12447 / 5335) & 0.105 \\
+\addlinespace
+LLM (general) & DistilBERT & class-weighted & fixed\_window & 0.70 / 0.30 (14686 / 6295) & 0.000 \\
+ &  &  & time\_delta & 0.70 / 0.30 (11546 / 4949) & 0.000 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (12447 / 5335) & 0.000 \\
+\addlinespace
+LLM (domain-specific) & SecureBERT 2.0 & random & fixed\_window & 0.70 / 0.30 (14686 / 6295) & 0.236 \\
+ &  &  & time\_delta & 0.70 / 0.30 (11546 / 4949) & 0.009 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (12447 / 5335) & 0.093 \\
+\addlinespace
+LLM (domain-specific) & SecureBERT 2.0 & class-weighted & fixed\_window & 0.70 / 0.30 (14686 / 6295) & 0.000 \\
+ &  &  & time\_delta & 0.70 / 0.30 (11546 / 4949) & 0.000 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (12447 / 5335) & 0.000 \\
+\addlinespace
+LLM (zero-shot) & Llama-3.1-8B & none & fixed\_window & 0.70 / 0.30 (14686 / 6295) & 0.371 \\
+ &  &  & time\_delta & 0.70 / 0.30 (11546 / 4949) & 0.023 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (12447 / 5335) &  \\
+\midrule
+Anomaly & OneClassSVM & benign-only & fixed\_window & 0.70 / 0.30 (14686 / 6295) & 0.688 \\
+ &  &  & time\_delta & 0.70 / 0.30 (11546 / 4949) & 0.078 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (12447 / 5335) & 0.174 \\
+\addlinespace
+Anomaly & IsolationForest & benign-only & fixed\_window & 0.70 / 0.30 (14686 / 6295) & 0.742 \\
+ &  &  & time\_delta & 0.70 / 0.30 (11546 / 4949) & 0.056 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (12447 / 5335) & 0.177 \\
+\addlinespace
+Anomaly + mining & OneClassSVM & benign-only & fixed\_window & 0.70 / 0.30 (14686 / 6295) & 0.682 \\
+ &  &  & time\_delta & 0.70 / 0.30 (11546 / 4949) & 0.059 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (12447 / 5335) & 0.087 \\
+\addlinespace
+Anomaly + mining & IsolationForest & benign-only & fixed\_window & 0.70 / 0.30 (14686 / 6295) & 0.741 \\
+ &  &  & time\_delta & 0.70 / 0.30 (11546 / 4949) & 0.052 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (12447 / 5335) & 0.169 \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{AIT-ADS F1 for scenario \texttt{wilson} -- every (baseline, model, training condition, grouping method) that produced a result. Split is the fixed last-30\%-of-timeline chronological cut (train / test fraction, with alert\_group counts where the grouping cache is local). alertbert / deepcase are restricted to fox / russellmitchell (held out of the learned groupers' training). Anomaly rows are at the default $\nu$ / contamination cut.}
+\label{tab:ait-ads-per-scenario-wilson-f1}
+\resizebox{\ifdim\width>\linewidth\linewidth\else\width\fi}{!}{%
+\begin{tabular}{lllllc}
+\toprule
+\textbf{Baseline} & \textbf{Model} & \textbf{Training} & \textbf{Grouping} & \textbf{Split (tr/te)} & \textbf{F1} \\
+\midrule
+Internal system & LogReg & random & fixed\_window & 0.70 / 0.30 (18567 / 7958) & 0.043 \\
+ &  &  & time\_delta & 0.70 / 0.30 (14419 / 6180) & 0.049 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (10605 / 4545) & 0.117 \\
+\addlinespace
+Internal system & LogReg & class-weighted & fixed\_window & 0.70 / 0.30 (18567 / 7958) & 0.044 \\
+ &  &  & time\_delta & 0.70 / 0.30 (14419 / 6180) & 0.049 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (10605 / 4545) & 0.120 \\
+\addlinespace
+Internal system & RF & random & fixed\_window & 0.70 / 0.30 (18567 / 7958) & 0.442 \\
+ &  &  & time\_delta & 0.70 / 0.30 (14419 / 6180) & 0.252 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (10605 / 4545) & 0.132 \\
+\addlinespace
+Internal system & RF & class-weighted & fixed\_window & 0.70 / 0.30 (18567 / 7958) & 0.171 \\
+ &  &  & time\_delta & 0.70 / 0.30 (14419 / 6180) & 0.232 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (10605 / 4545) & 0.120 \\
+\addlinespace
+Internal system & XGBoost & random & fixed\_window & 0.70 / 0.30 (18567 / 7958) & 0.458 \\
+ &  &  & time\_delta & 0.70 / 0.30 (14419 / 6180) & 0.267 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (10605 / 4545) & 0.136 \\
+\addlinespace
+Internal system & XGBoost & class-weighted & fixed\_window & 0.70 / 0.30 (18567 / 7958) & 0.181 \\
+ &  &  & time\_delta & 0.70 / 0.30 (14419 / 6180) & 0.238 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (10605 / 4545) & 0.119 \\
+\midrule
+Internal + mining & RF & random & fixed\_window & 0.70 / 0.30 (18567 / 7958) & 0.332 \\
+ &  &  & time\_delta & 0.70 / 0.30 (14419 / 6180) & 0.245 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (10605 / 4545) & 0.131 \\
+\addlinespace
+Internal + mining & RF & class-weighted & fixed\_window & 0.70 / 0.30 (18567 / 7958) & 0.171 \\
+ &  &  & time\_delta & 0.70 / 0.30 (14419 / 6180) & 0.233 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (10605 / 4545) & 0.120 \\
+\addlinespace
+Internal + mining & LogReg & random & fixed\_window & 0.70 / 0.30 (18567 / 7958) & 0.157 \\
+ &  &  & time\_delta & 0.70 / 0.30 (14419 / 6180) & 0.063 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (10605 / 4545) & 0.115 \\
+\addlinespace
+Internal + mining & LogReg & class-weighted & fixed\_window & 0.70 / 0.30 (18567 / 7958) & 0.081 \\
+ &  &  & time\_delta & 0.70 / 0.30 (14419 / 6180) & 0.047 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (10605 / 4545) & 0.113 \\
+\addlinespace
+Internal + mining & XGBoost & random & fixed\_window & 0.70 / 0.30 (18567 / 7958) & 0.459 \\
+ &  &  & time\_delta & 0.70 / 0.30 (14419 / 6180) & 0.266 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (10605 / 4545) & 0.129 \\
+\addlinespace
+Internal + mining & XGBoost & class-weighted & fixed\_window & 0.70 / 0.30 (18567 / 7958) & 0.178 \\
+ &  &  & time\_delta & 0.70 / 0.30 (14419 / 6180) & 0.232 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (10605 / 4545) & 0.120 \\
+\midrule
+LLM (general) & DistilBERT & random & fixed\_window & 0.70 / 0.30 (18567 / 7958) & 0.581 \\
+ &  &  & time\_delta & 0.70 / 0.30 (14419 / 6180) & 0.250 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (10605 / 4545) & 0.498 \\
+\addlinespace
+LLM (general) & DistilBERT & class-weighted & fixed\_window & 0.70 / 0.30 (18567 / 7958) & 0.000 \\
+ &  &  & time\_delta & 0.70 / 0.30 (14419 / 6180) & 0.000 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (10605 / 4545) & 0.000 \\
+\addlinespace
+LLM (domain-specific) & SecureBERT 2.0 & random & fixed\_window & 0.70 / 0.30 (18567 / 7958) & 0.586 \\
+ &  &  & time\_delta & 0.70 / 0.30 (14419 / 6180) & 0.250 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (10605 / 4545) & 0.484 \\
+\addlinespace
+LLM (domain-specific) & SecureBERT 2.0 & class-weighted & fixed\_window & 0.70 / 0.30 (18567 / 7958) & 0.000 \\
+ &  &  & time\_delta & 0.70 / 0.30 (14419 / 6180) & 0.058 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (10605 / 4545) & 0.000 \\
+\addlinespace
+LLM (zero-shot) & Llama-3.1-8B & none & fixed\_window & 0.70 / 0.30 (18567 / 7958) & 0.368 \\
+ &  &  & time\_delta & 0.70 / 0.30 (14419 / 6180) &  \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (10605 / 4545) &  \\
+\midrule
+Anomaly & OneClassSVM & benign-only & fixed\_window & 0.70 / 0.30 (18567 / 7958) & 0.714 \\
+ &  &  & time\_delta & 0.70 / 0.30 (14419 / 6180) & 0.063 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (10605 / 4545) & 0.163 \\
+\addlinespace
+Anomaly & IsolationForest & benign-only & fixed\_window & 0.70 / 0.30 (18567 / 7958) & 0.717 \\
+ &  &  & time\_delta & 0.70 / 0.30 (14419 / 6180) & 0.043 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (10605 / 4545) & 0.170 \\
+\addlinespace
+Anomaly + mining & OneClassSVM & benign-only & fixed\_window & 0.70 / 0.30 (18567 / 7958) & 0.719 \\
+ &  &  & time\_delta & 0.70 / 0.30 (14419 / 6180) & 0.043 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (10605 / 4545) & 0.134 \\
+\addlinespace
+Anomaly + mining & IsolationForest & benign-only & fixed\_window & 0.70 / 0.30 (18567 / 7958) & 0.715 \\
+ &  &  & time\_delta & 0.70 / 0.30 (14419 / 6180) & 0.047 \\
+ &  &  & cscas\_grouping & 0.70 / 0.30 (10605 / 4545) & 0.166 \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}

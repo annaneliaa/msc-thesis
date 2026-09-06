@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
 #
 # Drift-Monitor Evaluation (Experiment 4, observe-only): for each scenario,
-# runs run_monitor_drift.py directly against the mining notebook's
-# structural shortlist (attribute_mining_sweep_eda.ipynb's
-# feasible_configs_all.csv -- every config that clears the mining-only
-# precision/recall floors), crossed with GRANULARITIES below. No separate
-# real-evaluation ranking step (notebooks/config_selection.ipynb is no
-# longer part of this pipeline) -- STRUCTURAL_CONFIGS is the single source
-# of truth, same as run_temporal_decay.sh/run_rolling_walk_forward.sh. For
+# runs run_monitor_drift.py over the parameter grid -- every entry in
+# MINING_SETTINGS (configs/screening_mining_settings.yaml) crossed with
+# GRANULARITIES below, plus a baseline row per granularity. That YAML is the
+# single input: no feasible-config CSV, no notebook export step, no
+# real-evaluation ranking. Edit the YAML to change what runs. For
 # each resulting config, mines/fits once on window 0's train split -- plus,
 # for symbolic configs, builds a deployment-scoped DynamicSchema (Vk) from
 # that same mining pass -- then walks the frozen schema/model/Vk forward one
@@ -35,7 +33,6 @@ conda activate thesis
 SCENARIOS=(cscas)
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 MINING_SETTINGS="$REPO_ROOT/src/thesis/configs/screening_mining_settings.yaml"
-STRUCTURAL_CONFIGS="$REPO_ROOT/artifacts/experiments/attribute_mining_parameter_grid/feasible_configs_all.csv"
 GRANULARITIES=(0.1)
 THRESHOLD_MODE="fixed"  # or "calibrated_recall" -- keep in sync with the other experiment scripts
 CALIBRATED_RECALL_TARGET="0.90"  # only used when THRESHOLD_MODE=calibrated_recall
@@ -55,8 +52,8 @@ for scenario in "${SCENARIOS[@]}"; do
 
   echo "[$total] $scenario"
 
-  if [[ ! -f "$STRUCTURAL_CONFIGS" ]]; then
-    echo "    FAILED — no structural shortlist at $STRUCTURAL_CONFIGS (run attribute_mining_sweep_eda.ipynb's section 5.3 first)"
+  if [[ ! -f "$MINING_SETTINGS" ]]; then
+    echo "    FAILED — no mining-settings grid at $MINING_SETTINGS"
     failed+=("$scenario")
     continue
   fi
@@ -71,9 +68,8 @@ for scenario in "${SCENARIOS[@]}"; do
   # "[n/4] ..."/"Saved →" progress prints showing up until process exit.
   cmd=(python -u "$REPO_ROOT/src/thesis/scripts/system_eval/run_monitor_drift.py" \
     "$scenario" \
-    --structural-configs "$STRUCTURAL_CONFIGS" \
-    --granularities "${GRANULARITIES[@]}" \
     --mining-settings "$MINING_SETTINGS" \
+    --granularities "${GRANULARITIES[@]}" \
     --threshold-mode "$THRESHOLD_MODE" \
     --monitor-consecutive-windows "$MONITOR_CONSECUTIVE_WINDOWS" \
     --monitor-min-samples-signal-2 "$MONITOR_MIN_SAMPLES_SIGNAL_2")

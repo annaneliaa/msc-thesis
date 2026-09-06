@@ -12,34 +12,27 @@ the full experiment design, and thesis.metrics.shortlist for the shortlist
 file format (feature_set,mining_setting,granularity,model columns -- the
 same shortlist run_temporal_decay.py consumes).
 
-Two ways to supply the shortlist:
-  --shortlist CSV            A pre-built shortlist file in that format.
-  --structural-configs CSV   Build it directly from
-                              attribute_mining_sweep_eda.ipynb's structural
-                              shortlist (e.g. feasible_configs_all.csv --
-                              growth_rate/max_depth/max_depth_attack/etc, one
-                              row per config that clears the mining-only
-                              precision/recall floors), crossed with
-                              --granularities x --models. Same convention
-                              run_temporal_decay.py uses -- no separate
-                              real-evaluation ranking step
-                              (notebooks/config_selection.ipynb is no longer
-                              part of this pipeline). Requires --granularities.
+By default the shortlist is built on the fly as every entry in the
+mining-settings YAML (configs/screening_mining_settings.yaml -- the curated
+downstream parameter grid) crossed with --granularities x --models, plus a
+baseline row per (granularity, model). That YAML is the single input: no
+feasible-config CSV, no notebook export step, no real-evaluation ranking.
+To change what runs, edit the YAML. --shortlist overrides this with a
+pre-built CSV.
 
 Usage:
-  # From a pre-built shortlist
+  # The parameter grid (configs/screening_mining_settings.yaml) x granularities
   python src/thesis/scripts/system_eval/run_rolling_walk_forward.py cscas \\
-      --shortlist artifacts/experiments/screening_sweep/cscas/shortlist.csv
-
-  # Directly from the mining notebook's structural shortlist
-  python src/thesis/scripts/system_eval/run_rolling_walk_forward.py cscas \\
-      --structural-configs artifacts/experiments/attribute_mining_parameter_grid/feasible_configs_all.csv \\
-      --granularities 0.1 0.2 0.25 0.5
+      --granularities 0.1 0.25 0.5
 
   # Calibrated-recall threshold instead of flat 0.5
   python src/thesis/scripts/system_eval/run_rolling_walk_forward.py cscas \\
-      --shortlist shortlist.csv \\
+      --granularities 0.1 0.25 0.5 \\
       --threshold-mode calibrated_recall --calibrated-recall-target 0.9
+
+  # Override with a hand-built shortlist CSV
+  python src/thesis/scripts/system_eval/run_rolling_walk_forward.py cscas \\
+      --shortlist my_shortlist.csv
 """
 
 from __future__ import annotations
@@ -54,7 +47,7 @@ from thesis.system_eval.rolling_walk_forward import run_rolling_walk_forward_exp
 from thesis.grouping.group_alerts import CSCAS_PREGROUPED_METHOD
 from thesis.schemas.experiments import RollingWalkForwardConfig
 from thesis.scripts.system_eval._common import (
-    build_shortlist_from_structural_configs,
+    build_shortlist_from_mining_grid,
     cache_dir_for,
 )
 
@@ -74,22 +67,15 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("scenario", help="Scenario name (e.g. cscas, fox).")
-    shortlist_source = parser.add_mutually_exclusive_group(required=True)
-    shortlist_source.add_argument(
+    parser.add_argument(
         "--shortlist",
         type=Path,
-        metavar="CSV",
-        help="Pre-built shortlist CSV (feature_set,mining_setting,granularity,model columns).",
-    )
-    shortlist_source.add_argument(
-        "--structural-configs",
-        type=Path,
-        dest="structural_configs",
+        default=None,
         metavar="CSV",
         help=(
-            "Build the shortlist directly from attribute_mining_sweep_eda.ipynb's structural "
-            "shortlist (e.g. feasible_configs_all.csv), crossed with --granularities x --models. "
-            "Requires --granularities."
+            "Pre-built shortlist CSV (feature_set,mining_setting,granularity,model). "
+            "Optional -- default is every entry in --mining-settings x --granularities "
+            "x --models."
         ),
     )
     parser.add_argument(
@@ -98,20 +84,20 @@ def main() -> None:
         type=float,
         default=None,
         metavar="FRAC",
-        help="Granularities to cross with --structural-configs (ignored with --shortlist).",
+        help="Granularities to cross with the mining-settings grid. Required unless --shortlist is given.",
     )
     parser.add_argument(
         "--models",
         nargs="+",
         default=["logreg"],
         metavar="MODEL",
-        help="Models to cross with --structural-configs (ignored with --shortlist). Default: logreg",
+        help="Models to cross with the mining-settings grid (ignored with --shortlist). Default: logreg",
     )
     parser.add_argument(
         "--no-baseline",
         action="store_false",
         dest="include_baseline",
-        help="Don't add a baseline row per granularity when using --structural-configs.",
+        help="Don't add a baseline row per (granularity, model) to the derived shortlist.",
     )
     parser.add_argument(
         "--threshold-mode",
@@ -164,11 +150,13 @@ def main() -> None:
     parser.add_argument("--output-dir", type=Path, default=None, dest="output_dir")
     args = parser.parse_args()
 
-    if args.structural_configs is not None:
+    if args.shortlist is not None:
+        shortlist_path = args.shortlist
+    else:
         if not args.granularities:
-            parser.error("--structural-configs requires --granularities")
-        derived = build_shortlist_from_structural_configs(
-            args.structural_configs,
+            parser.error("--granularities is required unless --shortlist is given")
+        derived = build_shortlist_from_mining_grid(
+            args.mining_settings,
             args.granularities,
             args.models,
             args.include_baseline,
@@ -180,11 +168,9 @@ def main() -> None:
         shortlist_path = derived_dir / "_derived_shortlist.csv"
         derived.to_csv(shortlist_path, index=False)
         print(
-            f"  Derived shortlist ({len(derived)} configs) from {args.structural_configs} "
-            f"→ {shortlist_path}"
+            f"  Shortlist ({len(derived)} configs) = {args.mining_settings.name} "
+            f"× granularities={args.granularities} × models={args.models} → {shortlist_path}"
         )
-    else:
-        shortlist_path = args.shortlist
 
     scenario = args.scenario
     is_cscas = dataset_for_scenario(scenario) == "cscas"
