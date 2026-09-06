@@ -1,10 +1,19 @@
 """
 Same experimental setup as baselines/cscas_base.py (split, training-pool
-sampling, classifier, seeds, eval set) -- the only thing that changes is the
-feature matrix: cscas_base.py's 5-feature reduced base schema, extended with
-symbolic features mined by the attribute-mining pipeline (contrast-set +
-decision-tree rules, see thesis.mining.attribute_mining_job) on the SAME
-train split.
+sampling, seeds, eval set) -- the feature matrix is cscas_base.py's 5-feature
+reduced base schema extended with symbolic features mined by the
+attribute-mining pipeline (contrast-set + decision-tree rules, see
+thesis.mining.attribute_mining_job) on the SAME train split.
+
+The mined matrix is then fit with all three tabular classifiers -- the
+mining counterparts of cscas_base.py / cscas_logreg.py / cscas_xgboost.py --
+saved as `cscas_mining` (RF, name unchanged), `cscas_mining_logreg` and
+`cscas_mining_xgboost`. LogReg gets the same -1-sentinel missingness-flag +
+StandardScaler treatment cscas_logreg.py applies (the mined symbolic columns
+are binary indicators and pass through unchanged for every model). Each
+result is skipped if its JSON already exists (set CSCAS_FORCE=1 to
+recompute); the single attribute-mining pass still runs on every invocation,
+since only its RF output was ever persisted.
 
 Mining is deliberately restricted to exclude SCAS and every
 Similarity-derived candidate field (scas, similarity,
@@ -31,12 +40,18 @@ The data path below is relative to the current working directory (not this
 file's location), so it must be run from src/thesis/baselines/.
 """
 
+import os
+
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import precision_score, recall_score, f1_score
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+from xgboost import XGBClassifier
 
-from thesis.baselines._results import save_baseline_results
+from thesis.baselines._results import results_exist, save_baseline_results
 from thesis.baselines._sampling import (
     class_weighted_pool,
     get_cscas_eval_subsample,
@@ -98,6 +113,35 @@ FEATURE_COLS = [
 assert len(FEATURE_COLS) == 5, f"got {len(FEATURE_COLS)}"
 print(f"Base feature count: {len(FEATURE_COLS)}")
 print(FEATURE_COLS)
+
+# 4b) LogisticRegression-only prep (RF/XGBoost ignore all of this -- tree
+# splits treat -1 as a low value). The -1 "not applicable" sentinel in
+# Proto/ExtPort/IntPort distorts StandardScaler if scaled in place, so add a
+# {col}_missing indicator per sentinel-bearing base column and impute the
+# sentinel to 0. Determined once from the full training set so the augmented
+# schema is fixed across every seed/condition/model -- verbatim from
+# cscas_logreg.py, see that module's docstring for the fuller rationale.
+SENTINEL_VALUE = -1
+SENTINEL_COLS = [c for c in FEATURE_COLS if (train[c] == SENTINEL_VALUE).any()]
+MODEL_FEATURE_COLS = FEATURE_COLS + [f"{c}_missing" for c in SENTINEL_COLS]
+print(f"Columns with -1 sentinel in train: {len(SENTINEL_COLS)} of {len(FEATURE_COLS)}")
+
+
+def add_missingness_flags(frame: pd.DataFrame) -> pd.DataFrame:
+    """Add a {col}_missing indicator per SENTINEL_COLS column and impute the
+    sentinel to 0 in place. Deterministic elementwise transform, safe to
+    apply identically to every pool and the eval subsample."""
+    frame = frame.copy()
+    for col in SENTINEL_COLS:
+        is_missing = frame[col] == SENTINEL_VALUE
+        frame[f"{col}_missing"] = is_missing.astype(int)
+        frame.loc[is_missing, col] = 0.0
+    return frame
+
+
+# Skip a model whose results/*.json already exists -- CSCAS_FORCE=1 to
+# recompute all three (RF plus the two new ones).
+FORCE = os.environ.get("CSCAS_FORCE", "0") == "1"
 
 # 5) Verify training pools against Table IV (pool construction itself lives
 # in _sampling.py -- these are just the sanity-check counts).
@@ -179,70 +223,125 @@ encoder = SymbolicFeatureEncoder(feature_schema=symbolic_schema)
 symbolic_train_df = encoder.transform(train_groups)
 symbolic_eval_df = encoder.transform(eval_groups)
 
-# 11) Build the eval feature matrix -- base + mined columns.
-X_test = pd.concat(
-    [
-        eval_df[FEATURE_COLS].reset_index(drop=True),
-        symbolic_eval_df.reset_index(drop=True),
-    ],
-    axis=1,
-).values
-y_test = eval_df["Label"].values
-
-# 12) Three training-pool conditions -- same as cscas_base.py.
+# 11) Training pools (same 3 conditions as cscas_base.py) and per-model
+# feature-matrix / classifier builders.
 POOL_BUILDERS = {
     "random": lambda seed: random_undersample_pool(train, important, seed),
     "class_weighted": lambda seed: class_weighted_pool(train, seed=seed),
     "guided": lambda seed: guided_by_cscas_pool(train, important, seed),
 }
 
-results: dict[str, list[dict[str, float]]] = {name: [] for name in POOL_BUILDERS}
 
-for condition, build_pool in POOL_BUILDERS.items():
-    print(f"\n=== {condition} (base schema + mining) ===")
+def build_matrix(
+    base_df: pd.DataFrame, symbolic_df: pd.DataFrame, model: str
+) -> np.ndarray:
+    """base_df rows aligned 1:1 (by position) with symbolic_df rows. LogReg
+    gets the missingness-flagged + imputed base columns (then everything
+    scaled in its Pipeline); RF/XGBoost get the raw base columns. The mined
+    symbolic columns are binary indicators -- passed through unchanged for
+    every model."""
+    base = (
+        add_missingness_flags(base_df)[MODEL_FEATURE_COLS]
+        if model == "logreg"
+        else base_df[FEATURE_COLS]
+    )
+    return pd.concat(
+        [base.reset_index(drop=True), symbolic_df.reset_index(drop=True)], axis=1
+    ).values
 
-    for seed in range(5):
-        pool, extra_kwargs = build_pool(seed)
 
-        # pool.index gives positions into symbolic_train_df because train's
-        # index labels equal positional row order (asserted in step 3).
-        X_tr = np.hstack(
-            [pool[FEATURE_COLS].values, symbolic_train_df.iloc[pool.index].values]
-        )
-        y_tr = pool["Label"].values
-
-        clf = RandomForestClassifier(
+def build_classifier(model: str, seed: int, extra_kwargs: dict):
+    if model == "rf":
+        return RandomForestClassifier(
             n_estimators=100,
             random_state=seed,
             n_jobs=-1,
             class_weight=extra_kwargs.get("class_weight"),
         )
-        clf.fit(X_tr, y_tr)
-        y_pred = clf.predict(X_test)
+    if model == "xgboost":
+        return XGBClassifier(
+            n_estimators=100,
+            random_state=seed,
+            n_jobs=-1,
+            scale_pos_weight=extra_kwargs.get("scale_pos_weight"),
+        )
+    return Pipeline(
+        [
+            ("scaler", StandardScaler()),
+            (
+                "clf",
+                LogisticRegression(
+                    max_iter=1000,
+                    random_state=seed,
+                    class_weight=extra_kwargs.get("class_weight"),
+                ),
+            ),
+        ]
+    )
 
-        p = precision_score(y_test, y_pred)
-        r = recall_score(y_test, y_pred)
-        f = f1_score(y_test, y_pred)
-        results[condition].append({"precision": p, "recall": r, "f1": f})
-        print(f"  seed={seed}: P={p:.3f} R={r:.3f} F1={f:.3f}")
 
-    avg = pd.DataFrame(results[condition]).mean()
-    print(f"  AVERAGE: P={avg.precision:.3f} R={avg.recall:.3f} F1={avg.f1:.3f}")
-
-
-print("\n=== Summary: base schema + mining ===")
-for condition in POOL_BUILDERS:
-    avg = pd.DataFrame(results[condition]).mean()
-    print(f"{condition:<16}P={avg.precision:.3f} R={avg.recall:.3f} F1={avg.f1:.3f}")
-
-save_baseline_results(
-    name="cscas_mining",
-    description=(
-        "Base schema (5 features) + attribute-mined symbolic features "
-        "(contrast-set + decision-tree rules, mined on the same train split "
-        "as cscas_base; SCAS/Similarity-derived fields excluded from "
-        "mining), RandomForestClassifier(n_estimators=100), evaluated on "
-        "the shared eval subsample"
+# 12) Fit each of the three classifiers on the mined matrix. "cscas_mining"
+# stays the RF result (name unchanged); the two new ones get a model suffix.
+# A model whose JSON already exists is skipped (CSCAS_FORCE=1 to recompute).
+MODELS = {
+    "rf": ("cscas_mining", "RandomForestClassifier(n_estimators=100)"),
+    "logreg": (
+        "cscas_mining_logreg",
+        "StandardScaler + LogisticRegression (with -1-sentinel missingness "
+        "flags on the base columns)",
     ),
-    results=results,
-)
+    "xgboost": ("cscas_mining_xgboost", "XGBClassifier(n_estimators=100)"),
+}
+
+for model, (result_name, model_desc) in MODELS.items():
+    if not FORCE and results_exist(result_name):
+        print(
+            f"\n[skip] {result_name}.json already exists (set CSCAS_FORCE=1 to re-run)."
+        )
+        continue
+
+    X_test = build_matrix(eval_df, symbolic_eval_df, model)
+    y_test = eval_df["Label"].values
+    results: dict[str, list[dict[str, float]]] = {name: [] for name in POOL_BUILDERS}
+
+    for condition, build_pool in POOL_BUILDERS.items():
+        print(f"\n=== {model} / {condition} (base schema + mining) ===")
+
+        for seed in range(5):
+            pool, extra_kwargs = build_pool(seed)
+
+            # pool.index gives positions into symbolic_train_df because train's
+            # index labels equal positional row order (asserted in step 3).
+            X_tr = build_matrix(pool, symbolic_train_df.iloc[pool.index], model)
+            y_tr = pool["Label"].values
+
+            clf = build_classifier(model, seed, extra_kwargs)
+            clf.fit(X_tr, y_tr)
+            y_pred = clf.predict(X_test)
+
+            p = precision_score(y_test, y_pred)
+            r = recall_score(y_test, y_pred)
+            f = f1_score(y_test, y_pred)
+            results[condition].append({"precision": p, "recall": r, "f1": f})
+            print(f"  seed={seed}: P={p:.3f} R={r:.3f} F1={f:.3f}")
+
+        avg = pd.DataFrame(results[condition]).mean()
+        print(f"  AVERAGE: P={avg.precision:.3f} R={avg.recall:.3f} F1={avg.f1:.3f}")
+
+    print(f"\n=== Summary: base schema + mining ({model}) ===")
+    for condition in POOL_BUILDERS:
+        avg = pd.DataFrame(results[condition]).mean()
+        print(
+            f"{condition:<16}P={avg.precision:.3f} R={avg.recall:.3f} F1={avg.f1:.3f}"
+        )
+
+    save_baseline_results(
+        name=result_name,
+        description=(
+            "Base schema (5 features) + attribute-mined symbolic features "
+            "(contrast-set + decision-tree rules, mined on the same train split "
+            "as cscas_base; SCAS/Similarity-derived fields excluded from "
+            f"mining), {model_desc}, evaluated on the shared eval subsample"
+        ),
+        results=results,
+    )

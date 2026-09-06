@@ -34,9 +34,17 @@ Internal system & XGBoost & Base (5) & random & $0.511_{\pm 0.021}$ & $0.974_{\p
  &  &  & class-weighted & $0.695_{\pm 0.000}$ & $0.827_{\pm 0.000}$ & $0.755_{\pm 0.000}$ \\
  &  &  & guided & $0.581_{\pm 0.035}$ & $0.921_{\pm 0.029}$ & $0.712_{\pm 0.031}$ \\
 \midrule
+Internal + mining & Logistic Regression & Base (5) + mined & random & $0.489_{\pm 0.004}$ & $0.975_{\pm 0.001}$ & $0.652_{\pm 0.003}$ \\
+ &  &  & class-weighted & $0.508_{\pm 0.000}$ & $0.974_{\pm 0.000}$ & $0.667_{\pm 0.000}$ \\
+ &  &  & guided & $0.494_{\pm 0.023}$ & $0.952_{\pm 0.019}$ & $0.650_{\pm 0.016}$ \\
+\addlinespace
 Internal + mining & Random Forest & Base (5) + mined & random & $0.518_{\pm 0.012}$ & $0.972_{\pm 0.004}$ & $0.676_{\pm 0.009}$ \\
  &  &  & class-weighted & $0.746_{\pm 0.008}$ & $0.705_{\pm 0.009}$ & $0.724_{\pm 0.006}$ \\
  &  &  & guided & $0.560_{\pm 0.012}$ & $0.943_{\pm 0.007}$ & $0.703_{\pm 0.009}$ \\
+\addlinespace
+Internal + mining & XGBoost & Base (5) + mined & random & $0.526_{\pm 0.020}$ & $0.971_{\pm 0.008}$ & $0.682_{\pm 0.016}$ \\
+ &  &  & class-weighted & $0.762_{\pm 0.000}$ & $0.846_{\pm 0.000}$ & $0.802_{\pm 0.000}$ \\
+ &  &  & guided & $0.588_{\pm 0.041}$ & $0.908_{\pm 0.025}$ & $0.713_{\pm 0.036}$ \\
 \midrule
 LLM (zero-shot) & Llama-3.1-8B-Instruct & Base (6) as text & none & 0.083 & 0.180 & 0.114 \\
 \addlinespace

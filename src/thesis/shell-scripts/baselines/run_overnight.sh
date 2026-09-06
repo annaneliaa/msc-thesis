@@ -19,6 +19,12 @@
 # always re-generates their saved results fresh rather than assuming
 # they're already there.
 #
+# cscas_mining.py now fits all three tabular models on the mined matrix
+# (cscas_mining.json = RF, plus cscas_mining_logreg.json /
+# cscas_mining_xgboost.json) and is per-model resumable -- a model whose
+# JSON exists is skipped unless CSCAS_FORCE=1. If you only want the mining
+# models (not a full overnight redo), run run_cscas_mining.sh instead.
+#
 # class_weighted is capped at 15,000 rows (stratified, proportional -- see
 # _sampling.class_weighted_pool) for the two fine-tuned scripts, via
 # CSCAS_CLASS_WEIGHTED_POOL_CAP, so their full N_SEEDS=5 x 3-condition

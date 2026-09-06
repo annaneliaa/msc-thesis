@@ -1,0 +1,54 @@
+\begin{table}[htbp]
+\centering
+\small
+\caption{Confusion-count and alert-volume view of every row in
+Table~\ref{tab:ait-ads-fox-fixed_window-baseline-summary} (AIT-ADS
+fox scenario, grouping \texttt{fixed\_window}). TP/FP/FN are on
+this scenario's full test split (226 attack / 2{,}868 benign
+alert\_groups) -- precision and recall projected onto that fixed composition.
+\emph{Est.\ FP/day} scales the benign false-positive rate to the test window's
+wall-clock span (${\sim}$1.47 days) -- the analyst-load axis F1 hides.
+The \texttt{always-alert} row is the ceiling.}
+\label{tab:ait-ads-fox-fixed_window-alert-volume}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lllrrrccr}
+\toprule
+\textbf{Baseline} & \textbf{Model} & \textbf{Training} & \textbf{TP} & \textbf{FP} & \textbf{FN} & \textbf{Precision} & \textbf{Recall} & \textbf{Est. FP/day} \\
+\midrule
+Internal system & Logistic Regression & random & 150 & 36 & 76 & 0.807 & 0.665 & 24.4 \\
+ &  & class-weighted & 151 & 25 & 75 & 0.858 & 0.668 & 17.0 \\
+\addlinespace
+Internal system & Random Forest & random & 167 & 247 & 59 & 0.404 & 0.740 & 167.6 \\
+ &  & class-weighted & 157 & 213 & 69 & 0.424 & 0.694 & 144.5 \\
+\addlinespace
+Internal system & XGBoost & random & 168 & 244 & 58 & 0.408 & 0.745 & 165.5 \\
+ &  & class-weighted & 157 & 251 & 69 & 0.385 & 0.695 & 170.3 \\
+\midrule
+Internal + mining & Random Forest & random & 166 & 246 & 60 & 0.402 & 0.734 & 166.9 \\
+ &  & class-weighted & 155 & 206 & 71 & 0.429 & 0.686 & 139.7 \\
+\addlinespace
+Internal + mining & Logistic Regression & random & 151 & 39 & 75 & 0.796 & 0.667 & 26.5 \\
+ &  & class-weighted & 152 & 47 & 74 & 0.764 & 0.673 & 31.9 \\
+\addlinespace
+Internal + mining & XGBoost & random & 169 & 244 & 57 & 0.409 & 0.749 & 165.5 \\
+ &  & class-weighted & 157 & 244 & 69 & 0.392 & 0.695 & 165.5 \\
+\midrule
+LLM (general) & DistilBERT & random & 183 & 290 & 43 & 0.387 & 0.808 & 196.7 \\
+ &  & class-weighted & 149 & 0 & 77 & 1.000 & 0.658 & 0.0 \\
+\addlinespace
+LLM (domain-specific) & SecureBERT 2.0 & random & 169 & 190 & 57 & 0.471 & 0.747 & 128.9 \\
+ &  & class-weighted & 149 & 0 & 77 & 1.000 & 0.659 & 0.0 \\
+\midrule
+Anomaly & OneClassSVM & benign-only & 159 & 179 & 67 & 0.470 & 0.704 & 121.4 \\
+\addlinespace
+Anomaly & IsolationForest & benign-only & 157 & 132 & 69 & 0.542 & 0.696 & 89.5 \\
+\addlinespace
+Anomaly + mining & OneClassSVM & benign-only & 157 & 150 & 69 & 0.511 & 0.695 & 101.8 \\
+\addlinespace
+Anomaly + mining & IsolationForest & benign-only & 135 & 134 & 91 & 0.501 & 0.597 & 90.9 \\
+\midrule
+always-alert & -- & -- & 226 & 2868 & 0 & 0.073 & 1.000 & 1,945.6 \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}

@@ -10,22 +10,32 @@
 # ait_ads_*.py script's plain split is built from -- these results are
 # directly comparable to those, not just similarly configured.
 #
+# ait_ads_mining.py now fits all three tabular models per combo on the mined
+# matrix -- ait_ads_mining_<run_tag>.json (RF), plus
+# ait_ads_mining_logreg_<run_tag>.json / ait_ads_mining_xgboost_<run_tag>.json.
+# It is per-model resumable: a combo already carrying all three model JSONs
+# is skipped with no mining pass; one still missing a model re-mines once
+# (the mining output was never cached) and fits only the missing models, so
+# the existing RF results are neither recomputed nor overwritten. Running
+# this script as-is is the intended way to backfill LogReg/XGBoost onto a
+# tree that already has the RF mining results.
+#
 # ait_ads_mining.py has the same train-side single-class guard as
 # ait_ads_rf.py (so still excludes harrison/santos/russellmitchell);
 # ait_ads_mining_anomaly.py has the test-side-only guard ait_ads_anomaly.py
 # uses instead, so it's the only mining-based script that also produces a
 # result for those 3 scenarios -- see each script's own module docstring.
 #
-# Cheap-ish (CPU, one attribute-mining pass + RF/OneClassSVM fit per combo,
-# no GPU needed) but each mining pass costs more than a plain tabular fit --
-# budget more time than run_ait_ads_tabular.sh/run_ait_ads_anomaly.sh, not
-# as much as run_ait_ads_bert_securebert.sh.
+# Cheap-ish (CPU, one attribute-mining pass + RF/LogReg/XGBoost/OneClassSVM
+# fit per combo, no GPU needed) but each mining pass costs more than a plain
+# tabular fit -- budget more time than run_ait_ads_tabular.sh/
+# run_ait_ads_anomaly.sh, not as much as run_ait_ads_bert_securebert.sh.
 #
 # alertbert grouping still needs the thesis-alertbert conda env (graph-tool
 # -- see _ait_ads_grouping.py's module docstring), same split as
-# run_ait_ads_tabular.sh. Needs sklearn installed in thesis-alertbert too
-# (usually already there from the tabular scripts' setup -- see
-# setup_container.sh's thesis-alertbert branch).
+# run_ait_ads_tabular.sh. Needs sklearn + xgboost installed in
+# thesis-alertbert too (usually already there from the tabular scripts'
+# setup -- see setup_container.sh's thesis-alertbert branch).
 #
 # Does not abort on a single script's failure (no `set -e`) -- if one
 # script errors out, its exit code is logged and the run continues to the

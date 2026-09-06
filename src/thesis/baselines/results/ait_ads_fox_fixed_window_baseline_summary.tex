@@ -1,0 +1,62 @@
+\begin{table}[htbp]
+\centering
+\small
+\caption{Summary of baseline performance on the AIT-ADS fox scenario,
+grouping \texttt{fixed\_window}. Trainable classifiers report both training-pool
+sampling conditions (random undersampling, class-weighted natural-ratio) as
+mean$_{\pm\text{sd}}$ over 5 seeds; the anomaly detectors are fit on benign rows
+only and the zero-shot LLMs have no training step. Precision/recall/F1 are at each
+model's own decision threshold. All rows are scored on this scenario's full test
+split. The anomaly rows are at the detectors' default rejection rate ($\nu$ /
+contamination $= 0.05$); Table~\ref{tab:ait-ads-fox-fixed_window-anomaly-operating-points}
+reports them at a tuned threshold. No \emph{guided} condition and no paper-target
+row -- both are CSCAS-only.}
+\label{tab:ait-ads-fox-fixed_window-baseline-summary}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{llllccc}
+\toprule
+\textbf{Baseline} & \textbf{Model} & \textbf{Features} & \textbf{Training} & \textbf{Precision} & \textbf{Recall} & \textbf{F1} \\
+\midrule
+Internal system & Logistic Regression & Base (5) & random & $0.807_{\pm 0.094}$ & $0.665_{\pm 0.004}$ & $0.727_{\pm 0.035}$ \\
+ &  &  & class-weighted & $0.858_{\pm 0.000}$ & $0.668_{\pm 0.000}$ & $0.751_{\pm 0.000}$ \\
+\addlinespace
+Internal system & Random Forest & Base (5) & random & $0.404_{\pm 0.005}$ & $0.740_{\pm 0.014}$ & $0.522_{\pm 0.006}$ \\
+ &  &  & class-weighted & $0.424_{\pm 0.003}$ & $0.694_{\pm 0.004}$ & $0.526_{\pm 0.002}$ \\
+\addlinespace
+Internal system & XGBoost & Base (5) & random & $0.408_{\pm 0.008}$ & $0.745_{\pm 0.020}$ & $0.527_{\pm 0.011}$ \\
+ &  &  & class-weighted & $0.385_{\pm 0.000}$ & $0.695_{\pm 0.000}$ & $0.495_{\pm 0.000}$ \\
+\midrule
+Internal + mining & Random Forest & Base (5) + mined & random & $0.402_{\pm 0.005}$ & $0.734_{\pm 0.010}$ & $0.520_{\pm 0.006}$ \\
+ &  &  & class-weighted & $0.429_{\pm 0.000}$ & $0.686_{\pm 0.000}$ & $0.528_{\pm 0.000}$ \\
+\addlinespace
+Internal + mining & Logistic Regression & Base (5) + mined & random & $0.796_{\pm 0.097}$ & $0.667_{\pm 0.005}$ & $0.724_{\pm 0.034}$ \\
+ &  &  & class-weighted & $0.764_{\pm 0.000}$ & $0.673_{\pm 0.000}$ & $0.715_{\pm 0.000}$ \\
+\addlinespace
+Internal + mining & XGBoost & Base (5) + mined & random & $0.409_{\pm 0.007}$ & $0.749_{\pm 0.013}$ & $0.529_{\pm 0.008}$ \\
+ &  &  & class-weighted & $0.392_{\pm 0.000}$ & $0.695_{\pm 0.000}$ & $0.501_{\pm 0.000}$ \\
+\midrule
+LLM (zero-shot) & Llama-3.1-8B & tokens as text & none &  &  &  \\
+\addlinespace
+LLM (zero-shot) & Llama-3.1-70B & tokens as text & none &  &  &  \\
+\addlinespace
+LLM (zero-shot) & Qwen2.5-7B & tokens as text & none &  &  &  \\
+\addlinespace
+LLM (zero-shot) & Qwen2.5-72B & tokens as text & none &  &  &  \\
+\addlinespace
+LLM (general) & DistilBERT & tokens as text & random & $0.387_{\pm 0.008}$ & $0.808_{\pm 0.098}$ & $0.522_{\pm 0.023}$ \\
+ &  &  & class-weighted & $1.000_{\pm 0.000}$ & $0.658_{\pm 0.004}$ & $0.793_{\pm 0.003}$ \\
+\addlinespace
+LLM (domain-specific) & SecureBERT 2.0 & tokens as text & random & $0.471_{\pm 0.108}$ & $0.747_{\pm 0.053}$ & $0.569_{\pm 0.069}$ \\
+ &  &  & class-weighted & $1.000_{\pm 0.000}$ & $0.659_{\pm 0.000}$ & $0.795_{\pm 0.000}$ \\
+\midrule
+Anomaly & OneClassSVM & Base (5) & benign-only & $0.470_{\pm 0.000}$ & $0.704_{\pm 0.000}$ & $0.564_{\pm 0.000}$ \\
+\addlinespace
+Anomaly & IsolationForest & Base (5) & benign-only & $0.542_{\pm 0.014}$ & $0.696_{\pm 0.004}$ & $0.609_{\pm 0.009}$ \\
+\addlinespace
+Anomaly + mining & OneClassSVM & Base (5) + mined & benign-only & $0.511_{\pm 0.000}$ & $0.695_{\pm 0.000}$ & $0.589_{\pm 0.000}$ \\
+\addlinespace
+Anomaly + mining & IsolationForest & Base (5) + mined & benign-only & $0.501_{\pm 0.047}$ & $0.597_{\pm 0.097}$ & $0.544_{\pm 0.068}$ \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}

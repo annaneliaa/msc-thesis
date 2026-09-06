@@ -93,10 +93,13 @@ Two grids:
      alone (each holding the other tree's depth at its default), and
      class_weight swept alone -- each x granularity, anchored at
      STEP1_DEFAULT_GROWTH_RATE / STEP1_DEFAULT_ATTACK_COVERAGE /
-     STEP1_DEFAULT_BENIGN_COVERAGE. min_samples_leaf is not swept at all --
-     negligible on every structural metric tracked in the single-tree
-     analysis (attribute_mining_sweep_eda.ipynb section 4.1), no reason to
-     expect that changes under two-tree fitting.
+     STEP1_DEFAULT_BENIGN_COVERAGE. Plus a class_weight x depth check
+     (class_weight="none" also mined at the off-anchor depths --
+     CLASS_WEIGHT_DEPTH_CHECK_MAX_DEPTHS / _MAX_DEPTHS_ATTACK -- since the
+     class_weight sweep was originally only at the anchor depths), and a
+     min_samples_leaf sweep (STEP2_MIN_SAMPLES_LEAVES): the single-tree
+     analysis found min_samples_leaf negligible on every structural metric,
+     re-confirmed here under two-tree fitting.
 
 A small growth_rate x max_depth_attack cross-check IS kept this time
 (CROSS_CHECK_GROWTH_RATES x CROSS_CHECK_MAX_DEPTHS_ATTACK, 4 combos) --
