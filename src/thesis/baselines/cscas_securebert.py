@@ -93,6 +93,25 @@ CLASS_WEIGHTED_POOL_CAP = (
 QUICK_SANITY_CHECK = os.environ.get("CSCAS_QUICK_SANITY_CHECK", "1") == "1"
 QUICK_SEEDS = 1
 
+# 0) Require a real accelerator -- checked first, before touching the 1.4M-row
+# CSV, so a misconfigured GPU fails in seconds, not after hours. Fine-tuning
+# SecureBERT 2.0 (let alone predicting on the full 1.26M-row test set) on CPU
+# is not a "slower but fine" fallback -- see cscas_bert.py's identical check
+# for the measured CPU cost. Refuse to silently degrade into that.
+device = (
+    "mps"
+    if torch.backends.mps.is_available()
+    else ("cuda" if torch.cuda.is_available() else "cpu")
+)
+print(f"Using device: {device}")
+if device == "cpu":
+    print(
+        "[abort] No GPU (CUDA/MPS) detected -- refusing to fine-tune "
+        "SecureBERT 2.0 on CPU. Fix GPU access (see NVML/nvidia-smi inside "
+        "the container) and re-run."
+    )
+    raise SystemExit(1)
+
 # 1) Load and sort dataset
 
 df = pd.read_csv("../../../data/cscas/dataset-labeled-anon-ip.csv")
@@ -188,13 +207,6 @@ _eval_ds_base = {
     )
     for ek, frame in EVAL_FRAMES.items()
 }
-
-device = (
-    "mps"
-    if torch.backends.mps.is_available()
-    else ("cuda" if torch.cuda.is_available() else "cpu")
-)
-print(f"Using device: {device}")
 
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 
