@@ -32,9 +32,19 @@ mine_or_reuse_attribute_schema's on-disk registry -- that registry is shared
 with real experiments on scenario "cscas" and this is a standalone,
 self-contained baseline script, same as cscas_base.py.
 
+Two attribute-mining tree modes, via the CSCAS_MINING_MODE env var (default
+"single_tree", the original config every existing *_mining*.json result was
+produced with). "two_tree" is an add-on, not a replacement: it fits a
+second, deeper tree for attack-leaning leaves specifically (see
+_cscas_schema.mining_attribute_config), and writes to separate
+"_twotree"-suffixed result files (cscas_mining_twotree,
+cscas_mining_logreg_twotree, cscas_mining_xgboost_twotree, plus schema/eval
+suffixes) so single-tree results are never overwritten.
+
 Run:
     cd src/thesis/baselines
-    python cscas_mining.py
+    python cscas_mining.py                              # single-tree (default)
+    CSCAS_MINING_MODE=two_tree python cscas_mining.py    # two-tree add-on
 
 The data path below is relative to the current working directory (not this
 file's location), so it must be run from src/thesis/baselines/.
@@ -52,10 +62,13 @@ from sklearn.preprocessing import StandardScaler
 from xgboost import XGBClassifier
 
 from thesis.baselines._cscas_schema import (
+    MINING_MODE_SUFFIX,
     SCHEMAS_CLASSIFIER,
+    active_mining_mode,
     active_schema,
     cscas_feature_cols,
     grid_outputs_done,
+    mining_attribute_config,
     result_name,
     schema_blurb,
     sentinel_imputer,
@@ -72,7 +85,6 @@ from thesis.features.schema_builder import build_symbolic_feature_schema
 from thesis.mining.attribute_mining_job import run_alert_group_attribute_mining_job
 from thesis.paths import CACHE_DIR
 from thesis.pipeline.pipeline import rows_to_cscas_alert_groups, save_alert_groups_json
-from thesis.schemas.mining import AttributeMiningConfig
 from thesis.schemas.preprocessing import ATTR_SIMILARITY_COLUMNS
 
 print("Using device: cpu")
@@ -116,14 +128,26 @@ print(
 )
 print(FEATURE_COLS)
 
+# 4b) Mining tree mode -- CSCAS_MINING_MODE env var picks "single_tree"
+# (default, unchanged result files) or "two_tree" (add-on, "_twotree"-suffixed
+# result files). See _cscas_schema.py.
+MINING_MODE = active_mining_mode()
+MODE_SUFFIX = MINING_MODE_SUFFIX[MINING_MODE]
+print(f"Mining tree mode: {MINING_MODE}")
+
 # Skip a model whose results/*.json already exists -- CSCAS_FORCE=1 to
 # recompute. If ALL three models x both eval sets are already on disk for
 # this schema, exit before the (minutes-long) attribute-mining pass.
 FORCE = os.environ.get("CSCAS_FORCE", "0") == "1"
-_MINING_STEMS = ["cscas_mining", "cscas_mining_logreg", "cscas_mining_xgboost"]
+_MINING_STEMS = [
+    f"cscas_mining{MODE_SUFFIX}",
+    f"cscas_mining_logreg{MODE_SUFFIX}",
+    f"cscas_mining_xgboost{MODE_SUFFIX}",
+]
 if grid_outputs_done(_MINING_STEMS, SCHEMA):
     print(
-        f"[skip] all cscas_mining {SCHEMA} outputs already exist (CSCAS_FORCE=1 to re-run)."
+        f"[skip] all cscas_mining {SCHEMA} ({MINING_MODE}) outputs already exist "
+        "(CSCAS_FORCE=1 to re-run)."
     )
     raise SystemExit(0)
 
@@ -189,12 +213,12 @@ LEAKY_ATTRIBUTE_FIELDS = {
     ),
 }
 
-print("Mining attribute schema on train split...")
+print(f"Mining attribute schema on train split ({MINING_MODE} mode)...")
 mining_result = run_alert_group_attribute_mining_job(
     alert_groups_path=train_alert_groups_path,
     scenario_name="cscas",
-    run_name="cscas_baseline_mining",
-    config=AttributeMiningConfig(),
+    run_name=f"cscas_baseline_mining{MODE_SUFFIX}",
+    config=mining_attribute_config(MINING_MODE),
     exclude_fields=LEAKY_ATTRIBUTE_FIELDS,
 )
 print(f"  Mined {len(mining_result.predicates)} predicates from train split.")
@@ -270,15 +294,20 @@ def build_classifier(model: str, seed: int, extra_kwargs: dict):
 
 
 # 12) Fit each of the three classifiers on the mined matrix. "cscas_mining"
-# stays the RF result (name unchanged); the two new ones get a model suffix.
-# A model whose JSON already exists is skipped (CSCAS_FORCE=1 to recompute).
+# stays the RF result (name unchanged); the two new ones get a model suffix;
+# MODE_SUFFIX additionally tags two_tree-mode results ("_twotree") so they
+# never collide with single_tree's. A model whose JSON already exists is
+# skipped (CSCAS_FORCE=1 to recompute).
 MODELS = {
-    "rf": ("cscas_mining", "RandomForestClassifier(n_estimators=100)"),
+    "rf": (f"cscas_mining{MODE_SUFFIX}", "RandomForestClassifier(n_estimators=100)"),
     "logreg": (
-        "cscas_mining_logreg",
+        f"cscas_mining_logreg{MODE_SUFFIX}",
         "median-imputed -1 sentinel + StandardScaler + LogisticRegression",
     ),
-    "xgboost": ("cscas_mining_xgboost", "XGBClassifier(n_estimators=100)"),
+    "xgboost": (
+        f"cscas_mining_xgboost{MODE_SUFFIX}",
+        "XGBClassifier(n_estimators=100)",
+    ),
 }
 
 for model, (stem, model_desc) in MODELS.items():
@@ -336,9 +365,10 @@ for model, (stem, model_desc) in MODELS.items():
             name=needed[ek],
             description=(
                 f"{schema_blurb(SCHEMA, len(FEATURE_COLS))} + attribute-mined "
-                "symbolic features (contrast-set + decision-tree rules, mined on "
-                "the same train split as cscas_base; SCAS/Similarity-derived "
-                f"fields excluded from mining), {model_desc}, evaluated on the "
+                f"symbolic features (contrast-set + decision-tree rules, {MINING_MODE} "
+                "mode, mined on the same train split as cscas_base; SCAS/"
+                f"Similarity-derived fields excluded from mining), {model_desc}, "
+                "evaluated on the "
                 f"{'shared 20k eval subsample' if ek == 'subsample' else 'full 1.26M-row test set'}"
             ),
             results=results[ek],

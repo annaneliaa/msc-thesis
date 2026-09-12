@@ -1,0 +1,60 @@
+\begin{longtable}{llcc}
+\caption{Full CSCAS baseline grid: feature schema (base = 5 realistic columns;
+full = the paper's 42; full$-$SCAS / full$+$SCAS = anomaly-only variants
+isolating CSCAS's own precomputed outlier flag) $\times$ test set (shared 20k
+eval subsample vs.\ the full 1.26M-row test set). Classifier and text-model
+cells report F1 under the guided pool condition (see
+Table~\ref{tab:cscas-baseline-summary} for the full random/class-weighted/guided
+breakdown). Anomaly-detector cells report AUC / F1 at the default cut, AUC
+being the threshold-free headline metric for that method family. Zero-shot:
+single deterministic run per model, no pool conditions, subsample only.}
+\label{tab:cscas-full-grid} \\
+\toprule
+\textbf{Model} & \textbf{Schema} & \textbf{Subsample} & \textbf{Full test} \\
+\midrule
+\endfirsthead
+\multicolumn{4}{c}{\tablename\ \thetable{} -- continued from previous page} \\
+\toprule
+\textbf{Model} & \textbf{Schema} & \textbf{Subsample} & \textbf{Full test} \\
+\midrule
+\endhead
+\midrule \multicolumn{4}{r}{\textit{continued on next page}} \\
+\endfoot
+\bottomrule
+\endlastfoot
+\multicolumn{4}{l}{\textit{Classifiers}} \\
+RF & base (5) & 0.700 & 0.720 \\
+RF & full (42) & 0.899 & 0.915 \\
+LogReg & base (5) & 0.145 & 0.146 \\
+LogReg & full (42) & 0.786 & 0.801 \\
+XGBoost & base (5) & 0.712 & 0.725 \\
+XGBoost & full (42) & 0.933 & 0.939 \\[2pt]
+\multicolumn{4}{l}{\textit{Mining-augmented classifiers}} \\
+Mining-RF & base (5) & 0.703 & 0.721 \\
+Mining-RF & full (42) & 0.901 & 0.922 \\
+Mining-LogReg & base (5) & 0.634 & 0.646 \\
+Mining-LogReg & full (42) & 0.818 & 0.841 \\
+Mining-XGBoost & base (5) & 0.713 & 0.727 \\
+Mining-XGBoost & full (42) & 0.890 & 0.894 \\[2pt]
+\multicolumn{4}{l}{\textit{Anomaly detectors (AUC / F1)}} \\
+Anomaly-OCSVM & base (5) & 0.653 / 0.059 & 0.666 / 0.057 \\
+Anomaly-OCSVM & full$-$SCAS (40) & 0.956 / 0.195 & 0.962 / 0.204 \\
+Anomaly-OCSVM & full$+$SCAS (41) & 0.955 / 0.198 & 0.962 / 0.207 \\
+Anomaly-IForest & base (5) & 0.825 / 0.076 & 0.827 / 0.085 \\
+Anomaly-IForest & full$-$SCAS (40) & 0.994 / 0.281 & 0.994 / 0.284 \\
+Anomaly-IForest & full$+$SCAS (41) & 0.993 / 0.278 & 0.994 / 0.283 \\[2pt]
+\multicolumn{4}{l}{\textit{Mining-augmented anomaly detectors (AUC / F1)}} \\
+Mining-Anomaly-OCSVM & base (5) & 0.995 / 0.326 & 0.994 / 0.333 \\
+Mining-Anomaly-OCSVM & full$-$SCAS (40) & 0.995 / 0.254 & 0.995 / 0.257 \\
+Mining-Anomaly-OCSVM & full$+$SCAS (41) & 0.995 / 0.258 & 0.995 / 0.262 \\
+Mining-Anomaly-IForest & base (5) & 0.928 / 0.176 & 0.930 / 0.186 \\
+Mining-Anomaly-IForest & full$-$SCAS (40) & 0.993 / 0.381 & 0.993 / 0.391 \\
+Mining-Anomaly-IForest & full$+$SCAS (41) & 0.994 / 0.356 & 0.994 / 0.363 \\[2pt]
+\multicolumn{4}{l}{\textit{Text / LLM baselines}} \\
+BERT & text (6) & 0.779 & 0.805 \\
+SecureBERT & text (6) & 0.800 & 0.818 \\
+Zero-shot (Llama-3.1-8B) & text (6) & 0.110 & -- \\
+Zero-shot (Llama-3.1-70B) & text (6) & 0.173 & -- \\
+Zero-shot (Qwen2.5-7B) & text (6) & 0.103 & -- \\
+Zero-shot (Qwen2.5-72B) & text (6) & 0.065 & -- \\
+\end{longtable}

@@ -11,6 +11,18 @@ script is the anchor replication target, and matching the paper's published
 F1=0.908 (guided) requires exactly that protocol. The new class-weighted
 condition has no published target to match; it just needs to run cleanly.
 
+In addition to the paper's own 42-feature schema, this script also runs the
+exact same replication protocol (same POOL_BUILDERS, same RF params, same
+5 seeds, same eval sets) restricted to the reduced 5-feature base schema, so
+the comparison table has a "Paper (reproduced), Base (5)" row alongside the
+"Paper (reproduced), Full (42)" one -- both under the paper's own RF +
+pool-sampling method, differing only in which features it sees. Note this
+duplicates cscas_base.py's own computation (same code path, same numbers up
+to seed order): that script produces the same base-schema/full-test cell
+under the "Internal system" label; this one produces it again under the
+"Paper (reproduced)" label, for scripts/notebook cells that want the full
+replication story self-contained in this one file.
+
 Run:
     cd src/thesis/baselines
     python cscas.py
@@ -23,7 +35,7 @@ import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import precision_score, recall_score, f1_score
 
-from thesis.baselines._cscas_schema import force_recompute
+from thesis.baselines._cscas_schema import cscas_feature_cols, force_recompute
 from thesis.baselines._results import results_exist, save_baseline_results
 from thesis.baselines._sampling import (
     class_weighted_pool,
@@ -69,10 +81,23 @@ FEATURE_COLS = [c for c in df.columns if c not in DROP_COLS]
 print(f"Feature count: {len(FEATURE_COLS)}")
 print(FEATURE_COLS)
 
-if not force_recompute() and all(
-    results_exist(n) for n in ("cscas", "cscas_subsample")
-):
-    print("[skip] cscas + cscas_subsample already exist (CSCAS_FORCE=1 to re-run).")
+# 4b) The same replication protocol, restricted to the reduced 5-feature base
+# schema (see module docstring). cscas_feature_cols is the same helper every
+# other CSCAS baseline uses for this, so the column set is identical to
+# cscas_base.py's.
+FEATURE_COLS_BASE = cscas_feature_cols(df, schema="base")
+assert len(FEATURE_COLS_BASE) == 5, f"got {len(FEATURE_COLS_BASE)}"
+print(f"Base-schema feature count: {len(FEATURE_COLS_BASE)}")
+print(FEATURE_COLS_BASE)
+
+_ALL_OUTPUTS = (
+    "cscas",
+    "cscas_subsample",
+    "cscas_repro_base",
+    "cscas_repro_base_subsample",
+)
+if not force_recompute() and all(results_exist(n) for n in _ALL_OUTPUTS):
+    print(f"[skip] {_ALL_OUTPUTS} already exist (CSCAS_FORCE=1 to re-run).")
     raise SystemExit(0)
 
 # 5) Verify training pools against Table IV (pool construction itself now
@@ -98,6 +123,10 @@ eval_sub = get_cscas_eval_subsample(test)
 X_sub = eval_sub[FEATURE_COLS].values
 y_sub = eval_sub["Label"].values
 
+# Same two eval sets, base-schema columns.
+X_test_base = test[FEATURE_COLS_BASE].values
+X_sub_base = eval_sub[FEATURE_COLS_BASE].values
+
 # 7) Three training-pool conditions
 POOL_BUILDERS = {
     "random": lambda seed: random_undersample_pool(train, important, seed),
@@ -113,6 +142,10 @@ TARGETS = {
 
 results: dict[str, list[dict[str, float]]] = {name: [] for name in POOL_BUILDERS}
 results_sub: dict[str, list[dict[str, float]]] = {name: [] for name in POOL_BUILDERS}
+results_base: dict[str, list[dict[str, float]]] = {name: [] for name in POOL_BUILDERS}
+results_base_sub: dict[str, list[dict[str, float]]] = {
+    name: [] for name in POOL_BUILDERS
+}
 
 
 def _metrics(y_true, y_pred) -> dict[str, float]:
@@ -158,6 +191,42 @@ for condition, build_pool in POOL_BUILDERS.items():
     )
 
 
+# 7b) Same protocol again, base-schema columns -- a separate RF fit per
+# (condition, seed), since a model fit on 42 columns can't predict from 5.
+# build_pool(seed) is deterministic (sample(random_state=seed)), so this
+# reuses the identical pools already built above, just re-sampled.
+for condition, build_pool in POOL_BUILDERS.items():
+    print(f"\n=== {condition} (base schema) ===")
+
+    for seed in range(5):
+        pool, extra_kwargs = build_pool(seed)
+
+        X_tr_base = pool[FEATURE_COLS_BASE].values
+        y_tr = pool["Label"].values
+
+        clf_base = RandomForestClassifier(
+            n_estimators=100,
+            random_state=seed,
+            n_jobs=-1,
+            class_weight=extra_kwargs.get("class_weight"),
+        )
+        clf_base.fit(X_tr_base, y_tr)
+
+        m_full = _metrics(y_test, clf_base.predict(X_test_base))
+        m_sub = _metrics(y_sub, clf_base.predict(X_sub_base))
+        results_base[condition].append(m_full)
+        results_base_sub[condition].append(m_sub)
+        print(
+            f"  seed={seed}: full  P={m_full['precision']:.3f} R={m_full['recall']:.3f} F1={m_full['f1']:.3f}"
+            f"   |  subsample  P={m_sub['precision']:.3f} R={m_sub['recall']:.3f} F1={m_sub['f1']:.3f}"
+        )
+
+    avg = pd.DataFrame(results_base[condition]).mean()
+    print(
+        f"  AVERAGE (full test, base schema): P={avg.precision:.3f} R={avg.recall:.3f} F1={avg.f1:.3f}"
+    )
+
+
 # Scenario                          Expected P      Expected R  Expected F1
 # random (undersampling)            0.669           0.963       0.789
 # guided (by CSCAS)                 0.868           0.952       0.908
@@ -176,4 +245,24 @@ save_baseline_results(
         "cscas.json -- this is the 42-feature / subsample cell of the comparison grid)"
     ),
     results=results_sub,
+)
+save_baseline_results(
+    name="cscas_repro_base",
+    description=(
+        "The paper's own replication protocol (same POOL_BUILDERS, RF params, "
+        "5 seeds), restricted to the reduced 5-feature base schema instead of "
+        "the paper's 42, scored on the full test set. Numerically identical to "
+        "cscas_base_fulltest.json (same code path via cscas_base.py) -- kept "
+        "here too so this script's own output covers both schemas."
+    ),
+    results=results_base,
+)
+save_baseline_results(
+    name="cscas_repro_base_subsample",
+    description=(
+        "Same as cscas_repro_base, scored on the shared frozen 20k eval "
+        "subsample instead of the full test set. Numerically identical to "
+        "cscas_base.json."
+    ),
+    results=results_base_sub,
 )

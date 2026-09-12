@@ -30,12 +30,29 @@
 # this after an interrupted night only computes what's missing. Set
 # CSCAS_FORCE=1 to recompute everything regardless.
 #
+# MINING TREE MODE. The three attribute-mining scripts (cscas_mining.py,
+# cscas_mining_anomaly.py, cscas_mining_anomaly_iforest.py) additionally sweep
+# CSCAS_MINING_MODE:
+#   single_tree  (default) -- the original config every existing
+#                *_mining*.json result was produced with; unchanged filenames.
+#   two_tree     -- add-on: a second, deeper tree fit for attack-leaning
+#                leaves specifically (max_depth=1 / max_depth_attack=4 /
+#                min_samples_leaf=10 -- see
+#                baselines/_cscas_schema.mining_attribute_config), written to
+#                separate "_twotree"-suffixed result files
+#                (cscas_mining_twotree, cscas_mining_logreg_twotree,
+#                cscas_mining_xgboost_twotree, cscas_mining_anomaly_ocsvm_twotree,
+#                cscas_mining_anomaly_iforest_twotree, plus schema/eval
+#                suffixes) so single_tree's results are never overwritten.
+#
 # COST. The base/full-test cells are free (extra .predict() on already-fitted
 # models). The full-schema cells are quick refits (CPU-seconds/seed for the
 # tabular + anomaly models). cscas_mining* run the attribute-mining pass +
-# symbolic encoding of the full 1.26M-row test set once per schema (minutes).
-# cscas_bert / cscas_securebert add ~15-30 min of full-test inference each
-# (no extra fine-tuning). class_weighted is capped at 15,000 rows for the two
+# symbolic encoding of the full 1.26M-row test set once per (schema, mining
+# mode) combo (minutes) -- two_tree roughly doubles the mining-script total
+# since it's a second full sweep, not a cheap addition. cscas_bert /
+# cscas_securebert add ~15-30 min of full-test inference each (no extra
+# fine-tuning). class_weighted is capped at 15,000 rows for the two
 # fine-tuned scripts via CSCAS_CLASS_WEIGHTED_POOL_CAP.
 #
 # Does not abort on a single script's failure (no `set -e`).
@@ -62,6 +79,9 @@ export CSCAS_FORCE
 # Schemas swept per script family.
 CLASSIFIER_SCHEMAS=(base full)
 ANOMALY_SCHEMAS=(base full_noscas full_scas)
+
+# Mining tree modes swept for the three attribute-mining scripts only.
+MINING_MODES=(single_tree two_tree)
 
 run_step() {
     local label="$1"
@@ -90,6 +110,22 @@ run_sweep() {
     done
 }
 
+# Same as run_sweep, but also sweeps CSCAS_MINING_MODE (single_tree then
+# two_tree) -- for the three attribute-mining scripts only. Each script's
+# early-exit guard skips (mode, schema) combos whose "_twotree"-suffixed (or
+# unsuffixed, for single_tree) result files already exist.
+run_mining_sweep() {
+    local script="$1"
+    shift
+    local mode schema
+    for mode in "${MINING_MODES[@]}"; do
+        for schema in "$@"; do
+            run_step "$script (CSCAS_MINING_MODE=$mode, CSCAS_SCHEMA=$schema)" \
+                env CSCAS_MINING_MODE="$mode" CSCAS_SCHEMA="$schema" "$PYTHON" "$script"
+        done
+    done
+}
+
 {
     echo "=== Overnight baseline grid run started at $(date) ==="
     echo "CSCAS_QUICK_SANITY_CHECK=$CSCAS_QUICK_SANITY_CHECK" \
@@ -103,13 +139,13 @@ run_sweep() {
     # Tabular classifiers -- base + full schema.
     run_sweep cscas_logreg.py "${CLASSIFIER_SCHEMAS[@]}"
     run_sweep cscas_xgboost.py "${CLASSIFIER_SCHEMAS[@]}"
-    run_sweep cscas_mining.py "${CLASSIFIER_SCHEMAS[@]}"
+    run_mining_sweep cscas_mining.py "${CLASSIFIER_SCHEMAS[@]}"
 
     # Anomaly detectors -- base + full_noscas + full_scas.
     run_sweep cscas_anomaly.py "${ANOMALY_SCHEMAS[@]}"
     run_sweep cscas_anomaly_iforest.py "${ANOMALY_SCHEMAS[@]}"
-    run_sweep cscas_mining_anomaly.py "${ANOMALY_SCHEMAS[@]}"
-    run_sweep cscas_mining_anomaly_iforest.py "${ANOMALY_SCHEMAS[@]}"
+    run_mining_sweep cscas_mining_anomaly.py "${ANOMALY_SCHEMAS[@]}"
+    run_mining_sweep cscas_mining_anomaly_iforest.py "${ANOMALY_SCHEMAS[@]}"
 
     # Text models -- no schema axis, full-test eval added inside the script.
     run_step "cscas_bert.py" "$PYTHON" cscas_bert.py
@@ -117,7 +153,7 @@ run_sweep() {
 
     run_step "notebook execution" "$PYTHON" -m jupyter nbconvert \
         --to notebook --execute --inplace \
-        ../notebooks/baselines/cscas_baseline_comparison.ipynb
+        ../notebooks/baselines/01_cscas_baseline.ipynb
 
     echo ""
     echo "=== Overnight baseline grid run finished at $(date) ==="

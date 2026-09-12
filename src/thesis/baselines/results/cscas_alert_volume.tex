@@ -1,76 +1,212 @@
-\begin{table}[htbp]
-\centering
-\small
-\caption{Confusion-count and alert-volume view of every row in
-Table~\ref{tab:cscas-baseline-summary}. TP/FP/FN are on the shared eval-subsample
-basis (306 attack / 19{,}694 benign alerts) -- precision and recall projected onto
-that fixed composition, so the paper-reproduced rows (scored on the full test set)
-stay comparable. \emph{Est.\ FP/day} scales the benign false-positive rate to the
-full test stream ($1{,}236{,}605$ benign alerts over ${\sim}53.7$ days,
-${\approx}23$k alerts/day) -- the analyst-load axis that F1 hides. The
-\texttt{always-alert} row is the ceiling.}
-\label{tab:cscas-alert-volume}
-\resizebox{\textwidth}{!}{%
-\begin{tabular}{lllrrrccr}
+\begin{longtable}{lllllrrrrr}
+\caption{Confusion counts for every row of Table~\ref{tab:cscas-baseline-summary}.
+TP/TN/FP/FN use each row's own eval-set composition: 306 attack /
+19{,}694 benign for Subsample rows, 19{,}187 / 1{,}236{,}605 for Full test
+rows. \emph{Est.\ FP/day} is the observed rate directly for Full test rows,
+or the Subsample's benign false-positive rate scaled to the full
+${\sim}53.7$-day test stream (${\times}62.8$) for Subsample rows -- the
+analyst-load axis F1 hides. The \texttt{always-alert} row (Subsample
+composition) is the ceiling.}
+\label{tab:cscas-confusion-counts} \\
 \toprule
-\textbf{Baseline} & \textbf{Model} & \textbf{Training} & \textbf{TP} & \textbf{FP} & \textbf{FN} & \textbf{Precision} & \textbf{Recall} & \textbf{Est. FP/day} \\
+\textbf{Baseline} & \textbf{Model} & \textbf{Features} & \textbf{Split} & \textbf{Training} & \textbf{TP} & \textbf{TN} & \textbf{FP} & \textbf{FN} & \textbf{Est.\ FP/day} \\
 \midrule
-Paper (target) & Random Forest & natural ratio & 291 & 44 & 15 & 0.868 & 0.952 & 51 \\
-\addlinespace
-Paper (reproduced) & Random Forest & random & 297 & 135 & 9 & 0.687 & 0.970 & 158 \\
- &  & class-weighted & 261 & 9 & 45 & 0.965 & 0.854 & 11 \\
- &  & guided & 295 & 43 & 11 & 0.872 & 0.963 & 50 \\
+\endfirsthead
+\multicolumn{10}{c}{\tablename\ \thetable{} -- continued from previous page} \\
+\toprule
+\textbf{Baseline} & \textbf{Model} & \textbf{Features} & \textbf{Split} & \textbf{Training} & \textbf{TP} & \textbf{TN} & \textbf{FP} & \textbf{FN} & \textbf{Est.\ FP/day} \\
 \midrule
-Internal system & Logistic Regression & random & 304 & 3577 & 2 & 0.078 & 0.993 & 4,180 \\
- &  & class-weighted & 306 & 1865 & 0 & 0.141 & 1.000 & 2,180 \\
- &  & guided & 303 & 3553 & 3 & 0.079 & 0.991 & 4,152 \\
-\addlinespace
-Internal system & Random Forest & random & 303 & 303 & 3 & 0.500 & 0.992 & 354 \\
- &  & class-weighted & 212 & 76 & 94 & 0.736 & 0.693 & 89 \\
- &  & guided & 287 & 227 & 19 & 0.558 & 0.939 & 265 \\
-\addlinespace
-Internal system & XGBoost & random & 298 & 286 & 8 & 0.511 & 0.974 & 334 \\
- &  & class-weighted & 253 & 111 & 53 & 0.695 & 0.827 & 130 \\
- &  & guided & 282 & 203 & 24 & 0.581 & 0.921 & 237 \\
-\midrule
-Internal + mining & Logistic Regression & random & 298 & 311 & 8 & 0.489 & 0.975 & 363 \\
- &  & class-weighted & 298 & 289 & 8 & 0.508 & 0.974 & 338 \\
- &  & guided & 291 & 298 & 15 & 0.494 & 0.952 & 348 \\
-\addlinespace
-Internal + mining & Random Forest & random & 297 & 276 & 9 & 0.518 & 0.972 & 323 \\
- &  & class-weighted & 215 & 73 & 91 & 0.746 & 0.704 & 85 \\
- &  & guided & 289 & 227 & 17 & 0.560 & 0.943 & 265 \\
-\addlinespace
-Internal + mining & XGBoost & random & 297 & 267 & 9 & 0.526 & 0.971 & 312 \\
- &  & class-weighted & 259 & 81 & 47 & 0.762 & 0.846 & 95 \\
- &  & guided & 278 & 195 & 28 & 0.588 & 0.908 & 228 \\
-\midrule
-LLM (zero-shot) & Llama-3.1-8B-Instruct & none & 55 & 608 & 251 & 0.083 & 0.180 & 711 \\
-\addlinespace
-LLM (zero-shot) & Llama-3.1-70B-Instruct & none & 82 & 562 & 224 & 0.127 & 0.268 & 657 \\
-\addlinespace
-LLM (zero-shot) & Qwen2.5-7B-Instruct & none & 144 & 2353 & 162 & 0.058 & 0.471 & 2,750 \\
-\addlinespace
-LLM (zero-shot) & Qwen2.5-72B-Instruct & none & 84 & 2194 & 222 & 0.037 & 0.275 & 2,564 \\
-\addlinespace
-LLM (general) & DistilBERT & random & 297 & 233 & 9 & 0.561 & 0.971 & 272 \\
- &  & class-weighted & 277 & 35 & 29 & 0.888 & 0.905 & 41 \\
- &  & guided & 304 & 181 & 2 & 0.627 & 0.994 & 212 \\
-\addlinespace
-LLM (domain-specific) & SecureBERT 2.0 & random & 304 & 190 & 2 & 0.615 & 0.994 & 222 \\
- &  & class-weighted & 273 & 21 & 33 & 0.930 & 0.893 & 25 \\
- &  & guided & 293 & 112 & 13 & 0.723 & 0.958 & 131 \\
-\midrule
-Anomaly & OneClassSVM & benign-only & 72 & 1803 & 234 & 0.038 & 0.235 & 2,107 \\
-\addlinespace
-Anomaly & IsolationForest & benign-only & 82 & 1776 & 224 & 0.044 & 0.269 & 2,076 \\
-\addlinespace
-Anomaly + mining & OneClassSVM & benign-only & 306 & 1611 & 0 & 0.160 & 1.000 & 1,883 \\
-\addlinespace
-Anomaly + mining & IsolationForest & benign-only & 134 & 1081 & 172 & 0.110 & 0.437 & 1,263 \\
-\midrule
-always-alert & -- & -- & 306 & 19694 & 0 & 0.015 & 1.000 & 23,015 \\
+\endhead
+\midrule \multicolumn{10}{r}{\textit{continued on next page}} \\
+\endfoot
 \bottomrule
-\end{tabular}%
-}
-\end{table}
+\endlastfoot
+Paper (target) & Random Forest & Paper (42) & Full test & random undersampling & 18477 & 1227463 & 9142 & 710 & 170 \\
+ &  &  &  & guided by CSCAS & 18266 & 1233827 & 2778 & 921 & 52 \\
+\addlinespace
+Paper (reproduced) & Random Forest & Base (5) & Subsample & random & 303 & 19391 & 303 & 3 & 354 \\
+ &  &  &  & class-weighted & 212 & 19620 & 74 & 94 & 86 \\
+ &  &  &  & guided & 287 & 19467 & 227 & 19 & 265 \\
+\addlinespace
+Paper (reproduced) & Random Forest & Base (5) & Full test & random & 18821 & 1219735 & 16870 & 366 & 314 \\
+ &  &  &  & class-weighted & 13481 & 1232809 & 3796 & 5706 & 71 \\
+ &  &  &  & guided & 17787 & 1224191 & 12414 & 1400 & 231 \\
+\addlinespace
+Paper (reproduced) & Random Forest & Full (42) & Subsample & random & 295 & 19554 & 140 & 11 & 164 \\
+ &  &  &  & class-weighted & 261 & 19682 & 12 & 45 & 14 \\
+ &  &  &  & guided & 294 & 19640 & 54 & 12 & 63 \\
+\addlinespace
+Paper (reproduced) & Random Forest & Full (42) & Full test & random & 18618 & 1228129 & 8476 & 569 & 158 \\
+ &  &  &  & class-weighted & 16370 & 1236014 & 591 & 2817 & 11 \\
+ &  &  &  & guided & 18470 & 1233889 & 2716 & 717 & 51 \\
+\midrule
+Internal system & Random Forest & Base (5) & Subsample & random & 303 & 19391 & 303 & 3 & 354 \\
+ &  &  &  & class-weighted & 212 & 19618 & 76 & 94 & 89 \\
+ &  &  &  & guided & 287 & 19467 & 227 & 19 & 265 \\
+\addlinespace
+Internal system & Random Forest & Base (5) & Full test & random & 18821 & 1219735 & 16870 & 366 & 314 \\
+ &  &  &  & class-weighted & 13473 & 1232668 & 3937 & 5714 & 73 \\
+ &  &  &  & guided & 17786 & 1224191 & 12414 & 1401 & 231 \\
+\addlinespace
+Internal system & Random Forest & Full (42) & Subsample & random & 295 & 19554 & 140 & 11 & 164 \\
+ &  &  &  & class-weighted & 261 & 19682 & 12 & 45 & 14 \\
+ &  &  &  & guided & 294 & 19640 & 54 & 12 & 63 \\
+\addlinespace
+Internal system & Random Forest & Full (42) & Full test & random & 18618 & 1228129 & 8476 & 569 & 158 \\
+ &  &  &  & class-weighted & 16370 & 1236014 & 591 & 2817 & 11 \\
+ &  &  &  & guided & 18470 & 1233889 & 2716 & 717 & 51 \\
+\addlinespace
+Internal system & Logistic Regression & Base (5) & Subsample & random & 304 & 16089 & 3605 & 2 & 4,213 \\
+ &  &  &  & class-weighted & 305 & 17807 & 1887 & 1 & 2,205 \\
+ &  &  &  & guided & 304 & 16115 & 3579 & 2 & 4,183 \\
+\addlinespace
+Internal system & Logistic Regression & Base (5) & Full test & random & 18812 & 1015251 & 221354 & 375 & 4,120 \\
+ &  &  &  & class-weighted & 18883 & 1121437 & 115168 & 304 & 2,143 \\
+ &  &  &  & guided & 18803 & 1016987 & 219618 & 384 & 4,087 \\
+\addlinespace
+Internal system & Logistic Regression & Full (42) & Subsample & random & 299 & 19504 & 190 & 7 & 222 \\
+ &  &  &  & class-weighted & 290 & 19523 & 171 & 16 & 200 \\
+ &  &  &  & guided & 279 & 19569 & 125 & 27 & 146 \\
+\addlinespace
+Internal system & Logistic Regression & Full (42) & Full test & random & 18840 & 1224499 & 12106 & 347 & 225 \\
+ &  &  &  & class-weighted & 18312 & 1225785 & 10820 & 875 & 201 \\
+ &  &  &  & guided & 17942 & 1228945 & 7660 & 1245 & 143 \\
+\addlinespace
+Internal system & XGBoost & Base (5) & Subsample & random & 298 & 19408 & 286 & 8 & 334 \\
+ &  &  &  & class-weighted & 253 & 19583 & 111 & 53 & 130 \\
+ &  &  &  & guided & 282 & 19491 & 203 & 24 & 237 \\
+\addlinespace
+Internal system & XGBoost & Base (5) & Full test & random & 18513 & 1220917 & 15688 & 674 & 292 \\
+ &  &  &  & class-weighted & 16117 & 1230658 & 5947 & 3070 & 111 \\
+ &  &  &  & guided & 17397 & 1225209 & 11396 & 1790 & 212 \\
+\addlinespace
+Internal system & XGBoost & Full (42) & Subsample & random & 298 & 19588 & 106 & 8 & 124 \\
+ &  &  &  & class-weighted & 286 & 19685 & 9 & 20 & 11 \\
+ &  &  &  & guided & 291 & 19667 & 27 & 15 & 32 \\
+\addlinespace
+Internal system & XGBoost & Full (42) & Full test & random & 18811 & 1230504 & 6101 & 376 & 114 \\
+ &  &  &  & class-weighted & 18040 & 1236203 & 402 & 1147 & 7 \\
+ &  &  &  & guided & 18308 & 1235104 & 1501 & 879 & 28 \\
+\midrule
+Internal + mining & Random Forest & Base (5) + mined & Subsample & random & 297 & 19418 & 276 & 9 & 323 \\
+ &  &  &  & class-weighted & 215 & 19621 & 73 & 91 & 85 \\
+ &  &  &  & guided & 289 & 19467 & 227 & 17 & 265 \\
+\addlinespace
+Internal + mining & Random Forest & Base (5) + mined & Full test & random & 18415 & 1220924 & 15681 & 772 & 292 \\
+ &  &  &  & class-weighted & 13319 & 1233389 & 3216 & 5868 & 60 \\
+ &  &  &  & guided & 17842 & 1224154 & 12451 & 1345 & 232 \\
+\addlinespace
+Internal + mining & Random Forest & Full (42) + mined & Subsample & random & 296 & 19560 & 134 & 10 & 157 \\
+ &  &  &  & class-weighted & 250 & 19675 & 19 & 56 & 22 \\
+ &  &  &  & guided & 298 & 19637 & 57 & 8 & 67 \\
+\addlinespace
+Internal + mining & Random Forest & Full (42) + mined & Full test & random & 18665 & 1228608 & 7997 & 522 & 149 \\
+ &  &  &  & class-weighted & 15501 & 1235888 & 717 & 3686 & 13 \\
+ &  &  &  & guided & 18661 & 1233988 & 2617 & 526 & 49 \\
+\addlinespace
+Internal + mining & Logistic Regression & Base (5) + mined & Subsample & random & 298 & 19372 & 322 & 8 & 376 \\
+ &  &  &  & class-weighted & 298 & 19387 & 307 & 8 & 359 \\
+ &  &  &  & guided & 298 & 19358 & 336 & 8 & 393 \\
+\addlinespace
+Internal + mining & Logistic Regression & Base (5) + mined & Full test & random & 18382 & 1218246 & 18359 & 805 & 342 \\
+ &  &  &  & class-weighted & 18361 & 1219120 & 17485 & 826 & 325 \\
+ &  &  &  & guided & 18354 & 1217325 & 19280 & 833 & 359 \\
+\addlinespace
+Internal + mining & Logistic Regression & Full (42) + mined & Subsample & random & 302 & 19549 & 145 & 4 & 169 \\
+ &  &  &  & class-weighted & 300 & 19585 & 109 & 6 & 127 \\
+ &  &  &  & guided & 291 & 19580 & 114 & 15 & 133 \\
+\addlinespace
+Internal + mining & Logistic Regression & Full (42) + mined & Full test & random & 18924 & 1228084 & 8521 & 263 & 159 \\
+ &  &  &  & class-weighted & 18748 & 1230991 & 5614 & 439 & 104 \\
+ &  &  &  & guided & 18228 & 1230730 & 5875 & 959 & 109 \\
+\addlinespace
+Internal + mining & XGBoost & Base (5) + mined & Subsample & random & 297 & 19427 & 267 & 9 & 312 \\
+ &  &  &  & class-weighted & 259 & 19613 & 81 & 47 & 95 \\
+ &  &  &  & guided & 278 & 19499 & 195 & 28 & 228 \\
+\addlinespace
+Internal + mining & XGBoost & Base (5) + mined & Full test & random & 18397 & 1221765 & 14840 & 790 & 276 \\
+ &  &  &  & class-weighted & 16093 & 1232530 & 4075 & 3094 & 76 \\
+ &  &  &  & guided & 17189 & 1225752 & 10853 & 1998 & 202 \\
+\addlinespace
+Internal + mining & XGBoost & Full (42) + mined & Subsample & random & 298 & 19586 & 108 & 8 & 126 \\
+ &  &  &  & class-weighted & 280 & 19668 & 26 & 26 & 30 \\
+ &  &  &  & guided & 284 & 19648 & 46 & 22 & 54 \\
+\addlinespace
+Internal + mining & XGBoost & Full (42) + mined & Full test & random & 18815 & 1230409 & 6196 & 372 & 115 \\
+ &  &  &  & class-weighted & 17464 & 1235371 & 1234 & 1723 & 23 \\
+ &  &  &  & guided & 17745 & 1233944 & 2661 & 1442 & 50 \\
+\midrule
+LLM (zero-shot) & Llama-3.1-8B-Instruct & Base (6) as text & Subsample & none & 53 & 19087 & 607 & 253 & 709 \\
+\addlinespace
+LLM (zero-shot) & Llama-3.1-70B-Instruct & Base (6) as text & Subsample & none & 82 & 19132 & 562 & 224 & 657 \\
+\addlinespace
+LLM (zero-shot) & Qwen2.5-7B-Instruct & Base (6) as text & Subsample & none & 144 & 17341 & 2353 & 162 & 2,750 \\
+\addlinespace
+LLM (zero-shot) & Qwen2.5-72B-Instruct & Base (6) as text & Subsample & none & 84 & 17500 & 2194 & 222 & 2,564 \\
+\addlinespace
+LLM (general) & DistilBERT & Base (6) as text & Subsample & random & 300 & 19391 & 303 & 6 & 354 \\
+ &  &  &  & class-weighted & 285 & 19654 & 40 & 21 & 47 \\
+ &  &  &  & guided & 300 & 19537 & 157 & 6 & 183 \\
+\addlinespace
+LLM (general) & DistilBERT & Base (6) as text & Full test & random & 18778 & 1220208 & 16397 & 409 & 305 \\
+ &  &  &  & class-weighted & 17872 & 1234673 & 1932 & 1315 & 36 \\
+ &  &  &  & guided & 18749 & 1228401 & 8204 & 438 & 153 \\
+\addlinespace
+LLM (domain-specific) & SecureBERT 2.0 & Base (6) as text & Subsample & random & 289 & 19545 & 149 & 17 & 174 \\
+ &  &  &  & class-weighted & 275 & 19665 & 29 & 31 & 34 \\
+ &  &  &  & guided & 297 & 19565 & 129 & 9 & 151 \\
+\addlinespace
+LLM (domain-specific) & SecureBERT 2.0 & Base (6) as text & Full test & random & 18102 & 1228763 & 7842 & 1085 & 146 \\
+ &  &  &  & class-weighted & 17309 & 1235270 & 1335 & 1878 & 25 \\
+ &  &  &  & guided & 18551 & 1229647 & 6958 & 636 & 129 \\
+\midrule
+Anomaly & OneClassSVM & Base (5) & Subsample & benign-only & 50 & 18348 & 1346 & 256 & 1,573 \\
+\addlinespace
+Anomaly & OneClassSVM & Base (5) & Full test & benign-only & 3038 & 1153141 & 83464 & 16149 & 1,553 \\
+\addlinespace
+Anomaly & OneClassSVM & Full$-$SCAS (40) & Subsample & benign-only & 275 & 17456 & 2238 & 31 & 2,615 \\
+\addlinespace
+Anomaly & OneClassSVM & Full$-$SCAS (40) & Full test & benign-only & 17623 & 1100701 & 135904 & 1564 & 2,529 \\
+\addlinespace
+Anomaly & OneClassSVM & Full$+$SCAS (41) & Subsample & benign-only & 274 & 17506 & 2188 & 32 & 2,557 \\
+\addlinespace
+Anomaly & OneClassSVM & Full$+$SCAS (41) & Full test & benign-only & 17543 & 1104197 & 132408 & 1644 & 2,464 \\
+\addlinespace
+Anomaly & IsolationForest & Base (5) & Subsample & benign-only & 82 & 17918 & 1776 & 224 & 2,076 \\
+\addlinespace
+Anomaly & IsolationForest & Base (5) & Full test & benign-only & 5821 & 1125232 & 111373 & 13366 & 2,073 \\
+\addlinespace
+Anomaly & IsolationForest & Full$-$SCAS (40) & Subsample & benign-only & 305 & 18133 & 1561 & 1 & 1,824 \\
+\addlinespace
+Anomaly & IsolationForest & Full$-$SCAS (40) & Full test & benign-only & 19065 & 1140498 & 96107 & 122 & 1,789 \\
+\addlinespace
+Anomaly & IsolationForest & Full$+$SCAS (41) & Subsample & benign-only & 304 & 18120 & 1574 & 2 & 1,839 \\
+\addlinespace
+Anomaly & IsolationForest & Full$+$SCAS (41) & Full test & benign-only & 19057 & 1140139 & 96466 & 130 & 1,795 \\
+\addlinespace
+Anomaly + mining & OneClassSVM & Base (5) + mined & Subsample & benign-only & 306 & 18426 & 1268 & 0 & 1,482 \\
+\addlinespace
+Anomaly + mining & OneClassSVM & Base (5) + mined & Full test & benign-only & 19077 & 1160136 & 76469 & 110 & 1,423 \\
+\addlinespace
+Anomaly + mining & OneClassSVM & Full$-$SCAS (40) + mined & Subsample & benign-only & 306 & 17892 & 1802 & 0 & 2,106 \\
+\addlinespace
+Anomaly + mining & OneClassSVM & Full$-$SCAS (40) + mined & Full test & benign-only & 19187 & 1125484 & 111121 & 0 & 2,068 \\
+\addlinespace
+Anomaly + mining & OneClassSVM & Full$+$SCAS (41) + mined & Subsample & benign-only & 306 & 17938 & 1756 & 0 & 2,052 \\
+\addlinespace
+Anomaly + mining & OneClassSVM & Full$+$SCAS (41) + mined & Full test & benign-only & 19187 & 1128787 & 107818 & 0 & 2,007 \\
+\addlinespace
+Anomaly + mining & IsolationForest & Base (5) + mined & Subsample & benign-only & 134 & 18613 & 1081 & 172 & 1,263 \\
+\addlinespace
+Anomaly + mining & IsolationForest & Base (5) + mined & Full test & benign-only & 8718 & 1170953 & 65652 & 10469 & 1,222 \\
+\addlinespace
+Anomaly + mining & IsolationForest & Full$-$SCAS (40) + mined & Subsample & benign-only & 301 & 18720 & 974 & 5 & 1,138 \\
+\addlinespace
+Anomaly + mining & IsolationForest & Full$-$SCAS (40) + mined & Full test & benign-only & 18999 & 1177700 & 58905 & 188 & 1,096 \\
+\addlinespace
+Anomaly + mining & IsolationForest & Full$+$SCAS (41) + mined & Subsample & benign-only & 301 & 18608 & 1086 & 5 & 1,269 \\
+\addlinespace
+Anomaly + mining & IsolationForest & Full$+$SCAS (41) + mined & Full test & benign-only & 19000 & 1170182 & 66423 & 187 & 1,236 \\
+\midrule
+always-alert & -- & -- & -- & -- & 306 & 0 & 19694 & 0 & 23,015 \\
+\end{longtable}

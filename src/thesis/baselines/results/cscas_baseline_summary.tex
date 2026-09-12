@@ -1,75 +1,226 @@
-\begin{table}[htbp]
-\centering
-\small
-\caption{Summary of baseline performance on the CSCAS test set. Trainable
-classifiers report all three training-pool sampling conditions (random
-undersampling, class-weighted natural-ratio, guided by CSCAS's SCAS clusters) as
-mean$_{\pm\text{sd}}$ over 5 seeds; the paper target is the published result, the
-anomaly detectors are fit on benign rows only, and the zero-shot LLMs have no
-training step. Precision/recall/F1 are at each model's own decision threshold; the
-guided condition systematically trades precision for recall across every
-classifier. The paper-reproduced rows are scored on the full test set to match the
-published protocol; all other rows use the shared eval subsample. The anomaly rows are at the detectors' default rejection rate (nu / contamination = 0.05), which over-flags relative to the 1.5\% attack prevalence; Table~\ref{tab:cscas-anomaly-operating-points} reports them at a tuned threshold.}
-\label{tab:cscas-baseline-summary}
-\resizebox{\textwidth}{!}{%
-\begin{tabular}{llllccc}
+\begin{longtable}{llllcccc}
+\caption{Exhaustive CSCAS baseline results: every (baseline, model, feature
+schema, training condition, train/test split) combination with a result
+file. Trainable rows report mean$_{\pm\text{sd}}$ over 5 seeds; the paper
+target, zero-shot rows, and OneClassSVM (a deterministic single fit,
+$\pm$0.000) have no seed spread. Precision/recall/F1 are at each model's own
+decision threshold; AUC (blank outside the anomaly rows) is the
+threshold-free headline metric for those detectors, at the default rejection
+rate (nu / contamination = 0.05) -- see
+Table~\ref{tab:cscas-anomaly-operating-points} for a tuned-threshold view.
+The \textbf{Training} column reports the training-pool condition:
+\texttt{random} -- random undersampling of the majority (irrelevant) class
+down to the minority (important) count; \texttt{class-weighted} -- the full
+natural-ratio training pool with balanced class weights (\texttt{scale\_pos\_weight}
+for XGBoost); \texttt{guided} -- undersampling guided by CSCAS's own
+inlier/outlier verdict (50\% important, 25\% irrelevant inliers, 25\%
+irrelevant outliers); \texttt{benign-only} -- the anomaly detectors, fit on
+benign rows only, no important-class examples used in training;
+\texttt{none} -- zero-shot, no training step. The two \texttt{Paper (target)}
+rows reproduce the paper's own two conditions, \texttt{random undersampling}
+and \texttt{guided by CSCAS} (Table V), exactly as published.
+`+ mined' in Features denotes the attribute-mining-augmented variant of that
+schema. `Full-SCAS' / `Full+SCAS' are anomaly-only schema variants isolating
+the effect of CSCAS's own precomputed outlier flag. Zero-shot has no `Full
+test' row: not tractable at 1.26M individual LLM calls.}
+\label{tab:cscas-baseline-summary} \\
 \toprule
-\textbf{Baseline} & \textbf{Model} & \textbf{Features} & \textbf{Training} & \textbf{Precision} & \textbf{Recall} & \textbf{F1} \\
+\textbf{Baseline} & \textbf{Model} & \textbf{Features} & \textbf{Split} & \textbf{Training} & \textbf{Precision} & \textbf{Recall} & \textbf{F1} & \textbf{AUC} \\
 \midrule
-Paper (target) & Random Forest & Paper (42) & natural ratio & 0.868 & 0.952 & 0.908 \\
-\addlinespace
-Paper (reproduced) & Random Forest & Paper (42) & random & $0.687_{\pm 0.032}$ & $0.970_{\pm 0.010}$ & $0.804_{\pm 0.022}$ \\
- &  &  & class-weighted & $0.965_{\pm 0.003}$ & $0.854_{\pm 0.014}$ & $0.906_{\pm 0.009}$ \\
- &  &  & guided & $0.872_{\pm 0.012}$ & $0.963_{\pm 0.011}$ & $0.915_{\pm 0.009}$ \\
+\endfirsthead
+\multicolumn{9}{c}{\tablename\ \thetable{} -- continued from previous page} \\
+\toprule
+\textbf{Baseline} & \textbf{Model} & \textbf{Features} & \textbf{Split} & \textbf{Training} & \textbf{Precision} & \textbf{Recall} & \textbf{F1} & \textbf{AUC} \\
 \midrule
-Internal system & Logistic Regression & Base (5) & random & $0.078_{\pm 0.000}$ & $0.993_{\pm 0.000}$ & $0.145_{\pm 0.000}$ \\
- &  &  & class-weighted & $0.141_{\pm 0.000}$ & $1.000_{\pm 0.000}$ & $0.247_{\pm 0.000}$ \\
- &  &  & guided & $0.079_{\pm 0.000}$ & $0.991_{\pm 0.004}$ & $0.146_{\pm 0.001}$ \\
-\addlinespace
-Internal system & Random Forest & Base (5) & random & $0.500_{\pm 0.019}$ & $0.992_{\pm 0.005}$ & $0.665_{\pm 0.017}$ \\
- &  &  & class-weighted & $0.736_{\pm 0.028}$ & $0.693_{\pm 0.008}$ & $0.714_{\pm 0.016}$ \\
- &  &  & guided & $0.558_{\pm 0.026}$ & $0.939_{\pm 0.015}$ & $0.700_{\pm 0.024}$ \\
-\addlinespace
-Internal system & XGBoost & Base (5) & random & $0.511_{\pm 0.021}$ & $0.974_{\pm 0.012}$ & $0.670_{\pm 0.020}$ \\
- &  &  & class-weighted & $0.695_{\pm 0.000}$ & $0.827_{\pm 0.000}$ & $0.755_{\pm 0.000}$ \\
- &  &  & guided & $0.581_{\pm 0.035}$ & $0.921_{\pm 0.029}$ & $0.712_{\pm 0.031}$ \\
-\midrule
-Internal + mining & Logistic Regression & Base (5) + mined & random & $0.489_{\pm 0.004}$ & $0.975_{\pm 0.001}$ & $0.652_{\pm 0.003}$ \\
- &  &  & class-weighted & $0.508_{\pm 0.000}$ & $0.974_{\pm 0.000}$ & $0.667_{\pm 0.000}$ \\
- &  &  & guided & $0.494_{\pm 0.023}$ & $0.952_{\pm 0.019}$ & $0.650_{\pm 0.016}$ \\
-\addlinespace
-Internal + mining & Random Forest & Base (5) + mined & random & $0.518_{\pm 0.012}$ & $0.972_{\pm 0.004}$ & $0.676_{\pm 0.009}$ \\
- &  &  & class-weighted & $0.746_{\pm 0.008}$ & $0.704_{\pm 0.011}$ & $0.724_{\pm 0.007}$ \\
- &  &  & guided & $0.560_{\pm 0.012}$ & $0.943_{\pm 0.007}$ & $0.703_{\pm 0.009}$ \\
-\addlinespace
-Internal + mining & XGBoost & Base (5) + mined & random & $0.526_{\pm 0.020}$ & $0.971_{\pm 0.008}$ & $0.682_{\pm 0.016}$ \\
- &  &  & class-weighted & $0.762_{\pm 0.000}$ & $0.846_{\pm 0.000}$ & $0.802_{\pm 0.000}$ \\
- &  &  & guided & $0.588_{\pm 0.041}$ & $0.908_{\pm 0.025}$ & $0.713_{\pm 0.036}$ \\
-\midrule
-LLM (zero-shot) & Llama-3.1-8B-Instruct & Base (6) as text & none & 0.083 & 0.180 & 0.114 \\
-\addlinespace
-LLM (zero-shot) & Llama-3.1-70B-Instruct & Base (6) as text & none & 0.127 & 0.268 & 0.173 \\
-\addlinespace
-LLM (zero-shot) & Qwen2.5-7B-Instruct & Base (6) as text & none & 0.058 & 0.471 & 0.103 \\
-\addlinespace
-LLM (zero-shot) & Qwen2.5-72B-Instruct & Base (6) as text & none & 0.037 & 0.275 & 0.065 \\
-\addlinespace
-LLM (general) & DistilBERT & Base (6) as text & random & $0.561_{\pm 0.093}$ & $0.971_{\pm 0.017}$ & $0.707_{\pm 0.073}$ \\
- &  &  & class-weighted & $0.888_{\pm 0.094}$ & $0.905_{\pm 0.075}$ & $0.893_{\pm 0.064}$ \\
- &  &  & guided & $0.627_{\pm 0.091}$ & $0.994_{\pm 0.010}$ & $0.766_{\pm 0.064}$ \\
-\addlinespace
-LLM (domain-specific) & SecureBERT 2.0 & Base (6) as text & random & $0.615_{\pm 0.091}$ & $0.994_{\pm 0.010}$ & $0.756_{\pm 0.066}$ \\
- &  &  & class-weighted & $0.930_{\pm 0.056}$ & $0.893_{\pm 0.054}$ & $0.910_{\pm 0.038}$ \\
- &  &  & guided & $0.723_{\pm 0.091}$ & $0.958_{\pm 0.038}$ & $0.820_{\pm 0.056}$ \\
-\midrule
-Anomaly & OneClassSVM & Base (5) & benign-only & $0.038_{\pm 0.000}$ & $0.235_{\pm 0.000}$ & $0.066_{\pm 0.000}$ \\
-\addlinespace
-Anomaly & IsolationForest & Base (5) & benign-only & $0.044_{\pm 0.004}$ & $0.269_{\pm 0.037}$ & $0.076_{\pm 0.006}$ \\
-\addlinespace
-Anomaly + mining & OneClassSVM & Base (5) + mined & benign-only & $0.160_{\pm 0.000}$ & $1.000_{\pm 0.000}$ & $0.275_{\pm 0.000}$ \\
-\addlinespace
-Anomaly + mining & IsolationForest & Base (5) + mined & benign-only & $0.110_{\pm 0.018}$ & $0.437_{\pm 0.091}$ & $0.176_{\pm 0.030}$ \\
+\endhead
+\midrule \multicolumn{9}{r}{\textit{continued on next page}} \\
+\endfoot
 \bottomrule
-\end{tabular}%
-}
-\end{table}
+\endlastfoot
+Paper (target) & Random Forest & Paper (42) & Full test & random undersampling & 0.669 & 0.963 & 0.789 & -- \\
+ &  &  &  & guided by CSCAS & 0.868 & 0.952 & 0.908 & -- \\
+\addlinespace
+Paper (reproduced) & Random Forest & Base (5) & Subsample & random & $0.500_{\pm 0.019}$ & $0.992_{\pm 0.005}$ & $0.665_{\pm 0.017}$ & -- \\
+ &  &  &  & class-weighted & $0.743_{\pm 0.021}$ & $0.694_{\pm 0.006}$ & $0.717_{\pm 0.012}$ & -- \\
+ &  &  &  & guided & $0.558_{\pm 0.026}$ & $0.939_{\pm 0.015}$ & $0.700_{\pm 0.024}$ & -- \\
+\addlinespace
+Paper (reproduced) & Random Forest & Base (5) & Full test & random & $0.527_{\pm 0.016}$ & $0.981_{\pm 0.006}$ & $0.686_{\pm 0.013}$ & -- \\
+ &  &  &  & class-weighted & $0.780_{\pm 0.016}$ & $0.703_{\pm 0.006}$ & $0.739_{\pm 0.008}$ & -- \\
+ &  &  &  & guided & $0.589_{\pm 0.021}$ & $0.927_{\pm 0.010}$ & $0.720_{\pm 0.018}$ & -- \\
+\addlinespace
+Paper (reproduced) & Random Forest & Full (42) & Subsample & random & $0.678_{\pm 0.020}$ & $0.965_{\pm 0.008}$ & $0.796_{\pm 0.015}$ & -- \\
+ &  &  &  & class-weighted & $0.955_{\pm 0.004}$ & $0.853_{\pm 0.016}$ & $0.901_{\pm 0.010}$ & -- \\
+ &  &  &  & guided & $0.845_{\pm 0.019}$ & $0.961_{\pm 0.011}$ & $0.899_{\pm 0.015}$ & -- \\
+\addlinespace
+Paper (reproduced) & Random Forest & Full (42) & Full test & random & $0.687_{\pm 0.032}$ & $0.970_{\pm 0.010}$ & $0.804_{\pm 0.022}$ & -- \\
+ &  &  &  & class-weighted & $0.965_{\pm 0.003}$ & $0.853_{\pm 0.015}$ & $0.906_{\pm 0.010}$ & -- \\
+ &  &  &  & guided & $0.872_{\pm 0.012}$ & $0.963_{\pm 0.011}$ & $0.915_{\pm 0.009}$ & -- \\
+\midrule
+Internal system & Random Forest & Base (5) & Subsample & random & $0.500_{\pm 0.019}$ & $0.992_{\pm 0.005}$ & $0.665_{\pm 0.017}$ & -- \\
+ &  &  &  & class-weighted & $0.736_{\pm 0.028}$ & $0.693_{\pm 0.008}$ & $0.714_{\pm 0.016}$ & -- \\
+ &  &  &  & guided & $0.558_{\pm 0.026}$ & $0.939_{\pm 0.015}$ & $0.700_{\pm 0.024}$ & -- \\
+\addlinespace
+Internal system & Random Forest & Base (5) & Full test & random & $0.527_{\pm 0.016}$ & $0.981_{\pm 0.006}$ & $0.686_{\pm 0.013}$ & -- \\
+ &  &  &  & class-weighted & $0.774_{\pm 0.025}$ & $0.702_{\pm 0.005}$ & $0.736_{\pm 0.013}$ & -- \\
+ &  &  &  & guided & $0.589_{\pm 0.021}$ & $0.927_{\pm 0.010}$ & $0.720_{\pm 0.018}$ & -- \\
+\addlinespace
+Internal system & Random Forest & Full (42) & Subsample & random & $0.678_{\pm 0.020}$ & $0.965_{\pm 0.008}$ & $0.796_{\pm 0.015}$ & -- \\
+ &  &  &  & class-weighted & $0.955_{\pm 0.004}$ & $0.853_{\pm 0.016}$ & $0.901_{\pm 0.010}$ & -- \\
+ &  &  &  & guided & $0.845_{\pm 0.019}$ & $0.961_{\pm 0.011}$ & $0.899_{\pm 0.015}$ & -- \\
+\addlinespace
+Internal system & Random Forest & Full (42) & Full test & random & $0.687_{\pm 0.032}$ & $0.970_{\pm 0.010}$ & $0.804_{\pm 0.022}$ & -- \\
+ &  &  &  & class-weighted & $0.965_{\pm 0.003}$ & $0.853_{\pm 0.015}$ & $0.906_{\pm 0.010}$ & -- \\
+ &  &  &  & guided & $0.872_{\pm 0.012}$ & $0.963_{\pm 0.011}$ & $0.915_{\pm 0.009}$ & -- \\
+\addlinespace
+Internal system & Logistic Regression & Base (5) & Subsample & random & $0.078_{\pm 0.000}$ & $0.993_{\pm 0.000}$ & $0.144_{\pm 0.001}$ & -- \\
+ &  &  &  & class-weighted & $0.139_{\pm 0.000}$ & $0.997_{\pm 0.000}$ & $0.244_{\pm 0.000}$ & -- \\
+ &  &  &  & guided & $0.078_{\pm 0.000}$ & $0.993_{\pm 0.000}$ & $0.145_{\pm 0.000}$ & -- \\
+\addlinespace
+Internal system & Logistic Regression & Base (5) & Full test & random & $0.078_{\pm 0.000}$ & $0.980_{\pm 0.000}$ & $0.145_{\pm 0.001}$ & -- \\
+ &  &  &  & class-weighted & $0.141_{\pm 0.000}$ & $0.984_{\pm 0.000}$ & $0.246_{\pm 0.000}$ & -- \\
+ &  &  &  & guided & $0.079_{\pm 0.000}$ & $0.980_{\pm 0.001}$ & $0.146_{\pm 0.000}$ & -- \\
+\addlinespace
+Internal system & Logistic Regression & Full (42) & Subsample & random & $0.611_{\pm 0.013}$ & $0.976_{\pm 0.003}$ & $0.752_{\pm 0.010}$ & -- \\
+ &  &  &  & class-weighted & $0.629_{\pm 0.000}$ & $0.948_{\pm 0.000}$ & $0.756_{\pm 0.000}$ & -- \\
+ &  &  &  & guided & $0.690_{\pm 0.012}$ & $0.913_{\pm 0.005}$ & $0.786_{\pm 0.008}$ & -- \\
+\addlinespace
+Internal system & Logistic Regression & Full (42) & Full test & random & $0.609_{\pm 0.019}$ & $0.982_{\pm 0.002}$ & $0.751_{\pm 0.015}$ & -- \\
+ &  &  &  & class-weighted & $0.629_{\pm 0.000}$ & $0.954_{\pm 0.000}$ & $0.758_{\pm 0.000}$ & -- \\
+ &  &  &  & guided & $0.701_{\pm 0.013}$ & $0.935_{\pm 0.004}$ & $0.801_{\pm 0.010}$ & -- \\
+\addlinespace
+Internal system & XGBoost & Base (5) & Subsample & random & $0.511_{\pm 0.021}$ & $0.974_{\pm 0.012}$ & $0.670_{\pm 0.020}$ & -- \\
+ &  &  &  & class-weighted & $0.695_{\pm 0.000}$ & $0.827_{\pm 0.000}$ & $0.755_{\pm 0.000}$ & -- \\
+ &  &  &  & guided & $0.581_{\pm 0.035}$ & $0.921_{\pm 0.029}$ & $0.712_{\pm 0.031}$ & -- \\
+\addlinespace
+Internal system & XGBoost & Base (5) & Full test & random & $0.541_{\pm 0.020}$ & $0.965_{\pm 0.009}$ & $0.693_{\pm 0.018}$ & -- \\
+ &  &  &  & class-weighted & $0.730_{\pm 0.000}$ & $0.840_{\pm 0.000}$ & $0.781_{\pm 0.000}$ & -- \\
+ &  &  &  & guided & $0.604_{\pm 0.039}$ & $0.907_{\pm 0.026}$ & $0.725_{\pm 0.032}$ & -- \\
+\addlinespace
+Internal system & XGBoost & Full (42) & Subsample & random & $0.737_{\pm 0.015}$ & $0.975_{\pm 0.007}$ & $0.840_{\pm 0.009}$ & -- \\
+ &  &  &  & class-weighted & $0.969_{\pm 0.000}$ & $0.935_{\pm 0.000}$ & $0.952_{\pm 0.000}$ & -- \\
+ &  &  &  & guided & $0.916_{\pm 0.015}$ & $0.950_{\pm 0.013}$ & $0.933_{\pm 0.011}$ & -- \\
+\addlinespace
+Internal system & XGBoost & Full (42) & Full test & random & $0.755_{\pm 0.012}$ & $0.980_{\pm 0.004}$ & $0.853_{\pm 0.007}$ & -- \\
+ &  &  &  & class-weighted & $0.978_{\pm 0.000}$ & $0.940_{\pm 0.000}$ & $0.959_{\pm 0.000}$ & -- \\
+ &  &  &  & guided & $0.924_{\pm 0.011}$ & $0.954_{\pm 0.016}$ & $0.939_{\pm 0.007}$ & -- \\
+\midrule
+Internal + mining & Random Forest & Base (5) + mined & Subsample & random & $0.518_{\pm 0.012}$ & $0.972_{\pm 0.004}$ & $0.676_{\pm 0.009}$ & -- \\
+ &  &  &  & class-weighted & $0.746_{\pm 0.008}$ & $0.704_{\pm 0.011}$ & $0.724_{\pm 0.007}$ & -- \\
+ &  &  &  & guided & $0.560_{\pm 0.012}$ & $0.943_{\pm 0.007}$ & $0.703_{\pm 0.009}$ & -- \\
+\addlinespace
+Internal + mining & Random Forest & Base (5) + mined & Full test & random & $0.540_{\pm 0.009}$ & $0.960_{\pm 0.005}$ & $0.691_{\pm 0.007}$ & -- \\
+ &  &  &  & class-weighted & $0.805_{\pm 0.009}$ & $0.694_{\pm 0.006}$ & $0.746_{\pm 0.006}$ & -- \\
+ &  &  &  & guided & $0.589_{\pm 0.013}$ & $0.930_{\pm 0.009}$ & $0.721_{\pm 0.008}$ & -- \\
+\addlinespace
+Internal + mining & Random Forest & Full (42) + mined & Subsample & random & $0.688_{\pm 0.002}$ & $0.968_{\pm 0.007}$ & $0.804_{\pm 0.002}$ & -- \\
+ &  &  &  & class-weighted & $0.930_{\pm 0.009}$ & $0.818_{\pm 0.015}$ & $0.870_{\pm 0.009}$ & -- \\
+ &  &  &  & guided & $0.839_{\pm 0.008}$ & $0.973_{\pm 0.010}$ & $0.901_{\pm 0.005}$ & -- \\
+\addlinespace
+Internal + mining & Random Forest & Full (42) + mined & Full test & random & $0.700_{\pm 0.006}$ & $0.973_{\pm 0.007}$ & $0.814_{\pm 0.004}$ & -- \\
+ &  &  &  & class-weighted & $0.956_{\pm 0.004}$ & $0.808_{\pm 0.008}$ & $0.876_{\pm 0.005}$ & -- \\
+ &  &  &  & guided & $0.877_{\pm 0.006}$ & $0.973_{\pm 0.011}$ & $0.922_{\pm 0.005}$ & -- \\
+\addlinespace
+Internal + mining & Logistic Regression & Base (5) + mined & Subsample & random & $0.481_{\pm 0.011}$ & $0.975_{\pm 0.001}$ & $0.644_{\pm 0.010}$ & -- \\
+ &  &  &  & class-weighted & $0.493_{\pm 0.000}$ & $0.974_{\pm 0.000}$ & $0.654_{\pm 0.000}$ & -- \\
+ &  &  &  & guided & $0.470_{\pm 0.003}$ & $0.974_{\pm 0.000}$ & $0.634_{\pm 0.002}$ & -- \\
+\addlinespace
+Internal + mining & Logistic Regression & Base (5) + mined & Full test & random & $0.500_{\pm 0.012}$ & $0.958_{\pm 0.002}$ & $0.657_{\pm 0.010}$ & -- \\
+ &  &  &  & class-weighted & $0.512_{\pm 0.000}$ & $0.957_{\pm 0.000}$ & $0.667_{\pm 0.000}$ & -- \\
+ &  &  &  & guided & $0.488_{\pm 0.002}$ & $0.957_{\pm 0.000}$ & $0.646_{\pm 0.002}$ & -- \\
+\addlinespace
+Internal + mining & Logistic Regression & Full (42) + mined & Subsample & random & $0.676_{\pm 0.022}$ & $0.986_{\pm 0.004}$ & $0.802_{\pm 0.015}$ & -- \\
+ &  &  &  & class-weighted & $0.733_{\pm 0.000}$ & $0.980_{\pm 0.000}$ & $0.839_{\pm 0.000}$ & -- \\
+ &  &  &  & guided & $0.718_{\pm 0.046}$ & $0.952_{\pm 0.005}$ & $0.818_{\pm 0.029}$ & -- \\
+\addlinespace
+Internal + mining & Logistic Regression & Full (42) + mined & Full test & random & $0.690_{\pm 0.018}$ & $0.986_{\pm 0.001}$ & $0.812_{\pm 0.012}$ & -- \\
+ &  &  &  & class-weighted & $0.770_{\pm 0.000}$ & $0.977_{\pm 0.000}$ & $0.861_{\pm 0.000}$ & -- \\
+ &  &  &  & guided & $0.756_{\pm 0.047}$ & $0.950_{\pm 0.005}$ & $0.841_{\pm 0.029}$ & -- \\
+\addlinespace
+Internal + mining & XGBoost & Base (5) + mined & Subsample & random & $0.526_{\pm 0.020}$ & $0.971_{\pm 0.008}$ & $0.682_{\pm 0.016}$ & -- \\
+ &  &  &  & class-weighted & $0.762_{\pm 0.000}$ & $0.846_{\pm 0.000}$ & $0.802_{\pm 0.000}$ & -- \\
+ &  &  &  & guided & $0.588_{\pm 0.041}$ & $0.908_{\pm 0.025}$ & $0.713_{\pm 0.036}$ & -- \\
+\addlinespace
+Internal + mining & XGBoost & Base (5) + mined & Full test & random & $0.554_{\pm 0.019}$ & $0.959_{\pm 0.004}$ & $0.702_{\pm 0.015}$ & -- \\
+ &  &  &  & class-weighted & $0.798_{\pm 0.000}$ & $0.839_{\pm 0.000}$ & $0.818_{\pm 0.000}$ & -- \\
+ &  &  &  & guided & $0.613_{\pm 0.044}$ & $0.896_{\pm 0.020}$ & $0.727_{\pm 0.036}$ & -- \\
+\addlinespace
+Internal + mining & XGBoost & Full (42) + mined & Subsample & random & $0.734_{\pm 0.013}$ & $0.975_{\pm 0.007}$ & $0.838_{\pm 0.007}$ & -- \\
+ &  &  &  & class-weighted & $0.915_{\pm 0.000}$ & $0.915_{\pm 0.000}$ & $0.915_{\pm 0.000}$ & -- \\
+ &  &  &  & guided & $0.861_{\pm 0.109}$ & $0.928_{\pm 0.017}$ & $0.890_{\pm 0.062}$ & -- \\
+\addlinespace
+Internal + mining & XGBoost & Full (42) + mined & Full test & random & $0.752_{\pm 0.012}$ & $0.981_{\pm 0.004}$ & $0.851_{\pm 0.007}$ & -- \\
+ &  &  &  & class-weighted & $0.934_{\pm 0.000}$ & $0.910_{\pm 0.000}$ & $0.922_{\pm 0.000}$ & -- \\
+ &  &  &  & guided & $0.870_{\pm 0.100}$ & $0.925_{\pm 0.013}$ & $0.894_{\pm 0.057}$ & -- \\
+\midrule
+LLM (zero-shot) & Llama-3.1-8B-Instruct & Base (6) as text & Subsample & none & 0.080 & 0.173 & 0.110 & -- \\
+\addlinespace
+LLM (zero-shot) & Llama-3.1-70B-Instruct & Base (6) as text & Subsample & none & 0.127 & 0.268 & 0.173 & -- \\
+\addlinespace
+LLM (zero-shot) & Qwen2.5-7B-Instruct & Base (6) as text & Subsample & none & 0.058 & 0.471 & 0.103 & -- \\
+\addlinespace
+LLM (zero-shot) & Qwen2.5-72B-Instruct & Base (6) as text & Subsample & none & 0.037 & 0.275 & 0.065 & -- \\
+\addlinespace
+LLM (general) & DistilBERT & Base (6) as text & Subsample & random & $0.498_{\pm 0.067}$ & $0.981_{\pm 0.018}$ & $0.658_{\pm 0.060}$ & -- \\
+ &  &  &  & class-weighted & $0.876_{\pm 0.075}$ & $0.931_{\pm 0.048}$ & $0.901_{\pm 0.040}$ & -- \\
+ &  &  &  & guided & $0.657_{\pm 0.132}$ & $0.980_{\pm 0.035}$ & $0.779_{\pm 0.078}$ & -- \\
+\addlinespace
+LLM (general) & DistilBERT & Base (6) as text & Full test & random & $0.534_{\pm 0.075}$ & $0.979_{\pm 0.019}$ & $0.688_{\pm 0.065}$ & -- \\
+ &  &  &  & class-weighted & $0.902_{\pm 0.065}$ & $0.931_{\pm 0.051}$ & $0.915_{\pm 0.036}$ & -- \\
+ &  &  &  & guided & $0.696_{\pm 0.130}$ & $0.977_{\pm 0.036}$ & $0.805_{\pm 0.072}$ & -- \\
+\addlinespace
+LLM (domain-specific) & SecureBERT 2.0 & Base (6) as text & Subsample & random & $0.660_{\pm 0.110}$ & $0.946_{\pm 0.034}$ & $0.772_{\pm 0.074}$ & -- \\
+ &  &  &  & class-weighted & $0.903_{\pm 0.071}$ & $0.899_{\pm 0.043}$ & $0.900_{\pm 0.046}$ & -- \\
+ &  &  &  & guided & $0.697_{\pm 0.163}$ & $0.971_{\pm 0.029}$ & $0.800_{\pm 0.112}$ & -- \\
+\addlinespace
+LLM (domain-specific) & SecureBERT 2.0 & Base (6) as text & Full test & random & $0.698_{\pm 0.110}$ & $0.943_{\pm 0.032}$ & $0.797_{\pm 0.071}$ & -- \\
+ &  &  &  & class-weighted & $0.928_{\pm 0.054}$ & $0.902_{\pm 0.046}$ & $0.914_{\pm 0.038}$ & -- \\
+ &  &  &  & guided & $0.727_{\pm 0.170}$ & $0.967_{\pm 0.033}$ & $0.818_{\pm 0.109}$ & -- \\
+\midrule
+Anomaly & OneClassSVM & Base (5) & Subsample & benign-only & $0.036_{\pm 0.000}$ & $0.163_{\pm 0.000}$ & $0.059_{\pm 0.000}$ & 0.653 \\
+\addlinespace
+Anomaly & OneClassSVM & Base (5) & Full test & benign-only & $0.035_{\pm 0.000}$ & $0.158_{\pm 0.000}$ & $0.057_{\pm 0.000}$ & 0.666 \\
+\addlinespace
+Anomaly & OneClassSVM & Full$-$SCAS (40) & Subsample & benign-only & $0.109_{\pm 0.000}$ & $0.899_{\pm 0.000}$ & $0.195_{\pm 0.000}$ & 0.956 \\
+\addlinespace
+Anomaly & OneClassSVM & Full$-$SCAS (40) & Full test & benign-only & $0.115_{\pm 0.000}$ & $0.918_{\pm 0.000}$ & $0.204_{\pm 0.000}$ & 0.962 \\
+\addlinespace
+Anomaly & OneClassSVM & Full$+$SCAS (41) & Subsample & benign-only & $0.111_{\pm 0.000}$ & $0.895_{\pm 0.000}$ & $0.198_{\pm 0.000}$ & 0.955 \\
+\addlinespace
+Anomaly & OneClassSVM & Full$+$SCAS (41) & Full test & benign-only & $0.117_{\pm 0.000}$ & $0.914_{\pm 0.000}$ & $0.207_{\pm 0.000}$ & 0.962 \\
+\addlinespace
+Anomaly & IsolationForest & Base (5) & Subsample & benign-only & $0.044_{\pm 0.004}$ & $0.269_{\pm 0.037}$ & $0.076_{\pm 0.006}$ & 0.825 \\
+\addlinespace
+Anomaly & IsolationForest & Base (5) & Full test & benign-only & $0.050_{\pm 0.004}$ & $0.303_{\pm 0.037}$ & $0.085_{\pm 0.006}$ & 0.827 \\
+\addlinespace
+Anomaly & IsolationForest & Full$-$SCAS (40) & Subsample & benign-only & $0.163_{\pm 0.006}$ & $0.997_{\pm 0.005}$ & $0.281_{\pm 0.008}$ & 0.994 \\
+\addlinespace
+Anomaly & IsolationForest & Full$-$SCAS (40) & Full test & benign-only & $0.166_{\pm 0.006}$ & $0.994_{\pm 0.001}$ & $0.284_{\pm 0.009}$ & 0.994 \\
+\addlinespace
+Anomaly & IsolationForest & Full$+$SCAS (41) & Subsample & benign-only & $0.162_{\pm 0.011}$ & $0.993_{\pm 0.008}$ & $0.278_{\pm 0.016}$ & 0.993 \\
+\addlinespace
+Anomaly & IsolationForest & Full$+$SCAS (41) & Full test & benign-only & $0.165_{\pm 0.010}$ & $0.993_{\pm 0.003}$ & $0.283_{\pm 0.015}$ & 0.994 \\
+\addlinespace
+Anomaly + mining & OneClassSVM & Base (5) + mined & Subsample & benign-only & $0.194_{\pm 0.000}$ & $1.000_{\pm 0.000}$ & $0.326_{\pm 0.000}$ & 0.995 \\
+\addlinespace
+Anomaly + mining & OneClassSVM & Base (5) + mined & Full test & benign-only & $0.200_{\pm 0.000}$ & $0.994_{\pm 0.000}$ & $0.333_{\pm 0.000}$ & 0.994 \\
+\addlinespace
+Anomaly + mining & OneClassSVM & Full$-$SCAS (40) + mined & Subsample & benign-only & $0.145_{\pm 0.000}$ & $1.000_{\pm 0.000}$ & $0.254_{\pm 0.000}$ & 0.995 \\
+\addlinespace
+Anomaly + mining & OneClassSVM & Full$-$SCAS (40) + mined & Full test & benign-only & $0.147_{\pm 0.000}$ & $1.000_{\pm 0.000}$ & $0.257_{\pm 0.000}$ & 0.995 \\
+\addlinespace
+Anomaly + mining & OneClassSVM & Full$+$SCAS (41) + mined & Subsample & benign-only & $0.148_{\pm 0.000}$ & $1.000_{\pm 0.000}$ & $0.258_{\pm 0.000}$ & 0.995 \\
+\addlinespace
+Anomaly + mining & OneClassSVM & Full$+$SCAS (41) + mined & Full test & benign-only & $0.151_{\pm 0.000}$ & $1.000_{\pm 0.000}$ & $0.262_{\pm 0.000}$ & 0.995 \\
+\addlinespace
+Anomaly + mining & IsolationForest & Base (5) + mined & Subsample & benign-only & $0.110_{\pm 0.018}$ & $0.437_{\pm 0.091}$ & $0.176_{\pm 0.030}$ & 0.928 \\
+\addlinespace
+Anomaly + mining & IsolationForest & Base (5) + mined & Full test & benign-only & $0.117_{\pm 0.017}$ & $0.454_{\pm 0.082}$ & $0.186_{\pm 0.029}$ & 0.930 \\
+\addlinespace
+Anomaly + mining & IsolationForest & Full$-$SCAS (40) + mined & Subsample & benign-only & $0.236_{\pm 0.018}$ & $0.984_{\pm 0.001}$ & $0.381_{\pm 0.023}$ & 0.993 \\
+\addlinespace
+Anomaly + mining & IsolationForest & Full$-$SCAS (40) + mined & Full test & benign-only & $0.244_{\pm 0.017}$ & $0.990_{\pm 0.001}$ & $0.391_{\pm 0.022}$ & 0.993 \\
+\addlinespace
+Anomaly + mining & IsolationForest & Full$+$SCAS (41) + mined & Subsample & benign-only & $0.217_{\pm 0.010}$ & $0.985_{\pm 0.003}$ & $0.356_{\pm 0.013}$ & 0.994 \\
+\addlinespace
+Anomaly + mining & IsolationForest & Full$+$SCAS (41) + mined & Full test & benign-only & $0.222_{\pm 0.010}$ & $0.990_{\pm 0.001}$ & $0.363_{\pm 0.014}$ & 0.994 \\
+\end{longtable}

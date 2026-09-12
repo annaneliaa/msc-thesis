@@ -1,0 +1,38 @@
+\begin{table}[htbp]
+\centering
+\small
+\caption{Combinations deliberately excluded from the CSCAS baseline grid.}
+\label{tab:cscas-grid-exclusions}
+\begin{tabular}{p{0.32\textwidth}p{0.58\textwidth}}
+\toprule
+\textbf{Excluded combination} & \textbf{Reason} \\
+\midrule
+Zero-shot $\times$ full test set &
+Would require $\sim$1.26M individual LLM prompts; not computationally
+tractable. Kept on the shared 20k subsample like every other
+non-replication baseline. \\[4pt]
+Text models (BERT / SecureBERT / zero-shot) $\times$ full (42-feature) schema &
+The 34 \texttt{*Similarity} columns are non-textual numeric scores;
+serializing them into the input string was judged to add token cost
+without giving a transformer usable signal (subword tokenization does not
+expose numeric structure). Text models keep the 6-field schema and are
+swept only on the eval-set axis. \\[4pt]
+BERT-embedding + similarity-vector hybrid architecture &
+Would let a text model genuinely use the similarity features, but
+constitutes a new model architecture rather than a variant of the existing
+baseline -- scoped out as future work rather than added to this grid. \\[4pt]
+Classifiers (RF, LogReg, XGBoost, mining variants) $\times$ full$-$SCAS /
+full$+$SCAS schema &
+Those two variants exist specifically to test whether handing a
+\emph{precomputed outlier flag} to a one-class \emph{anomaly} detector is
+circular. Not a meaningful ablation for supervised classifiers, which
+already train on the paper's unmodified 42-feature \texttt{full} schema
+(SCAS included, matching the paper's own protocol). \\[4pt]
+\texttt{SignatureID} as a feature, anywhere &
+Nominal row identifier, not a real signal -- excluded from every schema
+(base, full, and both anomaly full variants) for every model, including
+the paper-replication RF, where it is dropped from \texttt{base} but
+retained in \texttt{full} per the paper's own protocol. \\
+\bottomrule
+\end{tabular}
+\end{table}

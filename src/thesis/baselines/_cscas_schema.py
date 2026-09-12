@@ -82,6 +82,57 @@ SCHEMAS_CLASSIFIER = ("base", "full")
 SCHEMAS_ANOMALY = ("base", "full_noscas", "full_scas")
 
 
+#: attribute-mining tree config for the three mining baselines
+#: (cscas_mining.py, cscas_mining_anomaly.py, cscas_mining_anomaly_iforest.py).
+#: "single_tree" (default) is the original config every existing mining
+#: result was produced with -- max_depth_attack unset, one shared tree.
+#: "two_tree" is an add-on, not a replacement: fits a second, deeper tree
+#: specifically for attack-leaning leaves alongside the shallow benign-facing
+#: one. Selected the same way as CSCAS_SCHEMA (env var, additive result-name
+#: suffix), so single-tree result files are untouched.
+MINING_MODES = ("single_tree", "two_tree")
+MINING_MODE_SUFFIX = {"single_tree": "", "two_tree": "_twotree"}
+
+
+def active_mining_mode() -> str:
+    """Which attribute-mining tree config this process should use, from
+    CSCAS_MINING_MODE. Defaults to "single_tree" so a bare `python
+    cscas_mining.py` reproduces the existing result files unchanged."""
+    mode = os.environ.get("CSCAS_MINING_MODE", "single_tree").strip().lower()
+    if mode not in MINING_MODES:
+        raise ValueError(
+            f"CSCAS_MINING_MODE={mode!r} not valid; expected one of {MINING_MODES}"
+        )
+    return mode
+
+
+def mining_attribute_config(mode: str):
+    """AttributeMiningConfig for the given mining mode.
+
+    "two_tree" is the gr3_md1_mda4 point from
+    configs/screening_mining_settings.yaml (the project's own two-tree
+    feasible grid, from attribute_mining_sweep_eda.ipynb section 5.3/6.3):
+    max_depth=1 for the benign-facing tree (far more stable across windows
+    than max_depth=2 per that notebook's addendum -- recall_benign mean 0.99,
+    std 0.005 vs. mean 0.546, std 0.123), max_depth_attack=4 (matches
+    single_tree's own max_depth exactly, so the attack-facing tree isn't
+    additionally shallower than the baseline it's being compared against),
+    min_samples_leaf=10 (that grid's own anchor; single_tree uses 20).
+    Contrast-stage thresholds and class_weight are left at
+    AttributeMiningConfig's defaults, identical between both modes."""
+    from thesis.schemas.mining import AttributeMiningConfig, DecisionTreeRuleConfig
+
+    if mode == "single_tree":
+        return AttributeMiningConfig()
+    if mode == "two_tree":
+        return AttributeMiningConfig(
+            tree=DecisionTreeRuleConfig(
+                max_depth=1, max_depth_attack=4, min_samples_leaf=10
+            )
+        )
+    raise ValueError(f"unknown mining mode {mode!r}; expected one of {MINING_MODES}")
+
+
 def active_schema(allowed: tuple[str, ...] = SCHEMAS) -> str:
     """The schema this process should run, from CSCAS_SCHEMA.
 

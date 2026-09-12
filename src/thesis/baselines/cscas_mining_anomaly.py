@@ -23,9 +23,17 @@ Scoring convention (matches cscas_anomaly.py / experiments/anomaly.py):
   scores = -model.decision_function(X_test)   # higher = more anomalous
   y_pred = (model.predict(X_test) == -1)      # 1 = anomaly = attack
 
+Two attribute-mining tree modes, via the CSCAS_MINING_MODE env var (default
+"single_tree", the original config every existing *_mining*.json result was
+produced with). "two_tree" is an add-on, not a replacement: see
+cscas_mining.py's own docstring / _cscas_schema.mining_attribute_config.
+Writes "_twotree"-suffixed result files so single-tree results are never
+overwritten.
+
 Run:
     cd src/thesis/baselines
-    python cscas_mining_anomaly.py
+    python cscas_mining_anomaly.py                              # single-tree
+    CSCAS_MINING_MODE=two_tree python cscas_mining_anomaly.py    # two-tree add-on
 
 The data path below is relative to the current working directory (not this
 file's location), so it must be run from src/thesis/baselines/.
@@ -38,10 +46,13 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.svm import OneClassSVM
 
 from thesis.baselines._cscas_schema import (
+    MINING_MODE_SUFFIX,
     SCHEMAS_ANOMALY,
+    active_mining_mode,
     active_schema,
     cscas_feature_cols,
     grid_outputs_done,
+    mining_attribute_config,
     result_name,
     schema_blurb,
     sentinel_imputer,
@@ -53,7 +64,6 @@ from thesis.features.schema_builder import build_symbolic_feature_schema
 from thesis.mining.attribute_mining_job import run_alert_group_attribute_mining_job
 from thesis.paths import CACHE_DIR
 from thesis.pipeline.pipeline import rows_to_cscas_alert_groups, save_alert_groups_json
-from thesis.schemas.mining import AttributeMiningConfig
 from thesis.schemas.preprocessing import ATTR_SIMILARITY_COLUMNS
 from thesis.training.workload import compute_workload_at_recall
 
@@ -103,13 +113,18 @@ print(FEATURE_COLS)
 # train rows only); the mined symbolic columns are binary with no -1 and pass
 # through untouched. See _cscas_schema.py.
 
-# 4c) Skip early (before the minutes-long mining pass) if both result files
+# 4c) Mining tree mode -- CSCAS_MINING_MODE env var picks "single_tree"
+# (default, unchanged result files) or "two_tree" (add-on, "_twotree"-suffixed
+# result files). See _cscas_schema.py.
+MINING_MODE = active_mining_mode()
+MODE_SUFFIX = MINING_MODE_SUFFIX[MINING_MODE]
+print(f"Mining tree mode: {MINING_MODE}")
+
+# 4d) Skip early (before the minutes-long mining pass) if both result files
 # for this schema already exist.
-NEEDED = {
-    ek: result_name("cscas_mining_anomaly_ocsvm", SCHEMA, ek)
-    for ek in ("subsample", "fulltest")
-}
-if grid_outputs_done(["cscas_mining_anomaly_ocsvm"], SCHEMA):
+STEM = f"cscas_mining_anomaly_ocsvm{MODE_SUFFIX}"
+NEEDED = {ek: result_name(STEM, SCHEMA, ek) for ek in ("subsample", "fulltest")}
+if grid_outputs_done([STEM], SCHEMA):
     print(f"[skip] {list(NEEDED.values())} already exist (CSCAS_FORCE=1 to re-run).")
     raise SystemExit(0)
 
@@ -160,12 +175,12 @@ LEAKY_ATTRIBUTE_FIELDS = {
     ),
 }
 
-print("Mining attribute schema on train split...")
+print(f"Mining attribute schema on train split ({MINING_MODE} mode)...")
 mining_result = run_alert_group_attribute_mining_job(
     alert_groups_path=train_alert_groups_path,
     scenario_name="cscas",
-    run_name="cscas_baseline_mining_anomaly",
-    config=AttributeMiningConfig(),
+    run_name=f"cscas_baseline_mining_anomaly{MODE_SUFFIX}",
+    config=mining_attribute_config(MINING_MODE),
     exclude_fields=LEAKY_ATTRIBUTE_FIELDS,
 )
 print(f"  Mined {len(mining_result.predicates)} predicates from train split.")
@@ -242,8 +257,9 @@ for ek, frame in EVAL_FRAMES.items():
         description=(
             "OneClassSVM(kernel='rbf', nu=0.05) fit on benign-only rows of the "
             f"{schema_blurb(SCHEMA, len(FEATURE_COLS))} + attribute-mined "
-            "symbolic features (mined on the same train split as cscas_mining; "
-            "SCAS/Similarity-derived fields excluded from mining), evaluated on "
+            f"symbolic features ({MINING_MODE} mode, mined on the same train "
+            "split as cscas_mining; SCAS/Similarity-derived fields excluded "
+            "from mining), evaluated on "
             f"the {'shared 20k eval subsample' if ek == 'subsample' else 'full 1.26M-row test set'}. "
             "No attack rows used in training. precision/recall/f1 at the default "
             "nu=0.05 cut; workload_at_recall is the tuned-threshold view."

@@ -1,0 +1,36 @@
+\begin{table}[htbp]
+\centering
+\small
+\caption{Compact CSCAS baseline comparison: F1 under the guided training
+condition, on the shared 20k eval subsample (mean over 5 seeds for trainable
+rows; sd and the full random/class-weighted/guided/precision/recall
+breakdown are in Table~\ref{tab:cscas-baseline-summary}). LogReg, the other
+mining-augmented classifiers, OneClassSVM, and three of the four zero-shot
+LLMs are omitted here as worst-in-class or redundant -- full grid in the
+appendix.
+$\dagger$ text-schema models (6 fields serialized to text) -- shown under
+Base for space, not directly comparable to the tabular Base(5)/Full(42)
+columns.
+$\ddagger$ Anomaly detector: AUC 0.928 (Base) / 0.993 (Full), F1 shown at
+the default contamination cut; "Full" here is the 40-column schema with
+SignatureID and SCAS excluded (Table~\ref{tab:cscas-baseline-summary} also
+reports the SCAS-included diagnostic variant).}
+\label{tab:cscas-compact-summary}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Method} & \textbf{Base (5)} & \textbf{Full (42)} \\
+\midrule
+Paper (published) & -- & 0.908 \\
+\addlinespace
+RF & 0.700 & 0.899 \\
+XGBoost & 0.712 & 0.933 \\
+Mining + XGBoost & 0.713 & 0.890 \\
+\addlinespace
+BERT$^\dagger$ & 0.779 & -- \\
+SecureBERT$^\dagger$ & 0.800 & -- \\
+Zero-shot (Llama-3.1-70B)$^\dagger$ & 0.173 & -- \\
+\addlinespace
+Anomaly (Mining + IForest)$^\ddagger$ & 0.176 & 0.381 \\
+\bottomrule
+\end{tabular}
+\end{table}
