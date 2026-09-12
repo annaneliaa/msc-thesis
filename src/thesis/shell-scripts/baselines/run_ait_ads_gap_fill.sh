@@ -54,11 +54,15 @@
 # whole thing.
 #
 # BERT/SecureBERT default to a non-saving QUICK_SANITY_CHECK pass -- forced
-# off below. Zero-shot needs Ollama reachable at OLLAMA_HOST with each model
-# pulled (done automatically here via /api/pull) -- defaults to the Docker
-# bridge gateway (172.17.0.1), not localhost, since Ollama runs on the DGX
-# host, not in this container (override OLLAMA_HOST if that's not your
-# setup).
+# off below. Zero-shot needs Ollama reachable with each model pulled (done
+# automatically here via /api/pull) -- defaults to the Docker bridge
+# gateway (172.17.0.1), not localhost, since Ollama runs on the DGX host,
+# not in this container. Deliberately NOT read from a pre-set OLLAMA_HOST:
+# thesis-run's own environment already exports OLLAMA_HOST=localhost:11434
+# (a leftover container default), so a caller-side `${OLLAMA_HOST:-...}`
+# fallback here would silently keep using that wrong value instead of ever
+# applying this script's default -- override via AIT_ADS_OLLAMA_HOST
+# instead if 172.17.0.1 isn't your gateway.
 #
 # Does not abort on a single script's failure (no `set -e`).
 #
@@ -87,9 +91,10 @@ CORRUPTED_SCENARIOS=(fox harrison russellmitchell)
 
 # Ollama runs on the DGX host, not in this container -- 172.17.0.1 is the
 # default Docker bridge gateway, reachable regardless of --network mode
-# (unlike localhost, which only works with --network host). Override if
-# your setup differs.
-OLLAMA_HOST="${OLLAMA_HOST:-http://172.17.0.1:11434}"
+# (unlike localhost, which only works with --network host). See the header
+# comment above for why this reads AIT_ADS_OLLAMA_HOST, not OLLAMA_HOST.
+OLLAMA_HOST="${AIT_ADS_OLLAMA_HOST:-http://172.17.0.1:11434}"
+export OLLAMA_HOST
 MODELS=(
     "llama3.1:8b"
     "llama3.1:70b"
@@ -163,7 +168,7 @@ ollama_pull() {
         run_step "ollama pull $model" ollama_pull "$model"
         AIT_ADS_SCENARIOS="$FOX_PLUS_ZEROSHOT_EXTRAS" AIT_ADS_GROUPING_METHODS="$GROUPING" \
             run_step "ait_ads_zeroshot.py ($model, $GROUPING/$FOX_PLUS_ZEROSHOT_EXTRAS)" \
-            env OLLAMA_MODEL="$model" "$PYTHON" ait_ads_zeroshot.py
+            env OLLAMA_MODEL="$model" OLLAMA_HOST="$OLLAMA_HOST" "$PYTHON" ait_ads_zeroshot.py
     done
 
     echo ""
