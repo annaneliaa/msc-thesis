@@ -89,7 +89,13 @@ SCHEMAS_ANOMALY = ("base", "full_noscas", "full_scas")
 #: "two_tree" is an add-on, not a replacement: fits a second, deeper tree
 #: specifically for attack-leaning leaves alongside the shallow benign-facing
 #: one. Selected the same way as CSCAS_SCHEMA (env var, additive result-name
-#: suffix), so single-tree result files are untouched.
+#: suffix), so single-tree result files are untouched. All three scripts use
+#: the identical config (mining_attribute_config below) -- the anomaly
+#: scripts' "no important-class information in the model's training" principle
+#: is enforced downstream instead, by discarding attack-leaning mined patterns
+#: before they reach the symbolic feature schema; see
+#: discard_attack_patterns in cscas_mining_anomaly.py /
+#: cscas_mining_anomaly_iforest.py.
 MINING_MODES = ("single_tree", "two_tree")
 MINING_MODE_SUFFIX = {"single_tree": "", "two_tree": "_twotree"}
 
@@ -107,7 +113,12 @@ def active_mining_mode() -> str:
 
 
 def mining_attribute_config(mode: str):
-    """AttributeMiningConfig for the given mining mode.
+    """AttributeMiningConfig for the given mining mode -- shared by all three
+    mining baselines (cscas_mining.py, cscas_mining_anomaly.py,
+    cscas_mining_anomaly_iforest.py). The anomaly scripts additionally call
+    discard_attack_patterns() after mining, before building the symbolic
+    schema, so their model never trains on attack-derived features -- mining
+    itself is identical across all three.
 
     "two_tree" is the gr3_md1_mda4 point from
     configs/screening_mining_settings.yaml (the project's own two-tree
@@ -131,6 +142,47 @@ def mining_attribute_config(mode: str):
             )
         )
     raise ValueError(f"unknown mining mode {mode!r}; expected one of {MINING_MODES}")
+
+
+def discard_attack_patterns(mined_df, predicates):
+    """Drop every attack-leaning row from a mining job's mined_df (Step 1
+    contrast-set survivors + Step 2 decision-tree leaf rules, concatenated,
+    each already tagged with a "source_label" of "attack" or "benign"), and
+    the predicates that only those rows referenced -- for
+    cscas_mining_anomaly.py / cscas_mining_anomaly_iforest.py, called right
+    after run_alert_group_attribute_mining_job and before
+    build_symbolic_feature_schema.
+
+    Mining itself (both the contrast-set stage and the decision tree's own
+    fit, single-tree or two-tree) needs both classes' labels to run at all --
+    that's unavoidable and unrelated to what reaches the anomaly detector
+    afterwards. This is the actual enforcement point for "the anomaly model
+    only ever sees benign-only training data": every attack-leaning mined
+    pattern -- including, in two_tree mode, the entire attack-facing tree's
+    leaves -- is discarded here, before a single symbolic feature is built
+    from it, so the resulting (base + mined) feature matrix the OneClassSVM/
+    IsolationForest fits on carries no attack-derived information at all.
+
+    Predicate tokens are shared between Step 1's categorical-predicate
+    itemsets and Step 2's AttributePredicate.token (both keyed off the same
+    build_categorical_predicate_matrix column names), so filtering
+    `predicates` to only tokens still present in a kept (benign) row's
+    itemset is a safe, class-collision-free way to prune the alphabet down
+    to what the surviving features actually use.
+
+    Returns (benign_mined_df, benign_predicates)."""
+    is_benign = mined_df["source_label"] == "benign"
+    n_dropped = int((~is_benign).sum())
+    benign_df = mined_df[is_benign].reset_index(drop=True)
+    kept_tokens = {tok for itemset in benign_df["itemset"] for tok in itemset}
+    benign_predicates = [p for p in predicates if p.token in kept_tokens]
+    print(
+        f"  Discarded {n_dropped} attack-leaning mined pattern(s) before "
+        f"building the anomaly detector's symbolic schema; "
+        f"{len(benign_df)} benign pattern(s) / {len(benign_predicates)} "
+        "predicate(s) remain."
+    )
+    return benign_df, benign_predicates
 
 
 def active_schema(allowed: tuple[str, ...] = SCHEMAS) -> str:
