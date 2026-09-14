@@ -24,14 +24,14 @@ Internal system & Random Forest & random & 167 & 247 & 59 & 0.404 & 0.740 & 167.
 Internal system & XGBoost & random & 168 & 244 & 58 & 0.408 & 0.745 & 165.5 \\
  &  & class-weighted & 157 & 251 & 69 & 0.385 & 0.695 & 170.3 \\
 \midrule
-Internal + mining & Random Forest & random & 166 & 246 & 60 & 0.402 & 0.734 & 166.9 \\
- &  & class-weighted & 155 & 206 & 71 & 0.429 & 0.686 & 139.7 \\
+Internal + mining & Random Forest & random & 162 & 243 & 64 & 0.400 & 0.717 & 164.8 \\
+ &  & class-weighted & 156 & 210 & 70 & 0.427 & 0.689 & 142.5 \\
 \addlinespace
-Internal + mining & Logistic Regression & random & 151 & 39 & 75 & 0.796 & 0.667 & 26.5 \\
- &  & class-weighted & 152 & 47 & 74 & 0.764 & 0.673 & 31.9 \\
+Internal + mining & Logistic Regression & random & 151 & 21 & 75 & 0.879 & 0.668 & 14.2 \\
+ &  & class-weighted & 151 & 17 & 75 & 0.899 & 0.668 & 11.5 \\
 \addlinespace
-Internal + mining & XGBoost & random & 169 & 244 & 57 & 0.409 & 0.749 & 165.5 \\
- &  & class-weighted & 157 & 244 & 69 & 0.392 & 0.695 & 165.5 \\
+Internal + mining & XGBoost & random & 168 & 244 & 58 & 0.408 & 0.743 & 165.5 \\
+ &  & class-weighted & 161 & 233 & 65 & 0.409 & 0.712 & 158.1 \\
 \midrule
 LLM (zero-shot) & Llama-3.1-8B & none & 153 & 331 & 73 & 0.316 & 0.677 & 224.5 \\
 \addlinespace
@@ -51,9 +51,9 @@ Anomaly & OneClassSVM & benign-only & 159 & 179 & 67 & 0.470 & 0.704 & 121.4 \\
 \addlinespace
 Anomaly & IsolationForest & benign-only & 157 & 132 & 69 & 0.542 & 0.696 & 89.5 \\
 \addlinespace
-Anomaly + mining & OneClassSVM & benign-only & 157 & 150 & 69 & 0.511 & 0.695 & 101.8 \\
+Anomaly + mining & OneClassSVM & benign-only & 153 & 236 & 73 & 0.393 & 0.677 & 160.1 \\
 \addlinespace
-Anomaly + mining & IsolationForest & benign-only & 135 & 134 & 91 & 0.501 & 0.597 & 90.9 \\
+Anomaly + mining & IsolationForest & benign-only & 93 & 149 & 133 & 0.384 & 0.412 & 101.1 \\
 \midrule
 always-alert & -- & -- & 226 & 2868 & 0 & 0.073 & 1.000 & 1,945.6 \\
 \bottomrule

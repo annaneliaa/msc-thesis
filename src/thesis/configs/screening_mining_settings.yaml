@@ -97,3 +97,85 @@ settings:
       max_depth_attack: 4
       class_weight: "balanced"
       min_samples_leaf: 10
+
+  # Diverse-round mining (decision_tree_rule_mining._fit_class_rounds):
+  # after the benign/attack trees above are fit, each is refit once more
+  # with its already-used feature column(s) excluded, on the same
+  # population, to surface a second (and third) independent
+  # characterization instead of just the dominant one. Validated on the
+  # CSCAS classifier baseline (same-window F1): rounds=2 beat rounds=1 on
+  # every pool condition; rounds=3 beat rounds=1 too but underperformed
+  # rounds=2 on every metric there (its added rule was individually
+  # significant but redundant in signal with rounds=2's winning rule).
+  # That comparison was same-window fit quality only, not drift robustness
+  # -- kept here at rounds=3 specifically because temporal_decay is what
+  # can tell us whether rounds=3's thinner-support rule decays faster (or
+  # slower) than rounds=2's, which a same-window F1 check can't answer.
+  #
+  # Crossed with just the two most relevant depth points rather than the
+  # full 6-point grid, to keep this addition's cost down: gr3_md1_mda4 (the
+  # config actually adopted into cscas_mining.py's two_tree point) and
+  # gr3_md2_mda4 (the other max_depth_attack=4 point, to check whether a
+  # deeper benign tree changes the round-stability story too). The other 4
+  # depth points above are left at their implicit rounds=1 (unset ->
+  # DecisionTreeRuleConfig default) as an unchanged reference curve.
+  #
+  # round_min_coverage/round_min_growth_rate (the round>=2 significance
+  # floor) are set equal to this entry's own contrast.min_attack_coverage/
+  # min_growth_rate rather than swept independently -- same anchor-not-axis
+  # treatment this file already gives every other Step-1-style threshold.
+  - name: gr3_md1_mda4_rounds2
+    contrast:
+      min_growth_rate: 3
+      min_attack_coverage: 0.05
+      min_benign_coverage: 0.05
+    tree:
+      max_depth: 1
+      max_depth_attack: 4
+      class_weight: "balanced"
+      min_samples_leaf: 10
+      max_diverse_rounds: 2
+      round_min_coverage: 0.05
+      round_min_growth_rate: 3
+
+  - name: gr3_md1_mda4_rounds3
+    contrast:
+      min_growth_rate: 3
+      min_attack_coverage: 0.05
+      min_benign_coverage: 0.05
+    tree:
+      max_depth: 1
+      max_depth_attack: 4
+      class_weight: "balanced"
+      min_samples_leaf: 10
+      max_diverse_rounds: 3
+      round_min_coverage: 0.05
+      round_min_growth_rate: 3
+
+  - name: gr3_md2_mda4_rounds2
+    contrast:
+      min_growth_rate: 3
+      min_attack_coverage: 0.05
+      min_benign_coverage: 0.05
+    tree:
+      max_depth: 2
+      max_depth_attack: 4
+      class_weight: "balanced"
+      min_samples_leaf: 10
+      max_diverse_rounds: 2
+      round_min_coverage: 0.05
+      round_min_growth_rate: 3
+
+  - name: gr3_md2_mda4_rounds3
+    contrast:
+      min_growth_rate: 3
+      min_attack_coverage: 0.05
+      min_benign_coverage: 0.05
+    tree:
+      max_depth: 2
+      max_depth_attack: 4
+      class_weight: "balanced"
+      min_samples_leaf: 10
+      max_diverse_rounds: 3
+      round_min_coverage: 0.05
+      round_min_growth_rate: 3

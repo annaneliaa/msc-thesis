@@ -47,11 +47,11 @@ Paper (target) & Random Forest & Paper (42) & Full test & random undersampling &
  &  &  &  & guided by CSCAS & 0.868 & 0.952 & 0.908 & -- \\
 \addlinespace
 Paper (reproduced) & Random Forest & Base (5) & Subsample & random & $0.500_{\pm 0.019}$ & $0.992_{\pm 0.005}$ & $0.665_{\pm 0.017}$ & -- \\
- &  &  &  & class-weighted & $0.743_{\pm 0.021}$ & $0.694_{\pm 0.006}$ & $0.717_{\pm 0.012}$ & -- \\
+ &  &  &  & class-weighted & $0.736_{\pm 0.028}$ & $0.693_{\pm 0.008}$ & $0.714_{\pm 0.016}$ & -- \\
  &  &  &  & guided & $0.558_{\pm 0.026}$ & $0.939_{\pm 0.015}$ & $0.700_{\pm 0.024}$ & -- \\
 \addlinespace
 Paper (reproduced) & Random Forest & Base (5) & Full test & random & $0.527_{\pm 0.016}$ & $0.981_{\pm 0.006}$ & $0.686_{\pm 0.013}$ & -- \\
- &  &  &  & class-weighted & $0.780_{\pm 0.016}$ & $0.703_{\pm 0.006}$ & $0.739_{\pm 0.008}$ & -- \\
+ &  &  &  & class-weighted & $0.774_{\pm 0.025}$ & $0.702_{\pm 0.005}$ & $0.736_{\pm 0.013}$ & -- \\
  &  &  &  & guided & $0.589_{\pm 0.021}$ & $0.927_{\pm 0.010}$ & $0.720_{\pm 0.018}$ & -- \\
 \addlinespace
 Paper (reproduced) & Random Forest & Full (42) & Subsample & random & $0.678_{\pm 0.020}$ & $0.965_{\pm 0.008}$ & $0.796_{\pm 0.015}$ & -- \\
@@ -158,53 +158,53 @@ Internal + mining & XGBoost & Full (42) + mined & Full test & random & $0.752_{\
  &  &  &  & class-weighted & $0.934_{\pm 0.000}$ & $0.910_{\pm 0.000}$ & $0.922_{\pm 0.000}$ & -- \\
  &  &  &  & guided & $0.870_{\pm 0.100}$ & $0.925_{\pm 0.013}$ & $0.894_{\pm 0.057}$ & -- \\
 \addlinespace
-Internal + mining (two-tree) & Random Forest & Base (5) + mined & Subsample & random & $0.533_{\pm 0.010}$ & $0.985_{\pm 0.011}$ & $0.692_{\pm 0.010}$ & -- \\
- &  &  &  & class-weighted & $0.723_{\pm 0.005}$ & $0.675_{\pm 0.024}$ & $0.698_{\pm 0.015}$ & -- \\
- &  &  &  & guided & $0.573_{\pm 0.015}$ & $0.948_{\pm 0.016}$ & $0.714_{\pm 0.011}$ & -- \\
+Internal + mining (two-tree) & Random Forest & Base (5) + mined & Subsample & random & $0.626_{\pm 0.031}$ & $0.996_{\pm 0.004}$ & $0.769_{\pm 0.022}$ & -- \\
+ &  &  &  & class-weighted & $0.842_{\pm 0.004}$ & $0.740_{\pm 0.007}$ & $0.788_{\pm 0.005}$ & -- \\
+ &  &  &  & guided & $0.682_{\pm 0.021}$ & $0.948_{\pm 0.018}$ & $0.793_{\pm 0.019}$ & -- \\
 \addlinespace
-Internal + mining (two-tree) & Random Forest & Base (5) + mined & Full test & random & $0.558_{\pm 0.009}$ & $0.972_{\pm 0.011}$ & $0.709_{\pm 0.009}$ & -- \\
- &  &  &  & class-weighted & $0.792_{\pm 0.006}$ & $0.679_{\pm 0.019}$ & $0.731_{\pm 0.011}$ & -- \\
- &  &  &  & guided & $0.599_{\pm 0.020}$ & $0.928_{\pm 0.014}$ & $0.728_{\pm 0.011}$ & -- \\
+Internal + mining (two-tree) & Random Forest & Base (5) + mined & Full test & random & $0.657_{\pm 0.027}$ & $0.984_{\pm 0.007}$ & $0.787_{\pm 0.018}$ & -- \\
+ &  &  &  & class-weighted & $0.885_{\pm 0.004}$ & $0.746_{\pm 0.006}$ & $0.810_{\pm 0.005}$ & -- \\
+ &  &  &  & guided & $0.720_{\pm 0.020}$ & $0.933_{\pm 0.019}$ & $0.812_{\pm 0.015}$ & -- \\
 \addlinespace
-Internal + mining (two-tree) & Random Forest & Full (42) + mined & Subsample & random & $0.701_{\pm 0.006}$ & $0.969_{\pm 0.009}$ & $0.813_{\pm 0.004}$ & -- \\
- &  &  &  & class-weighted & $0.948_{\pm 0.008}$ & $0.806_{\pm 0.008}$ & $0.871_{\pm 0.005}$ & -- \\
- &  &  &  & guided & $0.832_{\pm 0.010}$ & $0.972_{\pm 0.006}$ & $0.897_{\pm 0.004}$ & -- \\
+Internal + mining (two-tree) & Random Forest & Full (42) + mined & Subsample & random & $0.707_{\pm 0.016}$ & $0.971_{\pm 0.005}$ & $0.818_{\pm 0.009}$ & -- \\
+ &  &  &  & class-weighted & $0.952_{\pm 0.009}$ & $0.818_{\pm 0.026}$ & $0.880_{\pm 0.018}$ & -- \\
+ &  &  &  & guided & $0.850_{\pm 0.006}$ & $0.973_{\pm 0.009}$ & $0.907_{\pm 0.002}$ & -- \\
 \addlinespace
-Internal + mining (two-tree) & Random Forest & Full (42) + mined & Full test & random & $0.722_{\pm 0.013}$ & $0.973_{\pm 0.008}$ & $0.829_{\pm 0.007}$ & -- \\
- &  &  &  & class-weighted & $0.961_{\pm 0.004}$ & $0.804_{\pm 0.010}$ & $0.876_{\pm 0.007}$ & -- \\
- &  &  &  & guided & $0.868_{\pm 0.008}$ & $0.973_{\pm 0.008}$ & $0.918_{\pm 0.004}$ & -- \\
+Internal + mining (two-tree) & Random Forest & Full (42) + mined & Full test & random & $0.726_{\pm 0.018}$ & $0.973_{\pm 0.008}$ & $0.831_{\pm 0.009}$ & -- \\
+ &  &  &  & class-weighted & $0.971_{\pm 0.003}$ & $0.820_{\pm 0.013}$ & $0.889_{\pm 0.008}$ & -- \\
+ &  &  &  & guided & $0.879_{\pm 0.005}$ & $0.974_{\pm 0.008}$ & $0.924_{\pm 0.003}$ & -- \\
 \addlinespace
-Internal + mining (two-tree) & Logistic Regression & Base (5) + mined & Subsample & random & $0.481_{\pm 0.011}$ & $0.974_{\pm 0.000}$ & $0.644_{\pm 0.010}$ & -- \\
- &  &  &  & class-weighted & $0.492_{\pm 0.000}$ & $0.974_{\pm 0.000}$ & $0.654_{\pm 0.000}$ & -- \\
- &  &  &  & guided & $0.472_{\pm 0.002}$ & $0.974_{\pm 0.000}$ & $0.635_{\pm 0.002}$ & -- \\
+Internal + mining (two-tree) & Logistic Regression & Base (5) + mined & Subsample & random & $0.510_{\pm 0.012}$ & $0.980_{\pm 0.008}$ & $0.671_{\pm 0.009}$ & -- \\
+ &  &  &  & class-weighted & $0.578_{\pm 0.000}$ & $0.974_{\pm 0.000}$ & $0.725_{\pm 0.000}$ & -- \\
+ &  &  &  & guided & $0.552_{\pm 0.009}$ & $0.963_{\pm 0.008}$ & $0.702_{\pm 0.007}$ & -- \\
 \addlinespace
-Internal + mining (two-tree) & Logistic Regression & Base (5) + mined & Full test & random & $0.501_{\pm 0.013}$ & $0.956_{\pm 0.000}$ & $0.658_{\pm 0.011}$ & -- \\
- &  &  &  & class-weighted & $0.513_{\pm 0.000}$ & $0.956_{\pm 0.000}$ & $0.667_{\pm 0.000}$ & -- \\
- &  &  &  & guided & $0.490_{\pm 0.003}$ & $0.956_{\pm 0.000}$ & $0.648_{\pm 0.002}$ & -- \\
+Internal + mining (two-tree) & Logistic Regression & Base (5) + mined & Full test & random & $0.523_{\pm 0.012}$ & $0.962_{\pm 0.008}$ & $0.677_{\pm 0.009}$ & -- \\
+ &  &  &  & class-weighted & $0.595_{\pm 0.000}$ & $0.961_{\pm 0.000}$ & $0.735_{\pm 0.000}$ & -- \\
+ &  &  &  & guided & $0.570_{\pm 0.011}$ & $0.942_{\pm 0.012}$ & $0.710_{\pm 0.007}$ & -- \\
 \addlinespace
-Internal + mining (two-tree) & Logistic Regression & Full (42) + mined & Subsample & random & $0.675_{\pm 0.018}$ & $0.984_{\pm 0.000}$ & $0.800_{\pm 0.012}$ & -- \\
- &  &  &  & class-weighted & $0.724_{\pm 0.000}$ & $0.977_{\pm 0.000}$ & $0.832_{\pm 0.000}$ & -- \\
- &  &  &  & guided & $0.725_{\pm 0.029}$ & $0.961_{\pm 0.010}$ & $0.826_{\pm 0.016}$ & -- \\
+Internal + mining (two-tree) & Logistic Regression & Full (42) + mined & Subsample & random & $0.696_{\pm 0.016}$ & $0.984_{\pm 0.000}$ & $0.815_{\pm 0.011}$ & -- \\
+ &  &  &  & class-weighted & $0.806_{\pm 0.000}$ & $0.925_{\pm 0.000}$ & $0.861_{\pm 0.000}$ & -- \\
+ &  &  &  & guided & $0.781_{\pm 0.036}$ & $0.948_{\pm 0.012}$ & $0.856_{\pm 0.020}$ & -- \\
 \addlinespace
-Internal + mining (two-tree) & Logistic Regression & Full (42) + mined & Full test & random & $0.694_{\pm 0.019}$ & $0.985_{\pm 0.002}$ & $0.814_{\pm 0.013}$ & -- \\
- &  &  &  & class-weighted & $0.755_{\pm 0.000}$ & $0.977_{\pm 0.000}$ & $0.852_{\pm 0.000}$ & -- \\
- &  &  &  & guided & $0.760_{\pm 0.029}$ & $0.955_{\pm 0.006}$ & $0.846_{\pm 0.017}$ & -- \\
+Internal + mining (two-tree) & Logistic Regression & Full (42) + mined & Full test & random & $0.716_{\pm 0.021}$ & $0.986_{\pm 0.001}$ & $0.829_{\pm 0.014}$ & -- \\
+ &  &  &  & class-weighted & $0.834_{\pm 0.000}$ & $0.935_{\pm 0.000}$ & $0.881_{\pm 0.000}$ & -- \\
+ &  &  &  & guided & $0.815_{\pm 0.033}$ & $0.943_{\pm 0.013}$ & $0.874_{\pm 0.018}$ & -- \\
 \addlinespace
-Internal + mining (two-tree) & XGBoost & Base (5) + mined & Subsample & random & $0.534_{\pm 0.034}$ & $0.979_{\pm 0.002}$ & $0.691_{\pm 0.028}$ & -- \\
- &  &  &  & class-weighted & $0.749_{\pm 0.000}$ & $0.830_{\pm 0.000}$ & $0.788_{\pm 0.000}$ & -- \\
- &  &  &  & guided & $0.599_{\pm 0.037}$ & $0.924_{\pm 0.026}$ & $0.727_{\pm 0.033}$ & -- \\
+Internal + mining (two-tree) & XGBoost & Base (5) + mined & Subsample & random & $0.621_{\pm 0.023}$ & $0.982_{\pm 0.018}$ & $0.761_{\pm 0.020}$ & -- \\
+ &  &  &  & class-weighted & $0.766_{\pm 0.000}$ & $0.846_{\pm 0.000}$ & $0.804_{\pm 0.000}$ & -- \\
+ &  &  &  & guided & $0.648_{\pm 0.051}$ & $0.918_{\pm 0.023}$ & $0.759_{\pm 0.043}$ & -- \\
 \addlinespace
-Internal + mining (two-tree) & XGBoost & Base (5) + mined & Full test & random & $0.563_{\pm 0.034}$ & $0.969_{\pm 0.002}$ & $0.711_{\pm 0.027}$ & -- \\
- &  &  &  & class-weighted & $0.803_{\pm 0.000}$ & $0.843_{\pm 0.000}$ & $0.822_{\pm 0.000}$ & -- \\
- &  &  &  & guided & $0.623_{\pm 0.038}$ & $0.911_{\pm 0.024}$ & $0.740_{\pm 0.035}$ & -- \\
+Internal + mining (two-tree) & XGBoost & Base (5) + mined & Full test & random & $0.645_{\pm 0.019}$ & $0.974_{\pm 0.016}$ & $0.776_{\pm 0.016}$ & -- \\
+ &  &  &  & class-weighted & $0.792_{\pm 0.000}$ & $0.846_{\pm 0.000}$ & $0.818_{\pm 0.000}$ & -- \\
+ &  &  &  & guided & $0.677_{\pm 0.055}$ & $0.911_{\pm 0.026}$ & $0.776_{\pm 0.046}$ & -- \\
 \addlinespace
-Internal + mining (two-tree) & XGBoost & Full (42) + mined & Subsample & random & $0.734_{\pm 0.010}$ & $0.975_{\pm 0.007}$ & $0.837_{\pm 0.006}$ & -- \\
- &  &  &  & class-weighted & $0.970_{\pm 0.000}$ & $0.941_{\pm 0.000}$ & $0.955_{\pm 0.000}$ & -- \\
- &  &  &  & guided & $0.911_{\pm 0.014}$ & $0.942_{\pm 0.018}$ & $0.926_{\pm 0.016}$ & -- \\
+Internal + mining (two-tree) & XGBoost & Full (42) + mined & Subsample & random & $0.741_{\pm 0.013}$ & $0.975_{\pm 0.007}$ & $0.842_{\pm 0.007}$ & -- \\
+ &  &  &  & class-weighted & $0.968_{\pm 0.000}$ & $0.879_{\pm 0.000}$ & $0.921_{\pm 0.000}$ & -- \\
+ &  &  &  & guided & $0.915_{\pm 0.012}$ & $0.951_{\pm 0.010}$ & $0.932_{\pm 0.008}$ & -- \\
 \addlinespace
-Internal + mining (two-tree) & XGBoost & Full (42) + mined & Full test & random & $0.750_{\pm 0.014}$ & $0.980_{\pm 0.004}$ & $0.850_{\pm 0.008}$ & -- \\
- &  &  &  & class-weighted & $0.979_{\pm 0.000}$ & $0.942_{\pm 0.000}$ & $0.960_{\pm 0.000}$ & -- \\
- &  &  &  & guided & $0.919_{\pm 0.014}$ & $0.946_{\pm 0.011}$ & $0.933_{\pm 0.012}$ & -- \\
+Internal + mining (two-tree) & XGBoost & Full (42) + mined & Full test & random & $0.760_{\pm 0.018}$ & $0.981_{\pm 0.004}$ & $0.856_{\pm 0.011}$ & -- \\
+ &  &  &  & class-weighted & $0.979_{\pm 0.000}$ & $0.889_{\pm 0.000}$ & $0.932_{\pm 0.000}$ & -- \\
+ &  &  &  & guided & $0.921_{\pm 0.010}$ & $0.951_{\pm 0.007}$ & $0.936_{\pm 0.007}$ & -- \\
 \midrule
 LLM (zero-shot) & Llama-3.1-8B-Instruct & Base (6) as text & Subsample & none & 0.080 & 0.173 & 0.110 & -- \\
 \addlinespace
@@ -278,27 +278,27 @@ Anomaly + mining & IsolationForest & Full$+$SCAS (41) + mined & Subsample & beni
 \addlinespace
 Anomaly + mining & IsolationForest & Full$+$SCAS (41) + mined & Full test & benign-only & $0.222_{\pm 0.010}$ & $0.990_{\pm 0.001}$ & $0.363_{\pm 0.014}$ & 0.994 \\
 \addlinespace
-Anomaly + mining (two-tree) & OneClassSVM & Base (5) + mined & Subsample & benign-only & -- & -- & -- & -- \\
+Anomaly + mining (two-tree) & OneClassSVM & Base (5) + mined & Subsample & benign-only & $0.113_{\pm 0.000}$ & $0.533_{\pm 0.000}$ & $0.186_{\pm 0.000}$ & 0.915 \\
 \addlinespace
-Anomaly + mining (two-tree) & OneClassSVM & Base (5) + mined & Full test & benign-only & -- & -- & -- & -- \\
+Anomaly + mining (two-tree) & OneClassSVM & Base (5) + mined & Full test & benign-only & $0.120_{\pm 0.000}$ & $0.555_{\pm 0.000}$ & $0.198_{\pm 0.000}$ & 0.919 \\
 \addlinespace
-Anomaly + mining (two-tree) & OneClassSVM & Full$-$SCAS (40) + mined & Subsample & benign-only & -- & -- & -- & -- \\
+Anomaly + mining (two-tree) & OneClassSVM & Full$-$SCAS (40) + mined & Subsample & benign-only & $0.131_{\pm 0.000}$ & $0.961_{\pm 0.000}$ & $0.230_{\pm 0.000}$ & 0.966 \\
 \addlinespace
-Anomaly + mining (two-tree) & OneClassSVM & Full$-$SCAS (40) + mined & Full test & benign-only & -- & -- & -- & -- \\
+Anomaly + mining (two-tree) & OneClassSVM & Full$-$SCAS (40) + mined & Full test & benign-only & $0.134_{\pm 0.000}$ & $0.975_{\pm 0.000}$ & $0.235_{\pm 0.000}$ & 0.971 \\
 \addlinespace
-Anomaly + mining (two-tree) & OneClassSVM & Full$+$SCAS (41) + mined & Subsample & benign-only & -- & -- & -- & -- \\
+Anomaly + mining (two-tree) & OneClassSVM & Full$+$SCAS (41) + mined & Subsample & benign-only & $0.136_{\pm 0.000}$ & $0.961_{\pm 0.000}$ & $0.238_{\pm 0.000}$ & 0.967 \\
 \addlinespace
-Anomaly + mining (two-tree) & OneClassSVM & Full$+$SCAS (41) + mined & Full test & benign-only & -- & -- & -- & -- \\
+Anomaly + mining (two-tree) & OneClassSVM & Full$+$SCAS (41) + mined & Full test & benign-only & $0.138_{\pm 0.000}$ & $0.974_{\pm 0.000}$ & $0.242_{\pm 0.000}$ & 0.972 \\
 \addlinespace
-Anomaly + mining (two-tree) & IsolationForest & Base (5) + mined & Subsample & benign-only & -- & -- & -- & -- \\
+Anomaly + mining (two-tree) & IsolationForest & Base (5) + mined & Subsample & benign-only & $0.084_{\pm 0.016}$ & $0.287_{\pm 0.053}$ & $0.130_{\pm 0.024}$ & 0.930 \\
 \addlinespace
-Anomaly + mining (two-tree) & IsolationForest & Base (5) + mined & Full test & benign-only & -- & -- & -- & -- \\
+Anomaly + mining (two-tree) & IsolationForest & Base (5) + mined & Full test & benign-only & $0.092_{\pm 0.017}$ & $0.312_{\pm 0.057}$ & $0.142_{\pm 0.026}$ & 0.932 \\
 \addlinespace
-Anomaly + mining (two-tree) & IsolationForest & Full$-$SCAS (40) + mined & Subsample & benign-only & -- & -- & -- & -- \\
+Anomaly + mining (two-tree) & IsolationForest & Full$-$SCAS (40) + mined & Subsample & benign-only & $0.223_{\pm 0.026}$ & $0.991_{\pm 0.008}$ & $0.363_{\pm 0.034}$ & 0.994 \\
 \addlinespace
-Anomaly + mining (two-tree) & IsolationForest & Full$-$SCAS (40) + mined & Full test & benign-only & -- & -- & -- & -- \\
+Anomaly + mining (two-tree) & IsolationForest & Full$-$SCAS (40) + mined & Full test & benign-only & $0.227_{\pm 0.024}$ & $0.993_{\pm 0.004}$ & $0.369_{\pm 0.031}$ & 0.994 \\
 \addlinespace
-Anomaly + mining (two-tree) & IsolationForest & Full$+$SCAS (41) + mined & Subsample & benign-only & -- & -- & -- & -- \\
+Anomaly + mining (two-tree) & IsolationForest & Full$+$SCAS (41) + mined & Subsample & benign-only & $0.208_{\pm 0.010}$ & $0.988_{\pm 0.007}$ & $0.344_{\pm 0.014}$ & 0.993 \\
 \addlinespace
-Anomaly + mining (two-tree) & IsolationForest & Full$+$SCAS (41) + mined & Full test & benign-only & -- & -- & -- & -- \\
+Anomaly + mining (two-tree) & IsolationForest & Full$+$SCAS (41) + mined & Full test & benign-only & $0.210_{\pm 0.009}$ & $0.991_{\pm 0.002}$ & $0.347_{\pm 0.012}$ & 0.993 \\
 \end{longtable}
