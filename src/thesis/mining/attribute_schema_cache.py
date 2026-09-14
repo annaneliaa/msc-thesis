@@ -23,6 +23,7 @@ import threading
 from pathlib import Path
 
 from thesis.features.service import build_persist_and_register_symbolic_schema
+from thesis.mining.attribute_features import default_leaky_attribute_fields
 from thesis.paths import FEATURE_DIR
 from thesis.schemas.mining import AttributeMiningConfig
 
@@ -57,23 +58,28 @@ def _save_cache_index(scenario_name: str, root_dir: Path, index: dict) -> None:
 def compute_fingerprint(
     alert_groups_path: Path,
     attribute_mining_config: AttributeMiningConfig,
+    exclude_fields: set[str] | None = None,
 ) -> str:
     """Fingerprint the inputs that fully determine an attribute-mined schema:
     the alert_groups file being mined -- identified by path + size + mtime,
     so a regenerated file invalidates the cache without hashing its full
-    content -- and the mining thresholds (contrast-set + decision-tree)."""
+    content -- the mining thresholds (contrast-set + decision-tree), and
+    which candidate fields are excluded from mining entirely."""
     stat = alert_groups_path.stat()
     identity = {
         "alert_groups_path": str(alert_groups_path.resolve()),
         "alert_groups_size": stat.st_size,
         "alert_groups_mtime": stat.st_mtime,
     }
-    return compute_fingerprint_from_identity(identity, attribute_mining_config)
+    return compute_fingerprint_from_identity(
+        identity, attribute_mining_config, exclude_fields
+    )
 
 
 def compute_fingerprint_from_identity(
     identity: dict,
     attribute_mining_config: AttributeMiningConfig,
+    exclude_fields: set[str] | None = None,
 ) -> str:
     """Fingerprint mining inputs from a caller-supplied identity payload
     instead of stat-ing a materialized alert_groups file.
@@ -83,8 +89,20 @@ def compute_fingerprint_from_identity(
     identity can be expressed as that raw file's stat plus the slicing
     parameters (gran, win_idx, split bounds) -- without ever requiring the
     sliced file itself to exist on disk just to answer a cache lookup.
+
+    `exclude_fields` (candidate attribute fields dropped from mining
+    entirely, see attribute_features.default_leaky_attribute_fields) is
+    folded into the hash too -- deliberately, so that fixing which fields
+    get excluded (as happened 2026-09-13, when CSCAS_ORACLE_FIELDS turned
+    out to be leaking through this cache unexcluded) automatically produces
+    a new fingerprint instead of `lookup()` handing back a schema that was
+    mined under the old, wrong exclusion set.
     """
-    payload = {**identity, "config": attribute_mining_config.model_dump()}
+    payload = {
+        **identity,
+        "config": attribute_mining_config.model_dump(),
+        "exclude_fields": sorted(exclude_fields or ()),
+    }
     blob = json.dumps(payload, sort_keys=True).encode("utf-8")
     return hashlib.sha256(blob).hexdigest()[:16]
 
@@ -125,22 +143,41 @@ def mine_or_reuse_attribute_schema(
     root_dir: Path = FEATURE_DIR,
     force: bool = False,
     fingerprint: str | None = None,
+    exclude_fields: set[str] | None = None,
 ) -> tuple[Path, Path | None, dict]:
     """Mine an attribute schema for `scenario`, or reuse an already-mined one
-    if the inputs (alert_groups file + config) match a previous run.
+    if the inputs (alert_groups file + config + exclusions) match a previous
+    run.
 
     `fingerprint`, if given, is used as-is instead of being computed from
     `alert_groups_path` (which requires that file to exist on disk). Pass
     one when the caller already has a cheaper way to establish cache
     identity -- see compute_fingerprint_from_identity and
     window_schema_cache.py. `alert_groups_path` must still point to real
-    data on a cache miss, since mining reads from it.
+    data on a cache miss, since mining reads from it. A caller that
+    precomputes its own fingerprint must fold in the SAME effective
+    `exclude_fields` this function would resolve (see below) or its
+    fingerprint won't match what a cache miss here would record.
+
+    `exclude_fields`: candidate attribute fields to drop from mining
+    entirely (passed straight to run_alert_group_attribute_mining_job).
+    Defaults to attribute_features.default_leaky_attribute_fields(scenario)
+    when left as None, so a caller can't silently forget to exclude a
+    scenario's non-deployable oracle fields (e.g. CSCAS's own SCAS outlier
+    flag / Similarity scores) the way every caller of this function did
+    until 2026-09-13 -- pass an explicit set (including an empty one) to
+    override.
 
     Returns (schema_path, mining_run_dir, mining_stats). mining_run_dir is
     None on a cache hit, since no mining actually ran.
     """
+    if exclude_fields is None:
+        exclude_fields = default_leaky_attribute_fields(scenario)
+
     if fingerprint is None:
-        fingerprint = compute_fingerprint(alert_groups_path, attribute_mining_config)
+        fingerprint = compute_fingerprint(
+            alert_groups_path, attribute_mining_config, exclude_fields
+        )
 
     if not force:
         cached = lookup(scenario, fingerprint, root_dir)
@@ -158,6 +195,7 @@ def mine_or_reuse_attribute_schema(
         scenario_name=scenario,
         run_name=run_name,
         config=attribute_mining_config,
+        exclude_fields=exclude_fields,
     )
 
     print("--- Building and saving symbolic schema (attribute mining) ---")

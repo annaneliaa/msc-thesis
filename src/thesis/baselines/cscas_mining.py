@@ -82,10 +82,10 @@ from thesis.baselines._sampling import (
 )
 from thesis.encoders.symbolic import SymbolicFeatureEncoder
 from thesis.features.schema_builder import build_symbolic_feature_schema
+from thesis.mining.attribute_features import default_leaky_attribute_fields
 from thesis.mining.attribute_mining_job import run_alert_group_attribute_mining_job
 from thesis.paths import CACHE_DIR
 from thesis.pipeline.pipeline import rows_to_cscas_alert_groups, save_alert_groups_json
-from thesis.schemas.preprocessing import ATTR_SIMILARITY_COLUMNS
 
 print("Using device: cpu")
 
@@ -200,18 +200,12 @@ train_alert_groups_path.parent.mkdir(parents=True, exist_ok=True)
 save_alert_groups_json(train_groups, train_alert_groups_path)
 
 # 9) Mine symbolic features on the train split, excluding SCAS/Similarity-
-# derived candidate fields -- see module docstring for why.
-LEAKY_ATTRIBUTE_FIELDS = {
-    "scas",
-    "similarity",
-    "signature_id_similarity",
-    *(f"attr_value:{n}" for n in ATTR_SIMILARITY_COLUMNS),
-    *(f"attr_populated:{n}" for n in ATTR_SIMILARITY_COLUMNS),
-    *(
-        f"applicable_layer:{p.lower()}"
-        for p in ("Dns", "Email", "Http", "Smtp", "Ssh", "Tls")
-    ),
-}
+# derived candidate fields -- see module docstring for why. Delegates to the
+# same shared set attribute_schema_cache.mine_or_reuse_attribute_schema now
+# applies by default for scenario="cscas" (added 2026-09-13 after that
+# shared path was found NOT excluding these), so there's one definition of
+# "which fields are CSCAS's own non-deployable oracle" instead of four.
+LEAKY_ATTRIBUTE_FIELDS = default_leaky_attribute_fields("cscas")
 
 print(f"Mining attribute schema on train split ({MINING_MODE} mode)...")
 mining_result = run_alert_group_attribute_mining_job(

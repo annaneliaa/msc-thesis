@@ -101,6 +101,49 @@ class DecisionTreeRuleConfig(BaseModel):
     # 1e-9 is far above that noise floor but far below any real split's
     # impurity decrease (see decision_tree_rule_mining.fit_rule_tree).
     min_impurity_decrease: float = 1e-9
+    # Two-tree mode only (see decision_tree_rule_mining._fit_class_rounds).
+    # 1 (default): unchanged behavior -- one tree per class, exactly as
+    # before this field existed. >1: after the first tree is fit, its used
+    # feature column(s) are excluded and a second tree is fit on the same
+    # population to surface a genuinely different characterization of the
+    # same class, instead of one dominant feature (e.g. a near-pure root
+    # split) shadowing every other candidate at every depth. A later
+    # round's leaves are kept only if they're not mostly re-covering rows
+    # an earlier round's leaves already cover -- see
+    # redundancy_overlap_threshold.
+    max_diverse_rounds: int = 1
+    # A candidate leaf from round >= 2 is dropped as redundant if this
+    # fraction (or more) of its member rows are already covered by a kept
+    # leaf from an earlier round of the same class -- guards against a
+    # highly correlated proxy feature (e.g. one that fires on nearly the
+    # same rows as the first round's winner) producing a leaf that looks
+    # new but adds no real coverage.
+    redundancy_overlap_threshold: float = 0.8
+    # Two-tree mode only, applied to round >= 2 candidates ONLY -- round 1
+    # is always kept regardless, matching the original single-tree-per-
+    # class behavior exactly (see max_diverse_rounds above). Mirrors Step
+    # 1's own significance bar (ContrastSetFilterConfig.min_attack_coverage
+    # / min_growth_rate, same formula: confidence_attack / confidence_benign,
+    # or its reciprocal for benign-leaning candidates) so a later round
+    # isn't kept just because it happens not to re-cover earlier rounds'
+    # rows -- it also has to look like a real, non-trivial pattern rather
+    # than a leaf that's barely more attack/benign-leaning than the base
+    # rate (e.g. growth_rate ~1.2, not meaningfully different from chance).
+    round_min_coverage: float = 0.05
+    round_min_growth_rate: float = 3.0
+    # Only meaningful when max_depth_attack is None (single-tree mode) AND
+    # max_diverse_rounds > 1. Single-tree mode normally keeps every leaf
+    # regardless of class (e.g. cscas_mining.py's single_tree point,
+    # monitor_drift.py, dynamic_schema_service.py) -- diverse rounds need a
+    # leaf polarity to round on, which that all-leaves behavior doesn't
+    # have, so it's not inferred automatically. Set to "benign" or "attack"
+    # to opt a single-tree config into rounding on just that class (e.g.
+    # the anomaly-mining scripts, which only ever keep benign leaves --
+    # discard_attack_patterns drops the rest regardless -- so there's no
+    # point also fitting a whole second attack-facing tree the way
+    # two-tree mode does). None (default): unaffected, exactly today's
+    # single-tree behavior even if max_diverse_rounds > 1.
+    diverse_rounds_class: str | None = None
 
 
 class AttributeMiningConfig(BaseModel):

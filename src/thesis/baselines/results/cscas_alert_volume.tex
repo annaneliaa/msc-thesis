@@ -33,12 +33,12 @@ Paper (reproduced) & Random Forest & Base (5) & Full test & random & 18821 & 121
  &  &  &  & guided & 17787 & 1224191 & 12414 & 1400 & 231 \\
 \addlinespace
 Paper (reproduced) & Random Forest & Full (42) & Subsample & random & 295 & 19554 & 140 & 11 & 164 \\
- &  &  &  & class-weighted & 261 & 19682 & 12 & 45 & 14 \\
+ &  &  &  & class-weighted & 262 & 19681 & 13 & 44 & 15 \\
  &  &  &  & guided & 294 & 19640 & 54 & 12 & 63 \\
 \addlinespace
 Paper (reproduced) & Random Forest & Full (42) & Full test & random & 18618 & 1228129 & 8476 & 569 & 158 \\
- &  &  &  & class-weighted & 16370 & 1236014 & 591 & 2817 & 11 \\
- &  &  &  & guided & 18470 & 1233889 & 2716 & 717 & 51 \\
+ &  &  &  & class-weighted & 16380 & 1236010 & 595 & 2807 & 11 \\
+ &  &  &  & guided & 18470 & 1233888 & 2717 & 717 & 51 \\
 \midrule
 Internal system & Random Forest & Base (5) & Subsample & random & 303 & 19391 & 303 & 3 & 354 \\
  &  &  &  & class-weighted & 212 & 19618 & 76 & 94 & 89 \\
@@ -49,12 +49,12 @@ Internal system & Random Forest & Base (5) & Full test & random & 18821 & 121973
  &  &  &  & guided & 17786 & 1224191 & 12414 & 1401 & 231 \\
 \addlinespace
 Internal system & Random Forest & Full (42) & Subsample & random & 295 & 19554 & 140 & 11 & 164 \\
- &  &  &  & class-weighted & 261 & 19682 & 12 & 45 & 14 \\
+ &  &  &  & class-weighted & 262 & 19681 & 13 & 44 & 15 \\
  &  &  &  & guided & 294 & 19640 & 54 & 12 & 63 \\
 \addlinespace
 Internal system & Random Forest & Full (42) & Full test & random & 18618 & 1228129 & 8476 & 569 & 158 \\
- &  &  &  & class-weighted & 16370 & 1236014 & 591 & 2817 & 11 \\
- &  &  &  & guided & 18470 & 1233889 & 2716 & 717 & 51 \\
+ &  &  &  & class-weighted & 16380 & 1236010 & 595 & 2807 & 11 \\
+ &  &  &  & guided & 18470 & 1233888 & 2717 & 717 & 51 \\
 \addlinespace
 Internal system & Logistic Regression & Base (5) & Subsample & random & 304 & 16089 & 3605 & 2 & 4,213 \\
  &  &  &  & class-weighted & 305 & 17807 & 1887 & 1 & 2,205 \\
@@ -135,6 +135,54 @@ Internal + mining & XGBoost & Full (42) + mined & Subsample & random & 298 & 195
 Internal + mining & XGBoost & Full (42) + mined & Full test & random & 18815 & 1230409 & 6196 & 372 & 115 \\
  &  &  &  & class-weighted & 17464 & 1235371 & 1234 & 1723 & 23 \\
  &  &  &  & guided & 17745 & 1233944 & 2661 & 1442 & 50 \\
+\addlinespace
+Internal + mining (two-tree) & Random Forest & Base (5) + mined & Subsample & random & 301 & 19431 & 263 & 5 & 307 \\
+ &  &  &  & class-weighted & 206 & 19615 & 79 & 100 & 92 \\
+ &  &  &  & guided & 290 & 19478 & 216 & 16 & 252 \\
+\addlinespace
+Internal + mining (two-tree) & Random Forest & Base (5) + mined & Full test & random & 18657 & 1221819 & 14786 & 530 & 275 \\
+ &  &  &  & class-weighted & 13021 & 1233184 & 3421 & 6166 & 64 \\
+ &  &  &  & guided & 17798 & 1224709 & 11896 & 1389 & 221 \\
+\addlinespace
+Internal + mining (two-tree) & Random Forest & Full (42) + mined & Subsample & random & 297 & 19567 & 127 & 9 & 148 \\
+ &  &  &  & class-weighted & 247 & 19680 & 14 & 59 & 16 \\
+ &  &  &  & guided & 297 & 19634 & 60 & 9 & 70 \\
+\addlinespace
+Internal + mining (two-tree) & Random Forest & Full (42) + mined & Full test & random & 18677 & 1229397 & 7208 & 510 & 134 \\
+ &  &  &  & class-weighted & 15430 & 1235986 & 619 & 3757 & 12 \\
+ &  &  &  & guided & 18663 & 1233777 & 2828 & 524 & 53 \\
+\addlinespace
+Internal + mining (two-tree) & Logistic Regression & Base (5) + mined & Subsample & random & 298 & 19373 & 321 & 8 & 375 \\
+ &  &  &  & class-weighted & 298 & 19386 & 308 & 8 & 360 \\
+ &  &  &  & guided & 298 & 19360 & 334 & 8 & 390 \\
+\addlinespace
+Internal + mining (two-tree) & Logistic Regression & Base (5) + mined & Full test & random & 18347 & 1218342 & 18263 & 840 & 340 \\
+ &  &  &  & class-weighted & 18342 & 1219169 & 17436 & 845 & 325 \\
+ &  &  &  & guided & 18348 & 1217546 & 19059 & 839 & 355 \\
+\addlinespace
+Internal + mining (two-tree) & Logistic Regression & Full (42) + mined & Subsample & random & 301 & 19549 & 145 & 5 & 169 \\
+ &  &  &  & class-weighted & 299 & 19580 & 114 & 7 & 133 \\
+ &  &  &  & guided & 294 & 19583 & 111 & 12 & 130 \\
+\addlinespace
+Internal + mining (two-tree) & Logistic Regression & Full (42) + mined & Full test & random & 18894 & 1228275 & 8330 & 293 & 155 \\
+ &  &  &  & class-weighted & 18742 & 1230532 & 6073 & 445 & 113 \\
+ &  &  &  & guided & 18315 & 1230828 & 5777 & 872 & 108 \\
+\addlinespace
+Internal + mining (two-tree) & XGBoost & Base (5) + mined & Subsample & random & 300 & 19432 & 262 & 6 & 306 \\
+ &  &  &  & class-weighted & 254 & 19609 & 85 & 52 & 99 \\
+ &  &  &  & guided & 283 & 19505 & 189 & 23 & 221 \\
+\addlinespace
+Internal + mining (two-tree) & XGBoost & Base (5) + mined & Full test & random & 18595 & 1222145 & 14460 & 592 & 269 \\
+ &  &  &  & class-weighted & 16175 & 1232635 & 3970 & 3012 & 74 \\
+ &  &  &  & guided & 17486 & 1226029 & 10576 & 1701 & 197 \\
+\addlinespace
+Internal + mining (two-tree) & XGBoost & Full (42) + mined & Subsample & random & 298 & 19586 & 108 & 8 & 126 \\
+ &  &  &  & class-weighted & 288 & 19685 & 9 & 18 & 11 \\
+ &  &  &  & guided & 288 & 19666 & 28 & 18 & 33 \\
+\addlinespace
+Internal + mining (two-tree) & XGBoost & Full (42) + mined & Full test & random & 18811 & 1230347 & 6258 & 376 & 116 \\
+ &  &  &  & class-weighted & 18067 & 1236209 & 396 & 1120 & 7 \\
+ &  &  &  & guided & 18158 & 1235011 & 1594 & 1029 & 30 \\
 \midrule
 LLM (zero-shot) & Llama-3.1-8B-Instruct & Base (6) as text & Subsample & none & 53 & 19087 & 607 & 253 & 709 \\
 \addlinespace

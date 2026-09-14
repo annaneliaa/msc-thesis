@@ -13,6 +13,7 @@ from thesis.config import (
 from thesis.features.manifest import initialize_feature_manifest
 from thesis.features.schema_registry import FEATURE_SCHEMAS
 from thesis.features.service import build_persist_and_register_symbolic_schema
+from thesis.mining.attribute_features import default_leaky_attribute_fields
 from thesis.mining.itemset_mining_job import run_alert_group_eclat_job
 from thesis.mining.sequence_mining_job import run_alert_group_prefixspan_job
 from thesis.paths import ensure_artifact_dirs
@@ -360,6 +361,7 @@ def mine_alert_groups(
                 alert_groups_path=alert_groups_path,
                 scenario_name=scenario,
                 run_name=run_name,
+                exclude_fields=default_leaky_attribute_fields(scenario),
             )
             typer.echo(
                 f"Attribute mining complete. Artifacts saved to: {result.run_dir}"

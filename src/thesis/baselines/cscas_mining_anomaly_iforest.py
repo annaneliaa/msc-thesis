@@ -28,19 +28,21 @@ Scoring convention (matches cscas_anomaly.py / cscas_mining_anomaly.py):
   scores = -model.decision_function(X_test)   # higher = more anomalous
   y_pred = (model.predict(X_test) == -1)      # 1 = anomaly = attack
 
-Two attribute-mining tree modes, via the CSCAS_MINING_MODE env var (default
-"single_tree", the original config every existing *_mining*.json result was
-produced with). "two_tree" is an add-on, not a replacement, and uses the
-IDENTICAL mining config cscas_mining.py does (see
-_cscas_schema.mining_attribute_config) -- both the shallow benign-facing
-tree and the deeper attack-facing one are fit during mining, same as the
-classifier script. What's different here is what happens AFTER mining:
-_cscas_schema.discard_attack_patterns() drops every attack-leaning mined
-pattern (including, in two_tree mode, the whole attack-facing tree's leaves)
-before the symbolic feature schema is built, so the anomaly detector's
-(base + mined) training matrix never carries attack-derived information,
-consistent with its benign-only .fit(). Writes "_twotree"-suffixed result
-files so single-tree results are never overwritten.
+Two attribute-mining tree modes, via the CSCAS_MINING_MODE env var. "single_tree"
+(default) mines with AttributeMiningConfig()'s defaults and keeps the mined
+patterns as-is (both benign- and attack-leaning) -- the original behavior,
+byte-reproducible with the existing cscas_mining_anomaly*.json files.
+"two_tree" is an add-on, not a replacement: it uses a DIFFERENT config from
+cscas_mining.py's own two-tree point (see
+_cscas_schema.mining_attribute_config_anomaly for why max_depth=1 was tried
+and empirically rejected -- it starves OneClassSVM's benign-only feature set
+down to one useful dimension, collapsing its AUC), and additionally calls
+_cscas_schema.discard_attack_patterns() to drop every attack-leaning mined
+pattern before the symbolic feature schema is built, so the anomaly
+detector's (base + mined) training matrix never carries attack-derived
+information, consistent with its benign-only .fit(). Writes
+"_twotree"-suffixed result files so single-tree results are never
+overwritten.
 
 Run:
     cd src/thesis/baselines
@@ -63,7 +65,7 @@ from thesis.baselines._cscas_schema import (
     cscas_feature_cols,
     discard_attack_patterns,
     grid_outputs_done,
-    mining_attribute_config,
+    mining_attribute_config_anomaly,
     result_name,
     schema_blurb,
 )
@@ -71,10 +73,10 @@ from thesis.baselines._results import save_anomaly_results
 from thesis.baselines._sampling import get_cscas_eval_subsample
 from thesis.encoders.symbolic import SymbolicFeatureEncoder
 from thesis.features.schema_builder import build_symbolic_feature_schema
+from thesis.mining.attribute_features import default_leaky_attribute_fields
 from thesis.mining.attribute_mining_job import run_alert_group_attribute_mining_job
 from thesis.paths import CACHE_DIR
 from thesis.pipeline.pipeline import rows_to_cscas_alert_groups, save_alert_groups_json
-from thesis.schemas.preprocessing import ATTR_SIMILARITY_COLUMNS
 from thesis.training.workload import (
     average_workload_at_recall,
     compute_workload_at_recall,
@@ -173,37 +175,35 @@ save_alert_groups_json(train_groups, train_alert_groups_path)
 # model below only ever fits on the benign subset), excluding SCAS/
 # Similarity-derived candidate fields -- same reasoning as cscas_mining.py.
 # Same run_name/config/exclude_fields as cscas_mining_anomaly.py, so the
-# mined predicates are cache-shared between the two scripts.
-LEAKY_ATTRIBUTE_FIELDS = {
-    "scas",
-    "similarity",
-    "signature_id_similarity",
-    *(f"attr_value:{n}" for n in ATTR_SIMILARITY_COLUMNS),
-    *(f"attr_populated:{n}" for n in ATTR_SIMILARITY_COLUMNS),
-    *(
-        f"applicable_layer:{p.lower()}"
-        for p in ("Dns", "Email", "Http", "Smtp", "Ssh", "Tls")
-    ),
-}
+# mined predicates are cache-shared between the two scripts. Delegates to
+# the same shared set attribute_schema_cache's mine_or_reuse_attribute_schema
+# now applies by default for scenario="cscas" (added 2026-09-13), so
+# there's one definition of "which fields are CSCAS's own non-deployable
+# oracle" instead of four.
+LEAKY_ATTRIBUTE_FIELDS = default_leaky_attribute_fields("cscas")
 
 print(f"Mining attribute schema on train split ({MINING_MODE} mode)...")
 mining_result = run_alert_group_attribute_mining_job(
     alert_groups_path=train_alert_groups_path,
     scenario_name="cscas",
     run_name=f"cscas_baseline_mining_anomaly{MODE_SUFFIX}",
-    config=mining_attribute_config(MINING_MODE),
+    config=mining_attribute_config_anomaly(MINING_MODE),
     exclude_fields=LEAKY_ATTRIBUTE_FIELDS,
 )
 print(f"  Mined {len(mining_result.predicates)} predicates from train split.")
 
-# 7b) Discard every attack-leaning mined pattern (in two_tree mode, this
-# drops the whole attack-facing tree's leaves) before building the symbolic
-# schema -- the anomaly detector's own training is benign-only, so it should
-# never be handed attack-derived features either, even though mining itself
-# needed both classes' labels to find them. See discard_attack_patterns.
-mined_df, mined_predicates = discard_attack_patterns(
-    mining_result.mined_df, mining_result.predicates
-)
+# 7b) two_tree mode only: discard every attack-leaning mined pattern before
+# building the symbolic schema -- the anomaly detector's own training is
+# benign-only, so it should never be handed attack-derived features either,
+# even though mining itself needed both classes' labels to find them.
+# single_tree mode keeps mining_result as-is (byte-reproducible with the
+# original, pre-two-tree result files). See discard_attack_patterns.
+if MINING_MODE == "two_tree":
+    mined_df, mined_predicates = discard_attack_patterns(
+        mining_result.mined_df, mining_result.predicates
+    )
+else:
+    mined_df, mined_predicates = mining_result.mined_df, mining_result.predicates
 
 symbolic_schema = build_symbolic_feature_schema(
     df=mined_df,
@@ -288,8 +288,13 @@ for ek, frame in EVAL_FRAMES.items():
             "IsolationForest(n_estimators=100, contamination=0.05) fit on "
             f"benign-only rows of the {schema_blurb(SCHEMA, len(FEATURE_COLS))} + "
             f"attribute-mined symbolic features ({MINING_MODE} mode, mined on "
-            "the same train split as cscas_mining, attack-leaning mined "
-            "patterns discarded before schema-building; SCAS/Similarity-derived "
+            "the same train split as cscas_mining"
+            + (
+                ", attack-leaning mined patterns discarded before schema-building"
+                if MINING_MODE == "two_tree"
+                else ""
+            )
+            + "; SCAS/Similarity-derived "
             "fields excluded from mining), evaluated on the "
             f"{'shared 20k eval subsample' if ek == 'subsample' else 'full 1.26M-row test set'}. "
             "No attack rows used in training. Mean over 5 seeds "

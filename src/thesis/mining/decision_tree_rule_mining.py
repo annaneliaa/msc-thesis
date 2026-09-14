@@ -230,6 +230,162 @@ def _fit_and_tag_leaves(
     return leaves_df, predicates
 
 
+def _passes_round_significance_floor(
+    row: pd.Series, keep_label: str, tree_config: "DecisionTreeRuleConfig"
+) -> bool:
+    """
+    Round >= 2 gate, mirroring Step 1's own significance bar
+    (attribute_contrast_mining.filter_contrast_survivors /
+    ContrastSetFilterConfig) so a later round can't be kept purely for not
+    re-covering earlier rounds' rows -- it also has to be a non-trivial
+    pattern. Same growth_rate formula as Step 1's predicate_support_stats:
+    confidence_attack / confidence_benign (both already computed by
+    extract_leaf_rules the same way Step 1 computes them), reciprocal for
+    the benign-leaning direction.
+    """
+    growth_rate = row["confidence_attack"] / (row["confidence_benign"] + 1e-9)
+    if keep_label == "attack":
+        return (
+            growth_rate >= tree_config.round_min_growth_rate
+            and row["confidence_attack"] >= tree_config.round_min_coverage
+        )
+    inv_threshold = (
+        1.0 / tree_config.round_min_growth_rate
+        if tree_config.round_min_growth_rate > 0
+        else float("inf")
+    )
+    return (
+        growth_rate <= inv_threshold
+        and row["confidence_benign"] >= tree_config.round_min_coverage
+    )
+
+
+def _fit_class_rounds(
+    X: pd.DataFrame,
+    y: pd.Series,
+    column_predicate_map: dict[str, tuple[str, Any]],
+    max_depth: int,
+    tree_config: "DecisionTreeRuleConfig",
+    keep_label: str,
+) -> tuple[pd.DataFrame, list[AttributePredicate]]:
+    """
+    Fit up to tree_config.max_diverse_rounds trees for one leaf polarity
+    (keep_label: "benign" or "attack") on the SAME population, each round
+    excluding the feature column(s) already split on in earlier rounds. A
+    dominant feature (e.g. a near-pure root split covering most of one
+    class) otherwise shadows every other candidate at every depth, since
+    CART only ever grows around whichever feature locally maximizes
+    impurity reduction -- excluding it lets a later round surface a
+    genuinely different characterization of the same class instead of just
+    a deeper refinement of the first one.
+
+    A candidate's leaves are kept only if they're not mostly re-covering
+    rows an earlier kept round already covers (redundancy_overlap_
+    threshold) -- otherwise a highly correlated proxy feature (e.g. one
+    that fires on nearly the same rows as an earlier winner) would produce
+    a leaf that looks new but adds no real coverage. A candidate that
+    fails this check doesn't end the search: its feature(s) are excluded
+    too (same as a successful one's) and the next candidate is tried
+    immediately, so a redundant proxy just gets skipped over rather than
+    stopping the hunt for max_diverse_rounds independent characterizations.
+    Round >= 2 candidates also have to clear round_min_coverage /
+    round_min_growth_rate (_passes_round_significance_floor) -- redundancy
+    alone only checks against earlier rounds' coverage, not against being a
+    real pattern in the first place; round 1 is exempt so it stays exactly
+    the original single-tree-per-class behavior.
+
+    The search only stops early once every column has been excluded (or a
+    tree can't split at all, meaning nothing further is excludable) --
+    otherwise it keeps retrying until it has found max_diverse_rounds kept
+    rounds.
+
+    max_diverse_rounds=1 (the default) fits exactly one tree and returns
+    its leaves unfiltered by coverage -- identical to the pre-existing
+    single-tree-per-class behavior every current caller relies on.
+    """
+    all_rounds: list[pd.DataFrame] = []
+    all_predicates: list[AttributePredicate] = []
+    excluded_columns: set[str] = set()
+    covered_mask = np.zeros(len(X), dtype=bool)
+    target_rounds = max(1, tree_config.max_diverse_rounds)
+    rounds_found = 0
+
+    while rounds_found < target_rounds:
+        X_round = X.drop(
+            columns=[c for c in excluded_columns if c in X.columns], errors="ignore"
+        )
+        if X_round.shape[1] == 0:
+            break
+
+        tree = fit_rule_tree(
+            X_round,
+            y,
+            max_depth=max_depth,
+            min_samples_leaf=tree_config.min_samples_leaf,
+            class_weight=tree_config.class_weight,
+            random_state=tree_config.random_state,
+            min_impurity_decrease=tree_config.min_impurity_decrease,
+        )
+        used_cols = {X_round.columns[i] for i in tree.tree_.feature if i != -2}
+        excluded_columns |= used_cols
+        # A tree that couldn't split at all uses no columns, so a failed
+        # attempt here can never be retried with a smaller candidate space
+        # -- stop rather than loop forever re-fitting the same tree.
+        can_retry = bool(used_cols)
+
+        leaves_df, predicates = extract_leaf_rules(
+            tree, X_round, y, column_predicate_map
+        )
+        if leaves_df.empty:
+            if not can_retry:
+                break
+            continue
+        leaves_df["source_label"] = np.where(
+            leaves_df["confidence_attack"] > leaves_df["confidence_benign"],
+            "attack",
+            "benign",
+        )
+        leaves_df = leaves_df[leaves_df["source_label"] == keep_label]
+        if leaves_df.empty:
+            if not can_retry:
+                break
+            continue
+
+        leaf_ids = tree.apply(X_round)
+        kept_rows = []
+        for _, row in leaves_df.iterrows():
+            if rounds_found >= 1 and not _passes_round_significance_floor(
+                row, keep_label, tree_config
+            ):
+                continue
+            member_mask = leaf_ids == row["leaf_id"]
+            n_members = int(member_mask.sum())
+            overlap = (
+                (member_mask & covered_mask).sum() / n_members if n_members else 1.0
+            )
+            if overlap >= tree_config.redundancy_overlap_threshold:
+                continue
+            covered_mask |= member_mask
+            kept_rows.append(row)
+
+        if not kept_rows:
+            if not can_retry:
+                break
+            continue
+
+        rounds_found += 1
+        round_df = pd.DataFrame(kept_rows)
+        round_df["mining_round"] = rounds_found
+        all_rounds.append(round_df)
+        kept_tokens = {tok for itemset in round_df["itemset"] for tok in itemset}
+        all_predicates.extend(p for p in predicates if p.token in kept_tokens)
+
+    if not all_rounds:
+        return pd.DataFrame(), []
+
+    return pd.concat(all_rounds, ignore_index=True), all_predicates
+
+
 def fit_and_extract_rules(
     X: pd.DataFrame,
     y: pd.Series,
@@ -247,7 +403,13 @@ def fit_and_extract_rules(
     caller (attribute_mining_job.py, monitor_drift.py,
     dynamic_schema_service.py) already relies on -- those callers are
     unaffected by this function existing since they never set
-    max_depth_attack.
+    max_depth_attack. Exception: if tree_config.diverse_rounds_class is
+    also set (e.g. "benign"), diverse-round search (_fit_class_rounds) runs
+    for just that polarity instead -- for a caller like the anomaly-mining
+    scripts that only ever keeps one class's leaves anyway (their own
+    discard_attack_patterns step drops the rest), so there's no reason to
+    also fit a whole second, unused attack-facing tree the way two-tree
+    mode's benign+attack split does.
 
     Two-tree mode (tree_config.max_depth_attack is not None): two trees are
     fit on the same (X, y) -- one at max_depth (kept for its benign-leaning
@@ -265,19 +427,30 @@ def fit_and_extract_rules(
     in the benign tree) isn't included.
     """
     if tree_config.max_depth_attack is None:
+        if tree_config.max_diverse_rounds > 1 and tree_config.diverse_rounds_class:
+            return _fit_class_rounds(
+                X,
+                y,
+                column_predicate_map,
+                tree_config.max_depth,
+                tree_config,
+                tree_config.diverse_rounds_class,
+            )
         return _fit_and_tag_leaves(
             X, y, column_predicate_map, tree_config.max_depth, tree_config
         )
 
-    benign_leaves, benign_predicates = _fit_and_tag_leaves(
-        X, y, column_predicate_map, tree_config.max_depth, tree_config
+    benign_leaves, benign_predicates = _fit_class_rounds(
+        X, y, column_predicate_map, tree_config.max_depth, tree_config, "benign"
     )
-    benign_leaves = benign_leaves[benign_leaves["source_label"] == "benign"]
-
-    attack_leaves, attack_predicates = _fit_and_tag_leaves(
-        X, y, column_predicate_map, tree_config.max_depth_attack, tree_config
+    attack_leaves, attack_predicates = _fit_class_rounds(
+        X,
+        y,
+        column_predicate_map,
+        tree_config.max_depth_attack,
+        tree_config,
+        "attack",
     )
-    attack_leaves = attack_leaves[attack_leaves["source_label"] == "attack"]
 
     leaves_df = pd.concat([benign_leaves, attack_leaves], ignore_index=True)
 

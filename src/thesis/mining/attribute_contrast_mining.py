@@ -10,6 +10,7 @@ from thesis.mining.attribute_features import (
     BINARY_CATEGORICAL_FIELDS,
     MULTI_VALUED_CATEGORICAL_FIELDS,
     NUMERIC_FIELDS,
+    SET_VALUED_CATEGORICAL_FIELDS,
     compute_candidate_attribute_features,
 )
 from thesis.schemas.groups import AlertGroup
@@ -49,15 +50,19 @@ def build_categorical_predicate_matrix(
       compute_candidate_attribute_features() output
 
     exclude_fields, if given, drops the named candidate fields (matching
-    MULTI_VALUED_CATEGORICAL_FIELDS / BINARY_CATEGORICAL_FIELDS /
-    NUMERIC_FIELDS entries) from the candidate space entirely, for both
-    Step 1 (contrast-set) and Step 2 (decision tree) -- e.g. to keep fields
-    that a real deployment couldn't compute out of the mined schema. None
-    (default) preserves the full candidate space, unchanged.
+    MULTI_VALUED_CATEGORICAL_FIELDS / SET_VALUED_CATEGORICAL_FIELDS /
+    BINARY_CATEGORICAL_FIELDS / NUMERIC_FIELDS entries) from the candidate
+    space entirely, for both Step 1 (contrast-set) and Step 2 (decision
+    tree) -- e.g. to keep fields that a real deployment couldn't compute out
+    of the mined schema. None (default) preserves the full candidate space,
+    unchanged.
     """
     exclude_fields = exclude_fields or set()
     multi_valued_fields = [
         f for f in MULTI_VALUED_CATEGORICAL_FIELDS if f not in exclude_fields
+    ]
+    set_valued_fields = [
+        f for f in SET_VALUED_CATEGORICAL_FIELDS if f not in exclude_fields
     ]
     binary_fields = [f for f in BINARY_CATEGORICAL_FIELDS if f not in exclude_fields]
     numeric_fields = [f for f in NUMERIC_FIELDS if f not in exclude_fields]
@@ -76,6 +81,17 @@ def build_categorical_predicate_matrix(
             col = f"{field_name}={value}"
             cat_row[col] = 1
             column_predicate_map.setdefault(col, (field_name, value))
+        # Genuinely multi-valued fields (AIT-ADS's short/sig/host, see
+        # SET_VALUED_CATEGORICAL_FIELDS): every value present in this
+        # group's set gets its own column set to 1 -- unlike the
+        # single-valued fields above, a row CAN have several of these
+        # simultaneously (e.g. sig=login AND sig=failed for the same
+        # alert group).
+        for field_name in set_valued_fields:
+            for value in feats[field_name]:
+                col = f"{field_name}={value}"
+                cat_row[col] = 1
+                column_predicate_map.setdefault(col, (field_name, value))
         for field_name in binary_fields:
             cat_row[field_name] = int(bool(feats[field_name]))
             column_predicate_map.setdefault(field_name, (field_name, True))
@@ -189,6 +205,11 @@ def compute_predicate_contrast_stats(
         value)): two columns sharing the same attribute but a different
         value are mutually exclusive by construction. Pass None to skip this
         check (falls back to enumerating every pair, as before).
+        Deliberately NOT applied to SET_VALUED_CATEGORICAL_FIELDS (AIT-ADS's
+        short/sig/host): those genuinely CAN take several values in one
+        alert group (verified: 97-99% of AIT-ADS groups have more than one
+        distinct "sig" token), so e.g. sig=login and sig=failed are real,
+        checkable candidates -- they fall through to the next check instead.
       - Pairwise ANDs of two individually-non-constant columns that just
         never co-occur in this population (fires.sum() == 0) -- unlike the
         single-column case, this can't be detected from column_predicate_map
@@ -214,7 +235,15 @@ def compute_predicate_contrast_stats(
             return False
         pa = column_predicate_map.get(a)
         pb = column_predicate_map.get(b)
-        return pa is not None and pb is not None and pa[0] == pb[0] and pa[1] != pb[1]
+        if pa is None or pb is None or pa[0] != pb[0]:
+            return False
+        if pa[0] in SET_VALUED_CATEGORICAL_FIELDS:
+            # Same attribute, but it's one AIT-ADS lets take several values
+            # per group at once -- unlike MULTI_VALUED_CATEGORICAL_FIELDS,
+            # different values here are NOT assumed exclusive; let the
+            # empirical never-co-occurs check below decide instead.
+            return False
+        return pa[1] != pb[1]
 
     candidates: list[tuple[str, ...]] = [(c,) for c in columns]
     candidates += [

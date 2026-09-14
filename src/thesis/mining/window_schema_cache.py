@@ -49,6 +49,7 @@ from thesis.pipeline.pipeline import (
     compute_window_bounds,
     compute_window_train_end,
 )
+from thesis.mining.attribute_features import default_leaky_attribute_fields
 from thesis.mining.attribute_schema_cache import (
     compute_fingerprint_from_identity,
     lookup as lookup_cached_schema,
@@ -159,6 +160,7 @@ def _mine_and_discard_slice(
     root_dir: Path,
     force: bool,
     fingerprint: str,
+    exclude_fields: set[str],
 ) -> tuple[Path, Path | None, dict]:
     """Mine using `slice_path` (already materialized by the caller because
     the cache lookup missed), then delete it -- the mining job only ever
@@ -173,6 +175,7 @@ def _mine_and_discard_slice(
             root_dir=root_dir,
             force=force,
             fingerprint=fingerprint,
+            exclude_fields=exclude_fields,
         )
     finally:
         slice_path.unlink(missing_ok=True)
@@ -195,9 +198,15 @@ def get_or_mine_window_attribute_schema(
     `alert_groups` must already be the full scenario, chronologically
     sorted; `alert_groups_path` is the base alert_groups_raw.json path used
     to derive a sibling filename for the window's train-split file.
+
+    Candidate fields excluded from mining default to
+    attribute_features.default_leaky_attribute_fields(scenario) (e.g.
+    CSCAS's own SCAS/Similarity oracle fields) -- see
+    attribute_schema_cache.mine_or_reuse_attribute_schema's docstring.
     """
     win_start, win_end, _ = compute_window_bounds(len(alert_groups), gran, win_idx)
     win_train_end = compute_window_train_end(win_start, win_end, train_frac)
+    exclude_fields = default_leaky_attribute_fields(scenario)
 
     tf_tag = f"{train_frac:.6f}".rstrip("0").rstrip(".")
     identity = _window_slice_identity(
@@ -208,7 +217,9 @@ def get_or_mine_window_attribute_schema(
         slice_end=win_train_end,
         tag=f"train{tf_tag}",
     )
-    fingerprint = compute_fingerprint_from_identity(identity, attribute_mining_config)
+    fingerprint = compute_fingerprint_from_identity(
+        identity, attribute_mining_config, exclude_fields
+    )
 
     cached_schema_path = (
         None if force else lookup_cached_schema(scenario, fingerprint, root_dir)
@@ -243,6 +254,7 @@ def get_or_mine_window_attribute_schema(
         root_dir=root_dir,
         force=force,
         fingerprint=fingerprint,
+        exclude_fields=exclude_fields,
     )
 
     return WindowSchemaResult(
@@ -280,7 +292,12 @@ def get_or_mine_slice_attribute_schema(
     windowed ones. win_start/win_end/win_train_end in the result all take
     the slice bounds (win_train_end == slice_end -- no further held-out
     split here; the caller already carved this slice as its train side).
+
+    Candidate fields excluded from mining default to
+    attribute_features.default_leaky_attribute_fields(scenario) -- see
+    get_or_mine_window_attribute_schema's docstring.
     """
+    exclude_fields = default_leaky_attribute_fields(scenario)
     identity = _window_slice_identity(
         alert_groups_path,
         gran=-1.0,
@@ -289,7 +306,9 @@ def get_or_mine_slice_attribute_schema(
         slice_end=slice_end,
         tag=slice_tag,
     )
-    fingerprint = compute_fingerprint_from_identity(identity, attribute_mining_config)
+    fingerprint = compute_fingerprint_from_identity(
+        identity, attribute_mining_config, exclude_fields
+    )
 
     cached_schema_path = (
         None if force else lookup_cached_schema(scenario, fingerprint, root_dir)
@@ -324,6 +343,7 @@ def get_or_mine_slice_attribute_schema(
         root_dir=root_dir,
         force=force,
         fingerprint=fingerprint,
+        exclude_fields=exclude_fields,
     )
 
     return WindowSchemaResult(
@@ -355,8 +375,13 @@ def get_or_mine_full_window_attribute_schema(
     freeze the result for evaluation on other windows. Returns the same
     WindowSchemaResult shape, with win_train_end == win_end as a
     self-documenting "no held-out split" sentinel.
+
+    Candidate fields excluded from mining default to
+    attribute_features.default_leaky_attribute_fields(scenario) -- see
+    get_or_mine_window_attribute_schema's docstring.
     """
     win_start, win_end, _ = compute_window_bounds(len(alert_groups), gran, win_idx)
+    exclude_fields = default_leaky_attribute_fields(scenario)
 
     identity = _window_slice_identity(
         alert_groups_path,
@@ -366,7 +391,9 @@ def get_or_mine_full_window_attribute_schema(
         slice_end=win_end,
         tag="full",
     )
-    fingerprint = compute_fingerprint_from_identity(identity, attribute_mining_config)
+    fingerprint = compute_fingerprint_from_identity(
+        identity, attribute_mining_config, exclude_fields
+    )
 
     cached_schema_path = (
         None if force else lookup_cached_schema(scenario, fingerprint, root_dir)
@@ -401,6 +428,7 @@ def get_or_mine_full_window_attribute_schema(
         root_dir=root_dir,
         force=force,
         fingerprint=fingerprint,
+        exclude_fields=exclude_fields,
     )
 
     return WindowSchemaResult(
