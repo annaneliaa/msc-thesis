@@ -93,8 +93,10 @@ SCHEMAS_ANOMALY = ("base", "full_noscas", "full_scas")
 #: (max_depth=4, max_depth_attack unset, one shared tree, every leaf kept).
 #: "two_tree" fits a second, deeper tree specifically for attack-leaning
 #: leaves alongside a shallow benign-facing one (max_depth=1/
-#: max_depth_attack=4) -- validated as a real improvement for this script,
-#: see that function's docstring.
+#: max_depth_attack=4), each additionally refit once more with its used
+#: feature(s) excluded (max_diverse_rounds=2) to surface a second
+#: independent pattern per tree where one exists -- validated as a real
+#: improvement for this script, see that function's docstring.
 #:
 #: The two anomaly-mining scripts use mining_attribute_config_anomaly
 #: instead, which is NOT the same two_tree point: mining always needs both
@@ -137,7 +139,25 @@ def mining_attribute_config(mode: str):
     additionally shallower than the baseline it's being compared against),
     min_samples_leaf=10 (that grid's own anchor; single_tree uses 20).
     Contrast-stage thresholds and class_weight are left at
-    AttributeMiningConfig's defaults, identical between both modes."""
+    AttributeMiningConfig's defaults, identical between both modes.
+
+    max_diverse_rounds=2 (round_min_coverage/round_min_growth_rate left at
+    DecisionTreeRuleConfig's defaults, 0.05/3.0, matching Step 1's own
+    ContrastSetFilterConfig defaults): after the depth=1 benign tree and the
+    depth=4 attack tree above are fit, each is refit once more with its
+    already-used feature column(s) excluded, on the same population, to
+    surface a second independent characterization instead of just the
+    dominant one (see decision_tree_rule_mining._fit_class_rounds). Swept
+    max_diverse_rounds in {1, 2, 3} on the guided-pool condition, 5-seed
+    mean F1 on the eval subsample:
+        rounds=1: rf base 0.7147, xgb base 0.7269, rf full 0.8966, xgb full 0.9264
+        rounds=2: rf base 0.7936, xgb base 0.7594, rf full 0.9068, xgb full 0.9324
+        rounds=3: rf base 0.7890, xgb base 0.7447, rf full 0.9015, xgb full 0.9280
+    rounds=2 beats both rounds=1 and rounds=3 on all four cells -- rounds=3's
+    added rule (proto=6-based) is individually significant but redundant in
+    signal with rounds=2's winning rule (a NOT_proto=17-based rule; proto=6
+    is a large chunk of "not proto=17"), so it adds correlated dimensionality
+    rather than new information. Not swept beyond 3."""
     from thesis.schemas.mining import AttributeMiningConfig, DecisionTreeRuleConfig
 
     if mode == "single_tree":
@@ -145,7 +165,10 @@ def mining_attribute_config(mode: str):
     if mode == "two_tree":
         return AttributeMiningConfig(
             tree=DecisionTreeRuleConfig(
-                max_depth=1, max_depth_attack=4, min_samples_leaf=10
+                max_depth=1,
+                max_depth_attack=4,
+                min_samples_leaf=10,
+                max_diverse_rounds=2,
             )
         )
     raise ValueError(f"unknown mining mode {mode!r}; expected one of {MINING_MODES}")
