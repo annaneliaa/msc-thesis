@@ -247,7 +247,10 @@ class RollingWalkForwardConfig:
     W(i+1), then discard the schema/model and move on -- no accumulation, no
     state carried between steps. This is the "always retrain" anchor
     contrasted against Experiment 2's "never retrain" frozen-model decay
-    curve. See experiments/rolling_walk_forward.py."""
+    curve. Also computes SHAP + LIME signed importances at every step (a
+    sample of W(i+1) against a background sample from Wi -- both step-local,
+    unlike Experiment 2's single frozen W_src background). See
+    experiments/rolling_walk_forward.py."""
 
     scenario: str
     shortlist_path: Path
@@ -262,6 +265,23 @@ class RollingWalkForwardConfig:
     # refit each step; "fixed" makes the recomputation a no-op (always 0.5).
     threshold_mode: Literal["fixed", "calibrated_recall"] = "fixed"
     calibrated_recall_target: float = 0.90
+    # SHAP/LIME are expensive (LIME especially) -- off switch for a
+    # metrics-only run.
+    compute_explanations: bool = True
+    # rows sampled from Wi's own encoding as the SHAP/LIME background/
+    # reference set for that step (fresh every step -- see the class
+    # docstring for why there's no frozen background here the way Exp2 has).
+    explain_background_n: int = 100
+    # rows sampled from W(i+1) (the step's evaluation window) to explain
+    explain_sample_n: int = 50
+    # perturbed samples LIME draws per explained row -- see
+    # TemporalDecayConfig.lime_num_samples
+    lime_num_samples: int = 1000
+    # One-class models have no analytic SHAP explainer, so SHAP falls back
+    # to PermutationExplainer over every feature at every step -- off by
+    # default, same reasoning as TemporalDecayConfig.oneclass_shap. They
+    # still get LIME importances.
+    oneclass_shap: bool = False
     cache_dir: Path = field(default_factory=lambda: CACHE_DIR)
     grouping: GroupingConfig = field(default_factory=GroupingConfig)
     alerts_json_path: Path | None = None

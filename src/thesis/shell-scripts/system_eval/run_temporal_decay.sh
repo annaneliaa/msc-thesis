@@ -97,6 +97,13 @@ COMPUTE_EXPLANATIONS=1  # 0 to skip SHAP/LIME entirely (metrics + novelty only)
 ONECLASS_SHAP=0         # 1 to also compute (slow) SHAP for any one-class model in MODELS
 EXPLAIN_SAMPLE_N=50
 LIME_NUM_SAMPLES=1000
+# FORCE=1 ignores any cached mined schema and re-mines from scratch for every
+# (mining setting, feature_set) in this run -- use when you want a clean mine
+# rather than trusting whatever's already in the cache (e.g. after a mining
+# code change, or to rule out a stale/corrupted cache entry as the cause of
+# something odd). Slower: every symbolic/cscas_full_symbolic config pays the
+# full mining cost again instead of a cache hit.
+FORCE=0
 
 # If explanations are on but shap/lime aren't importable in this env, drop
 # to metrics-only rather than failing the whole run partway through.
@@ -157,6 +164,9 @@ for scenario in "${SCENARIOS[@]}"; do
   fi
   if [[ "${CSCAS_FULL_SYMBOLIC:-0}" -eq 1 ]]; then
     cmd+=(--cscas-full-symbolic)
+  fi
+  if [[ "${FORCE:-0}" -eq 1 ]]; then
+    cmd+=(--force)
   fi
 
   "${cmd[@]}" >"$log_file" 2>&1

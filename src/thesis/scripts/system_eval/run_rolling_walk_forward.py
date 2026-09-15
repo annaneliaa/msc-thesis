@@ -100,6 +100,29 @@ def main() -> None:
         help="Don't add a baseline row per (granularity, model) to the derived shortlist.",
     )
     parser.add_argument(
+        "--cscas-full",
+        action="store_true",
+        dest="include_cscas_full",
+        help=(
+            "Add a cscas_full feature-set row per (granularity, model): the CSCAS "
+            "paper's full feature set (5 base cols + SCAS + Similarity + "
+            "SignatureIDSimilarity + 33 attr-similarity columns). A non-deployable "
+            "reference ceiling -- SCAS and the offline *Similarity scores can't be "
+            "computed for a fresh alert. SCAS is dropped for one-class models "
+            "(it's itself an anomaly inlier/outlier score). CSCAS only."
+        ),
+    )
+    parser.add_argument(
+        "--cscas-full-symbolic",
+        action="store_true",
+        dest="include_cscas_full_symbolic",
+        help=(
+            "Add a cscas_full_symbolic row per (mining setting, granularity, "
+            "model): the full CSCAS columns PLUS a schema mined on the full "
+            "window Wi (shared base columns encoded once, not doubled). CSCAS only."
+        ),
+    )
+    parser.add_argument(
         "--threshold-mode",
         choices=["fixed", "calibrated_recall"],
         default="fixed",
@@ -114,6 +137,49 @@ def main() -> None:
         dest="calibrated_recall_target",
         metavar="RECALL",
         help="Recall target for --threshold-mode calibrated_recall. Default: 0.90",
+    )
+    parser.add_argument(
+        "--no-explanations",
+        action="store_false",
+        dest="compute_explanations",
+        help="Skip SHAP/LIME importance tracking (metrics only, much faster).",
+    )
+    parser.add_argument(
+        "--oneclass-shap",
+        action="store_true",
+        dest="oneclass_shap",
+        help=(
+            "Also compute SHAP for any one-class model in --models. Off by "
+            "default -- no analytic explainer, so SHAP falls back to "
+            "PermutationExplainer over every feature at every step, which "
+            "dominates an explanations run. Without this flag one-class "
+            "models get LIME importances only."
+        ),
+    )
+    parser.add_argument(
+        "--explain-background-n",
+        type=int,
+        default=100,
+        dest="explain_background_n",
+        metavar="N",
+        help="Rows sampled from each step's training window Wi as the SHAP/LIME "
+        "background set. Default: 100",
+    )
+    parser.add_argument(
+        "--explain-sample-n",
+        type=int,
+        default=50,
+        dest="explain_sample_n",
+        metavar="N",
+        help="Rows sampled from each step's evaluation window W(i+1) to explain. Default: 50",
+    )
+    parser.add_argument(
+        "--lime-num-samples",
+        type=int,
+        default=1000,
+        dest="lime_num_samples",
+        metavar="N",
+        help="Perturbed samples LIME draws per explained row. Default: 1000",
     )
     parser.add_argument(
         "--mining-settings",
@@ -160,6 +226,8 @@ def main() -> None:
             args.granularities,
             args.models,
             args.include_baseline,
+            args.include_cscas_full,
+            args.include_cscas_full_symbolic,
         )
         derived_dir = (
             _REPO / "artifacts" / "experiments" / "rolling_walk_forward" / args.scenario
@@ -198,6 +266,11 @@ def main() -> None:
         mining_settings_path=args.mining_settings,
         threshold_mode=args.threshold_mode,
         calibrated_recall_target=args.calibrated_recall_target,
+        compute_explanations=args.compute_explanations,
+        oneclass_shap=args.oneclass_shap,
+        explain_background_n=args.explain_background_n,
+        explain_sample_n=args.explain_sample_n,
+        lime_num_samples=args.lime_num_samples,
         cache_dir=cache_dir,
         grouping=grouping,
         alerts_json_path=alerts_path,
