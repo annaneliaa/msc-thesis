@@ -21,14 +21,15 @@ CSCAS-only (AIT-ADS has no SCAS-equivalent outlier signal to guide sampling
 with). \textbf{Grouping} is one of \texttt{fixed\_window} / \texttt{time\_delta}
 / \texttt{cscas\_grouping} (every scenario) or \texttt{alertbert} /
 \texttt{deepcase} (\texttt{fox} / \texttt{russellmitchell} only -- the
-scenarios held out of the learned groupers' training). \texttt{harrison} /
-\texttt{santos} (every grouping) and \texttt{russellmitchell} (every grouping
-but \texttt{deepcase}) have no row for the seven classifier methods -- every
-attack in their raw timeline falls in the last 30\% regardless of grouping, so
-train is 100\% benign; the four anomaly methods and zero-shot are exempt (see
-the intro cell). All rows are scored on that scenario's full test split -- no
-`Full test' vs `Subsample' split axis: unlike CSCAS, no frozen eval subsample
-is used.}
+scenarios held out of the learned groupers' training). Covers 6 of AIT-ADS's 8
+scenarios -- \texttt{harrison}/\texttt{santos} are excluded from this table
+entirely (see the intro cell). \texttt{russellmitchell} (every grouping but
+\texttt{deepcase}) has no row for the seven classifier methods -- every attack
+in its raw timeline falls in the last 30\% regardless of grouping, so train is
+100\% benign; the four anomaly methods and zero-shot are exempt (see the intro
+cell). All rows are scored on that scenario's full test split -- no `Full
+test' vs `Subsample' split axis: unlike CSCAS, no frozen eval subsample is
+used.}
 \label{tab:ait-ads-baseline-results-full} \\
 \toprule
 \textbf{Baseline} & \textbf{Model} & \textbf{Features} & \textbf{Scenario} & \textbf{Grouping} & \textbf{Training} & \textbf{Precision} & \textbf{Recall} & \textbf{F1} & \textbf{AUC} \\
@@ -485,12 +486,6 @@ LLM (zero-shot) & Llama-3.1-8B & tokens as text & fox & alertbert & none & 0.380
 \addlinespace
 LLM (zero-shot) & Llama-3.1-8B & tokens as text & fox & deepcase & none & 0.993 & 0.451 & 0.620 & -- \\
 \addlinespace
-LLM (zero-shot) & Llama-3.1-8B & tokens as text & harrison & fixed\_window & none & 0.602 & 0.508 & 0.551 & -- \\
-\addlinespace
-LLM (zero-shot) & Llama-3.1-8B & tokens as text & harrison & time\_delta & none & 0.165 & 0.126 & 0.143 & -- \\
-\addlinespace
-LLM (zero-shot) & Llama-3.1-8B & tokens as text & harrison & cscas\_grouping & none & 0.192 & 0.297 & 0.233 & -- \\
-\addlinespace
 LLM (zero-shot) & Llama-3.1-8B & tokens as text & russellmitchell & fixed\_window & none & 0.128 & 0.232 & 0.165 & -- \\
 \addlinespace
 LLM (zero-shot) & Llama-3.1-8B & tokens as text & russellmitchell & time\_delta & none & 0.090 & 0.179 & 0.120 & -- \\
@@ -500,12 +495,6 @@ LLM (zero-shot) & Llama-3.1-8B & tokens as text & russellmitchell & cscas\_group
 LLM (zero-shot) & Llama-3.1-8B & tokens as text & russellmitchell & alertbert & none & 0.160 & 0.255 & 0.196 & -- \\
 \addlinespace
 LLM (zero-shot) & Llama-3.1-8B & tokens as text & russellmitchell & deepcase & none & 0.744 & 0.177 & 0.286 & -- \\
-\addlinespace
-LLM (zero-shot) & Llama-3.1-8B & tokens as text & santos & fixed\_window & none & 0.062 & 0.142 & 0.086 & -- \\
-\addlinespace
-LLM (zero-shot) & Llama-3.1-8B & tokens as text & santos & time\_delta & none & 0.045 & 0.105 & 0.063 & -- \\
-\addlinespace
-LLM (zero-shot) & Llama-3.1-8B & tokens as text & santos & cscas\_grouping & none & 0.067 & 0.346 & 0.113 & -- \\
 \addlinespace
 LLM (zero-shot) & Llama-3.1-8B & tokens as text & shaw & fixed\_window & none & 0.046 & 0.182 & 0.074 & -- \\
 \addlinespace
@@ -541,12 +530,6 @@ LLM (zero-shot) & Llama-3.1-70B & tokens as text & fox & alertbert & none & 0.45
 \addlinespace
 LLM (zero-shot) & Llama-3.1-70B & tokens as text & fox & deepcase & none & 0.981 & 0.466 & 0.632 & -- \\
 \addlinespace
-LLM (zero-shot) & Llama-3.1-70B & tokens as text & harrison & fixed\_window & none & 0.565 & 0.583 & 0.574 & -- \\
-\addlinespace
-LLM (zero-shot) & Llama-3.1-70B & tokens as text & harrison & time\_delta & none & 0.168 & 0.199 & 0.182 & -- \\
-\addlinespace
-LLM (zero-shot) & Llama-3.1-70B & tokens as text & harrison & cscas\_grouping & none & 0.131 & 0.271 & 0.176 & -- \\
-\addlinespace
 LLM (zero-shot) & Llama-3.1-70B & tokens as text & russellmitchell & fixed\_window & none & 0.152 & 0.320 & 0.206 & -- \\
 \addlinespace
 LLM (zero-shot) & Llama-3.1-70B & tokens as text & russellmitchell & time\_delta & none & 0.118 & 0.248 & 0.160 & -- \\
@@ -556,12 +539,6 @@ LLM (zero-shot) & Llama-3.1-70B & tokens as text & russellmitchell & cscas\_grou
 LLM (zero-shot) & Llama-3.1-70B & tokens as text & russellmitchell & alertbert & none & 0.157 & 0.193 & 0.173 & -- \\
 \addlinespace
 LLM (zero-shot) & Llama-3.1-70B & tokens as text & russellmitchell & deepcase & none & 0.780 & 0.195 & 0.312 & -- \\
-\addlinespace
-LLM (zero-shot) & Llama-3.1-70B & tokens as text & santos & fixed\_window & none & 0.064 & 0.218 & 0.099 & -- \\
-\addlinespace
-LLM (zero-shot) & Llama-3.1-70B & tokens as text & santos & time\_delta & none & 0.044 & 0.145 & 0.068 & -- \\
-\addlinespace
-LLM (zero-shot) & Llama-3.1-70B & tokens as text & santos & cscas\_grouping & none & 0.061 & 0.251 & 0.098 & -- \\
 \addlinespace
 LLM (zero-shot) & Llama-3.1-70B & tokens as text & shaw & fixed\_window & none & 0.062 & 0.306 & 0.103 & -- \\
 \addlinespace
@@ -597,12 +574,6 @@ LLM (zero-shot) & Qwen2.5-7B & tokens as text & fox & alertbert & none & 0.357 &
 \addlinespace
 LLM (zero-shot) & Qwen2.5-7B & tokens as text & fox & deepcase & none & 0.954 & 0.497 & 0.653 & -- \\
 \addlinespace
-LLM (zero-shot) & Qwen2.5-7B & tokens as text & harrison & fixed\_window & none & 0.171 & 0.737 & 0.277 & -- \\
-\addlinespace
-LLM (zero-shot) & Qwen2.5-7B & tokens as text & harrison & time\_delta & none & 0.057 & 0.566 & 0.104 & -- \\
-\addlinespace
-LLM (zero-shot) & Qwen2.5-7B & tokens as text & harrison & cscas\_grouping & none & 0.153 & 0.618 & 0.246 & -- \\
-\addlinespace
 LLM (zero-shot) & Qwen2.5-7B & tokens as text & russellmitchell & fixed\_window & none & 0.115 & 0.392 & 0.178 & -- \\
 \addlinespace
 LLM (zero-shot) & Qwen2.5-7B & tokens as text & russellmitchell & time\_delta & none & 0.088 & 0.324 & 0.139 & -- \\
@@ -612,12 +583,6 @@ LLM (zero-shot) & Qwen2.5-7B & tokens as text & russellmitchell & cscas\_groupin
 LLM (zero-shot) & Qwen2.5-7B & tokens as text & russellmitchell & alertbert & none & 0.146 & 0.415 & 0.216 & -- \\
 \addlinespace
 LLM (zero-shot) & Qwen2.5-7B & tokens as text & russellmitchell & deepcase & none & 0.583 & 0.256 & 0.356 & -- \\
-\addlinespace
-LLM (zero-shot) & Qwen2.5-7B & tokens as text & santos & fixed\_window & none & 0.028 & 0.278 & 0.051 & -- \\
-\addlinespace
-LLM (zero-shot) & Qwen2.5-7B & tokens as text & santos & time\_delta & none & 0.020 & 0.242 & 0.037 & -- \\
-\addlinespace
-LLM (zero-shot) & Qwen2.5-7B & tokens as text & santos & cscas\_grouping & none & 0.061 & 0.511 & 0.110 & -- \\
 \addlinespace
 LLM (zero-shot) & Qwen2.5-7B & tokens as text & shaw & fixed\_window & none & 0.058 & 0.364 & 0.100 & -- \\
 \addlinespace
@@ -653,12 +618,6 @@ LLM (zero-shot) & Qwen2.5-72B & tokens as text & fox & alertbert & none & 0.670 
 \addlinespace
 LLM (zero-shot) & Qwen2.5-72B & tokens as text & fox & deepcase & none & 0.993 & 0.465 & 0.633 & -- \\
 \addlinespace
-LLM (zero-shot) & Qwen2.5-72B & tokens as text & harrison & fixed\_window & none & 0.799 & 0.508 & 0.621 & -- \\
-\addlinespace
-LLM (zero-shot) & Qwen2.5-72B & tokens as text & harrison & time\_delta & none & 0.191 & 0.053 & 0.083 & -- \\
-\addlinespace
-LLM (zero-shot) & Qwen2.5-72B & tokens as text & harrison & cscas\_grouping & none & 0.340 & 0.136 & 0.194 & -- \\
-\addlinespace
 LLM (zero-shot) & Qwen2.5-72B & tokens as text & russellmitchell & fixed\_window & none & 0.189 & 0.155 & 0.170 & -- \\
 \addlinespace
 LLM (zero-shot) & Qwen2.5-72B & tokens as text & russellmitchell & time\_delta & none & 0.097 & 0.069 & 0.081 & -- \\
@@ -668,12 +627,6 @@ LLM (zero-shot) & Qwen2.5-72B & tokens as text & russellmitchell & cscas\_groupi
 LLM (zero-shot) & Qwen2.5-72B & tokens as text & russellmitchell & alertbert & none & 0.176 & 0.086 & 0.116 & -- \\
 \addlinespace
 LLM (zero-shot) & Qwen2.5-72B & tokens as text & russellmitchell & deepcase & none & 0.848 & 0.171 & 0.284 & -- \\
-\addlinespace
-LLM (zero-shot) & Qwen2.5-72B & tokens as text & santos & fixed\_window & none & 0.087 & 0.117 & 0.100 & -- \\
-\addlinespace
-LLM (zero-shot) & Qwen2.5-72B & tokens as text & santos & time\_delta & none & 0.054 & 0.065 & 0.059 & -- \\
-\addlinespace
-LLM (zero-shot) & Qwen2.5-72B & tokens as text & santos & cscas\_grouping & none & 0.082 & 0.100 & 0.090 & -- \\
 \addlinespace
 LLM (zero-shot) & Qwen2.5-72B & tokens as text & shaw & fixed\_window & none & 0.044 & 0.149 & 0.068 & -- \\
 \addlinespace
@@ -709,12 +662,6 @@ Anomaly & OneClassSVM & Base (5) & fox & alertbert & benign-only & $0.711_{\pm 0
 \addlinespace
 Anomaly & OneClassSVM & Base (5) & fox & deepcase & benign-only & $0.923_{\pm 0.000}$ & $0.512_{\pm 0.000}$ & $0.659_{\pm 0.000}$ & 0.830 \\
 \addlinespace
-Anomaly & OneClassSVM & Base (5) & harrison & fixed\_window & benign-only & $0.553_{\pm 0.000}$ & $0.530_{\pm 0.000}$ & $0.541_{\pm 0.000}$ & 0.678 \\
-\addlinespace
-Anomaly & OneClassSVM & Base (5) & harrison & time\_delta & benign-only & $0.121_{\pm 0.000}$ & $0.101_{\pm 0.000}$ & $0.110_{\pm 0.000}$ & 0.461 \\
-\addlinespace
-Anomaly & OneClassSVM & Base (5) & harrison & cscas\_grouping & benign-only & $0.131_{\pm 0.000}$ & $0.283_{\pm 0.000}$ & $0.179_{\pm 0.000}$ & 0.460 \\
-\addlinespace
 Anomaly & OneClassSVM & Base (5) & russellmitchell & fixed\_window & benign-only & $0.283_{\pm 0.000}$ & $0.215_{\pm 0.000}$ & $0.245_{\pm 0.000}$ & 0.573 \\
 \addlinespace
 Anomaly & OneClassSVM & Base (5) & russellmitchell & time\_delta & benign-only & $0.159_{\pm 0.000}$ & $0.117_{\pm 0.000}$ & $0.135_{\pm 0.000}$ & 0.460 \\
@@ -724,12 +671,6 @@ Anomaly & OneClassSVM & Base (5) & russellmitchell & cscas\_grouping & benign-on
 Anomaly & OneClassSVM & Base (5) & russellmitchell & alertbert & benign-only & $0.273_{\pm 0.000}$ & $0.184_{\pm 0.000}$ & $0.220_{\pm 0.000}$ & 0.550 \\
 \addlinespace
 Anomaly & OneClassSVM & Base (5) & russellmitchell & deepcase & benign-only & $0.766_{\pm 0.000}$ & $0.360_{\pm 0.000}$ & $0.490_{\pm 0.000}$ & 0.601 \\
-\addlinespace
-Anomaly & OneClassSVM & Base (5) & santos & fixed\_window & benign-only & $0.107_{\pm 0.000}$ & $0.189_{\pm 0.000}$ & $0.136_{\pm 0.000}$ & 0.408 \\
-\addlinespace
-Anomaly & OneClassSVM & Base (5) & santos & time\_delta & benign-only & $0.065_{\pm 0.000}$ & $0.137_{\pm 0.000}$ & $0.088_{\pm 0.000}$ & 0.439 \\
-\addlinespace
-Anomaly & OneClassSVM & Base (5) & santos & cscas\_grouping & benign-only & $0.066_{\pm 0.000}$ & $0.052_{\pm 0.000}$ & $0.058_{\pm 0.000}$ & 0.569 \\
 \addlinespace
 Anomaly & OneClassSVM & Base (5) & shaw & fixed\_window & benign-only & $0.101_{\pm 0.000}$ & $0.281_{\pm 0.000}$ & $0.149_{\pm 0.000}$ & 0.598 \\
 \addlinespace
@@ -765,12 +706,6 @@ Anomaly & IsolationForest & Base (5) & fox & alertbert & benign-only & $0.711_{\
 \addlinespace
 Anomaly & IsolationForest & Base (5) & fox & deepcase & benign-only & $0.938_{\pm 0.011}$ & $0.549_{\pm 0.017}$ & $0.693_{\pm 0.013}$ & 0.809 \\
 \addlinespace
-Anomaly & IsolationForest & Base (5) & harrison & fixed\_window & benign-only & $0.627_{\pm 0.003}$ & $0.546_{\pm 0.002}$ & $0.584_{\pm 0.002}$ & 0.762 \\
-\addlinespace
-Anomaly & IsolationForest & Base (5) & harrison & time\_delta & benign-only & $0.155_{\pm 0.007}$ & $0.151_{\pm 0.006}$ & $0.153_{\pm 0.006}$ & 0.624 \\
-\addlinespace
-Anomaly & IsolationForest & Base (5) & harrison & cscas\_grouping & benign-only & $0.288_{\pm 0.000}$ & $0.144_{\pm 0.000}$ & $0.192_{\pm 0.000}$ & 0.612 \\
-\addlinespace
 Anomaly & IsolationForest & Base (5) & russellmitchell & fixed\_window & benign-only & $0.289_{\pm 0.015}$ & $0.193_{\pm 0.004}$ & $0.232_{\pm 0.005}$ & 0.540 \\
 \addlinespace
 Anomaly & IsolationForest & Base (5) & russellmitchell & time\_delta & benign-only & $0.175_{\pm 0.014}$ & $0.094_{\pm 0.006}$ & $0.122_{\pm 0.009}$ & 0.483 \\
@@ -780,12 +715,6 @@ Anomaly & IsolationForest & Base (5) & russellmitchell & cscas\_grouping & benig
 Anomaly & IsolationForest & Base (5) & russellmitchell & alertbert & benign-only & $0.329_{\pm 0.022}$ & $0.151_{\pm 0.016}$ & $0.207_{\pm 0.019}$ & 0.614 \\
 \addlinespace
 Anomaly & IsolationForest & Base (5) & russellmitchell & deepcase & benign-only & $0.751_{\pm 0.022}$ & $0.426_{\pm 0.003}$ & $0.543_{\pm 0.006}$ & 0.788 \\
-\addlinespace
-Anomaly & IsolationForest & Base (5) & santos & fixed\_window & benign-only & $0.095_{\pm 0.003}$ & $0.149_{\pm 0.004}$ & $0.116_{\pm 0.003}$ & 0.581 \\
-\addlinespace
-Anomaly & IsolationForest & Base (5) & santos & time\_delta & benign-only & $0.071_{\pm 0.004}$ & $0.121_{\pm 0.017}$ & $0.089_{\pm 0.007}$ & 0.603 \\
-\addlinespace
-Anomaly & IsolationForest & Base (5) & santos & cscas\_grouping & benign-only & $0.084_{\pm 0.001}$ & $0.094_{\pm 0.002}$ & $0.089_{\pm 0.002}$ & 0.495 \\
 \addlinespace
 Anomaly & IsolationForest & Base (5) & shaw & fixed\_window & benign-only & $0.091_{\pm 0.005}$ & $0.159_{\pm 0.004}$ & $0.115_{\pm 0.005}$ & 0.547 \\
 \addlinespace
@@ -821,12 +750,6 @@ Anomaly + mining & OneClassSVM & Base (5) + mined & fox & alertbert & benign-onl
 \addlinespace
 Anomaly + mining & OneClassSVM & Base (5) + mined & fox & deepcase & benign-only & $0.963_{\pm 0.000}$ & $0.714_{\pm 0.000}$ & $0.820_{\pm 0.000}$ & 0.909 \\
 \addlinespace
-Anomaly + mining & OneClassSVM & Base (5) + mined & harrison & fixed\_window & benign-only & $0.553_{\pm 0.000}$ & $0.530_{\pm 0.000}$ & $0.541_{\pm 0.000}$ & 0.678 \\
-\addlinespace
-Anomaly + mining & OneClassSVM & Base (5) + mined & harrison & time\_delta & benign-only & $0.121_{\pm 0.000}$ & $0.101_{\pm 0.000}$ & $0.110_{\pm 0.000}$ & 0.461 \\
-\addlinespace
-Anomaly + mining & OneClassSVM & Base (5) + mined & harrison & cscas\_grouping & benign-only & $0.131_{\pm 0.000}$ & $0.283_{\pm 0.000}$ & $0.179_{\pm 0.000}$ & 0.460 \\
-\addlinespace
 Anomaly + mining & OneClassSVM & Base (5) + mined & russellmitchell & fixed\_window & benign-only & $0.283_{\pm 0.000}$ & $0.215_{\pm 0.000}$ & $0.245_{\pm 0.000}$ & 0.573 \\
 \addlinespace
 Anomaly + mining & OneClassSVM & Base (5) + mined & russellmitchell & time\_delta & benign-only & $0.159_{\pm 0.000}$ & $0.117_{\pm 0.000}$ & $0.135_{\pm 0.000}$ & 0.460 \\
@@ -836,12 +759,6 @@ Anomaly + mining & OneClassSVM & Base (5) + mined & russellmitchell & cscas\_gro
 Anomaly + mining & OneClassSVM & Base (5) + mined & russellmitchell & alertbert & benign-only & $0.273_{\pm 0.000}$ & $0.184_{\pm 0.000}$ & $0.220_{\pm 0.000}$ & 0.550 \\
 \addlinespace
 Anomaly + mining & OneClassSVM & Base (5) + mined & russellmitchell & deepcase & benign-only & $0.750_{\pm 0.000}$ & $0.329_{\pm 0.000}$ & $0.458_{\pm 0.000}$ & 0.701 \\
-\addlinespace
-Anomaly + mining & OneClassSVM & Base (5) + mined & santos & fixed\_window & benign-only & $0.107_{\pm 0.000}$ & $0.189_{\pm 0.000}$ & $0.136_{\pm 0.000}$ & 0.408 \\
-\addlinespace
-Anomaly + mining & OneClassSVM & Base (5) + mined & santos & time\_delta & benign-only & $0.065_{\pm 0.000}$ & $0.137_{\pm 0.000}$ & $0.088_{\pm 0.000}$ & 0.439 \\
-\addlinespace
-Anomaly + mining & OneClassSVM & Base (5) + mined & santos & cscas\_grouping & benign-only & $0.066_{\pm 0.000}$ & $0.052_{\pm 0.000}$ & $0.058_{\pm 0.000}$ & 0.569 \\
 \addlinespace
 Anomaly + mining & OneClassSVM & Base (5) + mined & shaw & fixed\_window & benign-only & $0.113_{\pm 0.000}$ & $0.223_{\pm 0.000}$ & $0.150_{\pm 0.000}$ & 0.625 \\
 \addlinespace
@@ -877,12 +794,6 @@ Anomaly + mining & IsolationForest & Base (5) + mined & fox & alertbert & benign
 \addlinespace
 Anomaly + mining & IsolationForest & Base (5) + mined & fox & deepcase & benign-only & $0.980_{\pm 0.009}$ & $0.754_{\pm 0.192}$ & $0.840_{\pm 0.147}$ & 0.970 \\
 \addlinespace
-Anomaly + mining & IsolationForest & Base (5) + mined & harrison & fixed\_window & benign-only & $0.625_{\pm 0.008}$ & $0.545_{\pm 0.002}$ & $0.583_{\pm 0.004}$ & 0.773 \\
-\addlinespace
-Anomaly + mining & IsolationForest & Base (5) + mined & harrison & time\_delta & benign-only & $0.153_{\pm 0.005}$ & $0.148_{\pm 0.006}$ & $0.151_{\pm 0.005}$ & 0.607 \\
-\addlinespace
-Anomaly + mining & IsolationForest & Base (5) + mined & harrison & cscas\_grouping & benign-only & $0.288_{\pm 0.001}$ & $0.144_{\pm 0.000}$ & $0.192_{\pm 0.000}$ & 0.613 \\
-\addlinespace
 Anomaly + mining & IsolationForest & Base (5) + mined & russellmitchell & fixed\_window & benign-only & $0.310_{\pm 0.036}$ & $0.196_{\pm 0.009}$ & $0.240_{\pm 0.017}$ & 0.535 \\
 \addlinespace
 Anomaly + mining & IsolationForest & Base (5) + mined & russellmitchell & time\_delta & benign-only & $0.172_{\pm 0.007}$ & $0.091_{\pm 0.003}$ & $0.119_{\pm 0.003}$ & 0.485 \\
@@ -892,12 +803,6 @@ Anomaly + mining & IsolationForest & Base (5) + mined & russellmitchell & cscas\
 Anomaly + mining & IsolationForest & Base (5) + mined & russellmitchell & alertbert & benign-only & $0.329_{\pm 0.019}$ & $0.143_{\pm 0.008}$ & $0.199_{\pm 0.011}$ & 0.618 \\
 \addlinespace
 Anomaly + mining & IsolationForest & Base (5) + mined & russellmitchell & deepcase & benign-only & $0.519_{\pm 0.117}$ & $0.120_{\pm 0.059}$ & $0.193_{\pm 0.086}$ & 0.583 \\
-\addlinespace
-Anomaly + mining & IsolationForest & Base (5) + mined & santos & fixed\_window & benign-only & $0.098_{\pm 0.006}$ & $0.154_{\pm 0.011}$ & $0.120_{\pm 0.007}$ & 0.599 \\
-\addlinespace
-Anomaly + mining & IsolationForest & Base (5) + mined & santos & time\_delta & benign-only & $0.065_{\pm 0.005}$ & $0.112_{\pm 0.007}$ & $0.082_{\pm 0.005}$ & 0.599 \\
-\addlinespace
-Anomaly + mining & IsolationForest & Base (5) + mined & santos & cscas\_grouping & benign-only & $0.084_{\pm 0.001}$ & $0.093_{\pm 0.002}$ & $0.088_{\pm 0.001}$ & 0.494 \\
 \addlinespace
 Anomaly + mining & IsolationForest & Base (5) + mined & shaw & fixed\_window & benign-only & $0.108_{\pm 0.009}$ & $0.180_{\pm 0.015}$ & $0.135_{\pm 0.010}$ & 0.586 \\
 \addlinespace

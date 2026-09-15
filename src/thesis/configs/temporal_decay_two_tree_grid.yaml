@@ -1,0 +1,42 @@
+# Trimmed mining grid for Experiment 2 (temporal_decay) only -- the
+# "two_tree" point (max_depth=1 benign / max_depth_attack=4 attack,
+# min_samples_leaf=10 -- the config adopted into cscas_mining.py's own
+# two_tree baseline) at diverse-mining-rounds 2 and 3. Both entries are
+# copied verbatim from screening_mining_settings.yaml (same contrast/tree
+# values, same names) so a run against this file hits the same mining
+# cache as a run against the full grid -- nothing gets re-mined just
+# because the shortlist now excludes the other 8 settings.
+#
+# Full context (why two_tree, why rounds 2 and 3, the whole 10-point grid)
+# lives in screening_mining_settings.yaml -- this file exists only to give
+# run_temporal_decay.py a --mining-settings input that crosses exactly
+# these two instead of all ten.
+
+settings:
+  - name: gr3_md1_mda4_rounds2
+    contrast:
+      min_growth_rate: 3
+      min_attack_coverage: 0.05
+      min_benign_coverage: 0.05
+    tree:
+      max_depth: 1
+      max_depth_attack: 4
+      class_weight: "balanced"
+      min_samples_leaf: 10
+      max_diverse_rounds: 2
+      round_min_coverage: 0.05
+      round_min_growth_rate: 3
+
+  - name: gr3_md1_mda4_rounds3
+    contrast:
+      min_growth_rate: 3
+      min_attack_coverage: 0.05
+      min_benign_coverage: 0.05
+    tree:
+      max_depth: 1
+      max_depth_attack: 4
+      class_weight: "balanced"
+      min_samples_leaf: 10
+      max_diverse_rounds: 3
+      round_min_coverage: 0.05
+      round_min_growth_rate: 3

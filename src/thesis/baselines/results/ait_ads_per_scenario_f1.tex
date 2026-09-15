@@ -159,52 +159,6 @@ Anomaly + mining & IsolationForest & benign-only & fixed\_window & 0.70 / 0.30 (
 \begin{table}[htbp]
 \centering
 \small
-\caption{AIT-ADS F1 for scenario \texttt{harrison} -- every (baseline, model, training condition, grouping method) that produced a result. Split is the fixed last-30\%-of-timeline chronological cut (train / test fraction, with alert\_group counts where the grouping cache is local). alertbert / deepcase are restricted to fox / russellmitchell (held out of the learned groupers' training). Anomaly rows are at the default $\nu$ / contamination cut.}
-\label{tab:ait-ads-per-scenario-harrison-f1}
-\resizebox{\ifdim\width>\linewidth\linewidth\else\width\fi}{!}{%
-\begin{tabular}{lllllc}
-\toprule
-\textbf{Baseline} & \textbf{Model} & \textbf{Training} & \textbf{Grouping} & \textbf{Split (tr/te)} & \textbf{F1} \\
-\midrule
-LLM (zero-shot) & Llama-3.1-8B & none & fixed\_window & 0.70 / 0.30 (24215 / 10379) & 0.551 \\
- &  &  & time\_delta & 0.70 / 0.30 (21284 / 9123) & 0.143 \\
- &  &  & cscas\_grouping & 0.70 / 0.30 (11203 / 4802) & 0.233 \\
-\addlinespace
-LLM (zero-shot) & Llama-3.1-70B & none & fixed\_window & 0.70 / 0.30 (24215 / 10379) & 0.574 \\
- &  &  & time\_delta & 0.70 / 0.30 (21284 / 9123) & 0.182 \\
- &  &  & cscas\_grouping & 0.70 / 0.30 (11203 / 4802) & 0.176 \\
-\addlinespace
-LLM (zero-shot) & Qwen2.5-7B & none & fixed\_window & 0.70 / 0.30 (24215 / 10379) & 0.277 \\
- &  &  & time\_delta & 0.70 / 0.30 (21284 / 9123) & 0.104 \\
- &  &  & cscas\_grouping & 0.70 / 0.30 (11203 / 4802) & 0.246 \\
-\addlinespace
-LLM (zero-shot) & Qwen2.5-72B & none & fixed\_window & 0.70 / 0.30 (24215 / 10379) & 0.621 \\
- &  &  & time\_delta & 0.70 / 0.30 (21284 / 9123) & 0.083 \\
- &  &  & cscas\_grouping & 0.70 / 0.30 (11203 / 4802) & 0.194 \\
-\midrule
-Anomaly & OneClassSVM & benign-only & fixed\_window & 0.70 / 0.30 (24215 / 10379) & 0.541 \\
- &  &  & time\_delta & 0.70 / 0.30 (21284 / 9123) & 0.110 \\
- &  &  & cscas\_grouping & 0.70 / 0.30 (11203 / 4802) & 0.179 \\
-\addlinespace
-Anomaly & IsolationForest & benign-only & fixed\_window & 0.70 / 0.30 (24215 / 10379) & 0.584 \\
- &  &  & time\_delta & 0.70 / 0.30 (21284 / 9123) & 0.153 \\
- &  &  & cscas\_grouping & 0.70 / 0.30 (11203 / 4802) & 0.192 \\
-\addlinespace
-Anomaly + mining & OneClassSVM & benign-only & fixed\_window & 0.70 / 0.30 (24215 / 10379) & 0.541 \\
- &  &  & time\_delta & 0.70 / 0.30 (21284 / 9123) & 0.110 \\
- &  &  & cscas\_grouping & 0.70 / 0.30 (11203 / 4802) & 0.179 \\
-\addlinespace
-Anomaly + mining & IsolationForest & benign-only & fixed\_window & 0.70 / 0.30 (24215 / 10379) & 0.583 \\
- &  &  & time\_delta & 0.70 / 0.30 (21284 / 9123) & 0.151 \\
- &  &  & cscas\_grouping & 0.70 / 0.30 (11203 / 4802) & 0.192 \\
-\bottomrule
-\end{tabular}%
-}
-\end{table}
-
-\begin{table}[htbp]
-\centering
-\small
 \caption{AIT-ADS F1 for scenario \texttt{russellmitchell} -- every (baseline, model, training condition, grouping method) that produced a result. Split is the fixed last-30\%-of-timeline chronological cut (train / test fraction, with alert\_group counts where the grouping cache is local). alertbert / deepcase are restricted to fox / russellmitchell (held out of the learned groupers' training). Anomaly rows are at the default $\nu$ / contamination cut.}
 \label{tab:ait-ads-per-scenario-russellmitchell-f1}
 \resizebox{\ifdim\width>\linewidth\linewidth\else\width\fi}{!}{%
@@ -355,52 +309,6 @@ Anomaly + mining & IsolationForest & benign-only & fixed\_window & 0.70 / 0.30 (
  &  &  & cscas\_grouping & 0.70 / 0.30 (3150 / 1350) & 0.081 \\
  &  &  & alertbert & 0.70 / 0.30 & 0.199 \\
  &  &  & deepcase & 0.70 / 0.30 & 0.193 \\
-\bottomrule
-\end{tabular}%
-}
-\end{table}
-
-\begin{table}[htbp]
-\centering
-\small
-\caption{AIT-ADS F1 for scenario \texttt{santos} -- every (baseline, model, training condition, grouping method) that produced a result. Split is the fixed last-30\%-of-timeline chronological cut (train / test fraction, with alert\_group counts where the grouping cache is local). alertbert / deepcase are restricted to fox / russellmitchell (held out of the learned groupers' training). Anomaly rows are at the default $\nu$ / contamination cut.}
-\label{tab:ait-ads-per-scenario-santos-f1}
-\resizebox{\ifdim\width>\linewidth\linewidth\else\width\fi}{!}{%
-\begin{tabular}{lllllc}
-\toprule
-\textbf{Baseline} & \textbf{Model} & \textbf{Training} & \textbf{Grouping} & \textbf{Split (tr/te)} & \textbf{F1} \\
-\midrule
-LLM (zero-shot) & Llama-3.1-8B & none & fixed\_window & 0.70 / 0.30 (15777 / 6763) & 0.086 \\
- &  &  & time\_delta & 0.70 / 0.30 (13867 / 5943) & 0.063 \\
- &  &  & cscas\_grouping & 0.70 / 0.30 (7730 / 3313) & 0.113 \\
-\addlinespace
-LLM (zero-shot) & Llama-3.1-70B & none & fixed\_window & 0.70 / 0.30 (15777 / 6763) & 0.099 \\
- &  &  & time\_delta & 0.70 / 0.30 (13867 / 5943) & 0.068 \\
- &  &  & cscas\_grouping & 0.70 / 0.30 (7730 / 3313) & 0.098 \\
-\addlinespace
-LLM (zero-shot) & Qwen2.5-7B & none & fixed\_window & 0.70 / 0.30 (15777 / 6763) & 0.051 \\
- &  &  & time\_delta & 0.70 / 0.30 (13867 / 5943) & 0.037 \\
- &  &  & cscas\_grouping & 0.70 / 0.30 (7730 / 3313) & 0.110 \\
-\addlinespace
-LLM (zero-shot) & Qwen2.5-72B & none & fixed\_window & 0.70 / 0.30 (15777 / 6763) & 0.100 \\
- &  &  & time\_delta & 0.70 / 0.30 (13867 / 5943) & 0.059 \\
- &  &  & cscas\_grouping & 0.70 / 0.30 (7730 / 3313) & 0.090 \\
-\midrule
-Anomaly & OneClassSVM & benign-only & fixed\_window & 0.70 / 0.30 (15777 / 6763) & 0.136 \\
- &  &  & time\_delta & 0.70 / 0.30 (13867 / 5943) & 0.088 \\
- &  &  & cscas\_grouping & 0.70 / 0.30 (7730 / 3313) & 0.058 \\
-\addlinespace
-Anomaly & IsolationForest & benign-only & fixed\_window & 0.70 / 0.30 (15777 / 6763) & 0.116 \\
- &  &  & time\_delta & 0.70 / 0.30 (13867 / 5943) & 0.089 \\
- &  &  & cscas\_grouping & 0.70 / 0.30 (7730 / 3313) & 0.089 \\
-\addlinespace
-Anomaly + mining & OneClassSVM & benign-only & fixed\_window & 0.70 / 0.30 (15777 / 6763) & 0.136 \\
- &  &  & time\_delta & 0.70 / 0.30 (13867 / 5943) & 0.088 \\
- &  &  & cscas\_grouping & 0.70 / 0.30 (7730 / 3313) & 0.058 \\
-\addlinespace
-Anomaly + mining & IsolationForest & benign-only & fixed\_window & 0.70 / 0.30 (15777 / 6763) & 0.120 \\
- &  &  & time\_delta & 0.70 / 0.30 (13867 / 5943) & 0.082 \\
- &  &  & cscas\_grouping & 0.70 / 0.30 (7730 / 3313) & 0.088 \\
 \bottomrule
 \end{tabular}%
 }

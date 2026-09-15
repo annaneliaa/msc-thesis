@@ -2,10 +2,12 @@
 #
 # Temporal Generalization (Rolling-Horizon Decay): for each scenario, runs
 # run_temporal_decay.py over the parameter grid -- every entry in
-# MINING_SETTINGS (configs/screening_mining_settings.yaml) crossed with
-# GRANULARITIES below, plus a baseline row per granularity. That YAML is the
-# single input: no feasible-config CSV, no notebook export step, no
-# real-evaluation ranking. Edit the YAML to change what runs. For each
+# MINING_SETTINGS below (a mining-grid YAML in the screening_mining_settings.yaml
+# format -- see that file for the full 10-point grid this one's usually
+# trimmed from) crossed with GRANULARITIES, plus a baseline row per
+# granularity. That YAML is the single input: no feasible-config CSV, no
+# notebook export step, no real-evaluation ranking. Edit the YAML (or point
+# MINING_SETTINGS at a different one) to change what runs. For each
 # resulting config, run_temporal_decay.py mines/fits once on the source
 # window's train split (see SOURCE_SPLIT_MODE below) and walks the frozen
 # schema/model/threshold forward one window at a time, tracking SHAP/LIME
@@ -44,20 +46,24 @@ if ! python -c "import thesis, sklearn, numpy, pandas" 2>/dev/null; then
 fi
 
 SCENARIOS=(cscas)
-MINING_SETTINGS="$REPO_ROOT/src/thesis/configs/screening_mining_settings.yaml"
-GRANULARITIES=(0.1)  # one granularity keeps the run lean; 0.1 gives the most
-                     # horizon windows (finest decay/drift curve). Add 0.25 0.5
-                     # back for the cross-granularity comparison. Keep to the
-                     # mining grid's MINE_FRACS so every gran has structural backing.
-# Every model is crossed with every (grid setting x granularity). logreg and
-# xgboost are supervised (fit on the mixed W_src train split); iforest and
-# ocsvm are one-class -- fit unsupervised on the benign rows, then Platt-scaled
-# against the labels so they score like a classifier (see
-# experiments._shared.fit_scored_model). THRESHOLD_MODE="fixed" resolves per
-# model to its own operating point (0.5 for the classifiers, the
-# contamination cut for the one-class models), so precision/recall/FPR are
-# meaningful for all of them without a calibration target.
-MODELS=(logreg xgboost iforest ocsvm)
+# Trimmed to the "two_tree" mining point (md1/mda4) at diverse-rounds 2 and 3
+# only -- see that file's header. Both entries share their contrast/tree
+# values (and names) with screening_mining_settings.yaml's full 10-point
+# grid, so this doesn't invalidate or bypass the mining cache -- it's still a
+# cache hit if the full grid was ever run.
+MINING_SETTINGS="$REPO_ROOT/src/thesis/configs/temporal_decay_two_tree_grid.yaml"
+GRANULARITIES=(0.1 0.05)  # 0.1 matches the CSCAS dataset's own train-window
+                          # size; 0.05 zooms in for a finer decay/drift curve.
+                          # Mining happens once on W_src regardless of gran in
+                          # baseline_split mode, so adding a granularity here
+                          # only costs more horizon steps, not more mining.
+# Every model is crossed with every (grid setting x granularity). Both
+# xgboost and rf are supervised tree ensembles (TreeExplainer-eligible for
+# SHAP), fit on the mixed W_src train split, class_weight/scale_pos_weight
+# balanced -- see experiments._shared.fit_scored_model. No one-class models
+# in this setup, so THRESHOLD_MODE="fixed" is just the flat 0.5 operating
+# point for both.
+MODELS=(xgboost rf)
 THRESHOLD_MODE="fixed"  # or "calibrated_recall"
 CALIBRATED_RECALL_TARGET="0.90"  # only used when THRESHOLD_MODE=calibrated_recall
 # Source window W_src:
@@ -83,13 +89,12 @@ CSCAS_FULL=1  # 0 to skip the cscas_full arm
 # PLUS a schema mined on W_src (shared base columns encoded once). One row per
 # (mining setting, granularity, model) -- as many configs as the symbolic arm.
 CSCAS_FULL_SYMBOLIC=1  # 0 to skip
-# SHAP/LIME per horizon. logreg (LinearExplainer) and xgboost (TreeExplainer)
-# get analytic SHAP + LIME. iforest/ocsvm have no analytic SHAP explainer, so
-# by default (ONECLASS_SHAP=0) they get LIME only -- the PermutationExplainer
-# fallback over every feature at every horizon is what used to make this run
-# take hours. Set ONECLASS_SHAP=1 to pay for it.
+# SHAP/LIME per horizon, for both models (xgboost and rf are both classifiers
+# with analytic TreeExplainer SHAP -- no one-class model in MODELS above, so
+# ONECLASS_SHAP is a no-op here; left in place for when iforest/ocsvm are
+# added back).
 COMPUTE_EXPLANATIONS=1  # 0 to skip SHAP/LIME entirely (metrics + novelty only)
-ONECLASS_SHAP=0         # 1 to also compute (slow) SHAP for iforest/ocsvm
+ONECLASS_SHAP=0         # 1 to also compute (slow) SHAP for any one-class model in MODELS
 EXPLAIN_SAMPLE_N=50
 LIME_NUM_SAMPLES=1000
 

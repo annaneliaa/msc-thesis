@@ -1,9 +1,11 @@
 \begin{table}[htbp]
 \centering
 \small
-\caption{Combinations deliberately excluded from the AIT-ADS baseline grid.}
+\caption{Combinations deliberately excluded from the AIT-ADS baseline grid, among
+the 6 in-scope scenarios (\texttt{harrison}/\texttt{santos} are excluded outright --
+see the intro cell -- not listed here).}
 \label{tab:ait-ads-grid-exclusions}
-\begin{tabular}{p{0.34\textwidth}p{0.56\textwidth}}
+\begin{tabular}{p{0.32\textwidth}p{0.58\textwidth}}
 \toprule
 \textbf{Excluded combination} & \textbf{Reason} \\
 \midrule
@@ -14,28 +16,18 @@ Self-training leakage: the pretrained AlertBERT checkpoint and the DeepCASE
 ContextBuilder were both fit on exactly these 4 scenarios
 (\texttt{\_ait\_ads\_grouping.LEAKAGE\_SCENARIOS}). The baseline scripts skip
 the combo outright -- no result file exists. \\[4pt]
-\texttt{deepcase} grouping $\times$ \texttt{santos} (every baseline) &
-Structural failure, not a leakage skip: DeepCASE's ContextBuilder has a
-closed event vocabulary fixed at training time; \texttt{santos} contains
-event types outside it, so grouping raises identically on every retry. \\[4pt]
-Classifiers / BERT / SecureBERT (7 of 11 methods) $\times$ \texttt{harrison},
-\texttt{santos} (every grouping) and \texttt{russellmitchell} (every grouping
-but \texttt{deepcase}) &
+Classifiers / BERT / SecureBERT (6 of 11 families -- methods 1--5, 9) $\times$
+\texttt{russellmitchell} (every grouping but \texttt{deepcase}) &
 Accepted exclusion: the fixed chronological 70/30 split puts every
-attack-labelled alert\_group in the last 30\% of these 3 scenarios' timelines
-regardless of grouping method, leaving train 100\% benign -- no supervised
-fit is possible. Deliberately not "fixed" by moving the split point, which
-would give these 3 scenarios a different effective train/test ratio than the
-other 5. The four anomaly methods (benign-only training) and zero-shot (no
-training step) are exempt. \\[4pt]
-\texttt{alertbert} / \texttt{deepcase} grouping $\times$ \texttt{harrison} /
-\texttt{santos}, anomaly methods only &
-Reporting-only exclusion, not a code-level skip: \texttt{harrison}/
-\texttt{santos} aren't in \texttt{LEAKAGE\_SCENARIOS}, so the anomaly scripts
-do run and save a real result there -- but every table in this notebook
-omits it, since these 2 scenarios were never part of the grouping-quality
-validation set (\texttt{\_setup.TEST\_SCENARIOS = [fox, russellmitchell]})
-and a learned grouper's quality on them is unverified. \\[4pt]
+attack-labelled alert\_group in the last 30\% of \texttt{russellmitchell}'s
+timeline regardless of grouping method, leaving train 100\% benign -- no
+supervised fit is possible. Deliberately not "fixed" by moving the split
+point, which would give it a different effective train/test ratio than the
+other 5 in-scope scenarios. Under \texttt{deepcase} specifically,
+\texttt{russellmitchell}'s train split does contain attacks (chronological
+luck), so it's included there instead. Zero-shot (method 6, no training
+step) and the four anomaly methods (7/8/10/11, benign-only training) are
+exempt everywhere. \\[4pt]
 \texttt{guided} training condition &
 CSCAS-only: AIT-ADS has no SCAS-equivalent precomputed outlier verdict to
 guide undersampling with (see \texttt{baselines/\_sampling.py}'s own
