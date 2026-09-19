@@ -1,0 +1,37 @@
+# Single-entry mining grid for the monitor EDA (temporal_decay,
+# rolling_walk_forward, monitor_drift runs scoped to the sys-eval-adopted
+# "two_tree" default only -- see baselines/_mining_modes.py's
+# mining_attribute_config("two_tree"), which is what cscas_mining.py's own
+# CSCAS_MINING_MODE=two_tree baseline run actually uses). Copied verbatim
+# from screening_mining_settings.yaml's gr3_md1_mda4_rounds2 entry (same
+# name, same contrast/tree values, including max_diverse_rounds=2) so a run
+# against this file hits the same mining cache as a run against the full
+# 10-point grid -- nothing gets re-mined just because the shortlist now
+# excludes the other 9 settings.
+#
+# NOT plain gr3_md1_mda4 (rounds=1) -- _mining_modes.py's two_tree point
+# sets max_diverse_rounds=2, confirmed by its own docstring's 5-seed sweep
+# on CSCAS (rf/xgb x base/full): rounds=2 beat both rounds=1 and rounds=3 on
+# all four cells (e.g. xgb-full 0.9264 -> 0.9324 -> 0.9280), since rounds=3's
+# extra rule was redundant with rounds=2's winning one.
+#
+# This file exists only to give run_temporal_decay.py /
+# run_rolling_walk_forward.py / run_monitor_drift.py a --mining-settings
+# input that crosses exactly this one setting instead of all ten, for the
+# monitor EDA's locked scope (one mining setting, model in {rf, xgboost},
+# granularities in {0.1, 0.05}).
+
+settings:
+  - name: gr3_md1_mda4_rounds2
+    contrast:
+      min_growth_rate: 3
+      min_attack_coverage: 0.05
+      min_benign_coverage: 0.05
+    tree:
+      max_depth: 1
+      max_depth_attack: 4
+      class_weight: "balanced"
+      min_samples_leaf: 10
+      max_diverse_rounds: 2
+      round_min_coverage: 0.05
+      round_min_growth_rate: 3

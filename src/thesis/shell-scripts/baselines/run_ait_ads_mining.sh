@@ -26,6 +26,22 @@
 # uses instead, so it's the only mining-based script that also produces a
 # result for those 3 scenarios -- see each script's own module docstring.
 #
+# MINING TREE MODE. Also sweeps AIT_ADS_MINING_MODE -- exactly the same two
+# modes, same config values, as run_cscas_mining.sh's CSCAS_MINING_MODE
+# sweep (see baselines/_mining_modes.py):
+#   single_tree  (default) -- the original config every existing
+#                ait_ads_mining*.json result was produced with; unchanged
+#                filenames.
+#   two_tree     -- add-on: a second, deeper tree for attack-leaning leaves
+#                specifically (max_depth=1 / max_depth_attack=4 /
+#                min_samples_leaf=10 for the classifier script; max_depth=4 /
+#                min_samples_leaf=10, no attack tree, for the two anomaly
+#                scripts, which also start discarding attack-leaning mined
+#                patterns in this mode), written to separate
+#                "_twotree"-suffixed result files so single_tree's results
+#                are never overwritten. Roughly doubles this script's total
+#                runtime (a full second sweep, not a cheap addition).
+#
 # Cheap-ish (CPU, one attribute-mining pass + RF/LogReg/XGBoost/OneClassSVM
 # fit per combo, no GPU needed) but each mining pass costs more than a plain
 # tabular fit -- budget more time than run_ait_ads_tabular.sh/
@@ -61,6 +77,8 @@ NON_ALERTBERT_METHODS="${AIT_ADS_GROUPING_METHODS:-fixed_window,time_delta,cscas
 NON_ALERTBERT_METHODS="${NON_ALERTBERT_METHODS//alertbert/}"
 NON_ALERTBERT_METHODS="${NON_ALERTBERT_METHODS//,,/,}"
 
+MINING_MODES=(single_tree two_tree)
+
 run_step() {
     local label="$1"
     shift
@@ -79,13 +97,17 @@ run_step() {
     echo "=== AIT-ADS mining baseline run started at $(date) ==="
     echo "AIT_ADS_SCENARIOS=${AIT_ADS_SCENARIOS:-<all>}"
     echo "Non-alertbert grouping methods (plain venv): $NON_ALERTBERT_METHODS"
+    echo "Mining tree modes: ${MINING_MODES[*]}"
 
-    for script in ait_ads_mining.py ait_ads_mining_anomaly.py ait_ads_mining_anomaly_iforest.py; do
-        AIT_ADS_GROUPING_METHODS="$NON_ALERTBERT_METHODS" \
-            run_step "$script (fixed_window/time_delta/cscas_grouping/deepcase)" "$PYTHON" "$script"
-        run_step "$script (alertbert)" \
-            env AIT_ADS_GROUPING_METHODS=alertbert conda run -n thesis-alertbert --no-capture-output \
-            "$PYTHON" "$script"
+    for mode in "${MINING_MODES[@]}"; do
+        export AIT_ADS_MINING_MODE="$mode"
+        for script in ait_ads_mining.py ait_ads_mining_anomaly.py ait_ads_mining_anomaly_iforest.py; do
+            AIT_ADS_GROUPING_METHODS="$NON_ALERTBERT_METHODS" \
+                run_step "$script (AIT_ADS_MINING_MODE=$mode, fixed_window/time_delta/cscas_grouping/deepcase)" "$PYTHON" "$script"
+            run_step "$script (AIT_ADS_MINING_MODE=$mode, alertbert)" \
+                env AIT_ADS_MINING_MODE="$mode" AIT_ADS_GROUPING_METHODS=alertbert conda run -n thesis-alertbert --no-capture-output \
+                "$PYTHON" "$script"
+        done
     done
 
     echo ""

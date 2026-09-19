@@ -239,21 +239,31 @@ class TemporalDecayConfig:
 class RollingWalkForwardConfig:
     """Experiment 3 (Rolling / Walk-Forward Evaluation): for each shortlisted
     (feature_set, mining_setting, granularity, model) config, walk i = 0 ..
-    n(g)-2 across the timeline. At each step, mine a schema and fit a model
-    from scratch on the *full* window Wi (no held-out split within Wi --
-    unlike screening_sweep/temporal_decay, the held-out evaluation set here
-    is the disjoint window Wi+1, so there's no reason to withhold part of Wi
-    itself), decide a threshold from Wi's own in-sample scores, evaluate on
-    W(i+1), then discard the schema/model and move on -- no accumulation, no
-    state carried between steps. This is the "always retrain" anchor
-    contrasted against Experiment 2's "never retrain" frozen-model decay
-    curve. Also computes SHAP + LIME signed importances at every step (a
-    sample of W(i+1) against a background sample from Wi -- both step-local,
-    unlike Experiment 2's single frozen W_src background). See
-    experiments/rolling_walk_forward.py."""
+    n(g)-2 across the walkable range. At each step, mine a schema and fit a
+    model from scratch on the *full* step window Wi (no held-out split
+    within Wi -- unlike screening_sweep/temporal_decay, the held-out
+    evaluation set here is the disjoint window Wi+1, so there's no reason to
+    withhold part of Wi itself), decide a threshold from Wi's own in-sample
+    scores, evaluate on W(i+1), then discard the schema/model and move on --
+    no accumulation, no state carried between steps. This is the "always
+    retrain" anchor contrasted against Experiment 2's "never retrain"
+    frozen-model decay curve. Also computes SHAP + LIME signed importances
+    at every step (a sample of W(i+1) against a background sample from Wi --
+    both step-local, unlike Experiment 2's single frozen W_src background).
+    See experiments/rolling_walk_forward.py.
+
+    `source_split_mode`/`source_split_time` pick what step 0's window is --
+    identical semantics to TemporalDecayConfig's fields of the same name
+    (see that class's docstring). "baseline_split" fixes step 0 to the
+    CSCAS baseline's own train/test boundary (independent of granularity),
+    and every subsequent step walks only the post-split remainder -- so this
+    experiment's steps line up 1:1 with a temporal_decay.py/monitor_drift.py
+    run using the same source_split_mode."""
 
     scenario: str
     shortlist_path: Path
+    source_split_mode: Literal["window0", "baseline_split"] = "window0"
+    source_split_time: str | None = None
     mining_settings_path: Path = field(
         default_factory=lambda: Path(
             "src/thesis/configs/screening_mining_settings.yaml"
@@ -293,16 +303,24 @@ class RollingWalkForwardConfig:
     # TemporalDecayConfig.n_jobs for why threads, not processes.
     n_jobs: int = 4
 
+    def __post_init__(self) -> None:
+        if self.source_split_mode == "baseline_split" and not self.source_split_time:
+            raise ValueError(
+                "source_split_mode='baseline_split' requires source_split_time "
+                "(ISO8601, e.g. the CSCAS baseline's '2022-01-26 06:23:21+02:00')"
+            )
+
 
 @dataclass
 class MonitorDriftConfig:
     """Experiment 4 (Drift-Monitor Evaluation, observe-only): for each
     shortlisted (feature_set, mining_setting, granularity, model) config,
-    mine a schema and fit a model once on window 0's train split (same
-    freeze-and-decay design as TemporalDecayConfig), plus -- for symbolic
-    configs -- build a deployment-scoped DynamicSchema (Vk) from that same
-    mining pass. Walk the frozen schema/model/threshold forward one window
-    at a time, and at every horizon also run the drift monitor
+    mine a schema and fit a model once on the source window's train split
+    (same freeze-and-decay design as TemporalDecayConfig, including its
+    source_split_mode choice of W_src -- see that class's docstring), plus --
+    for symbolic configs -- build a deployment-scoped DynamicSchema (Vk) from
+    that same mining pass. Walk the frozen schema/model/threshold forward one
+    window at a time, and at every horizon also run the drift monitor
     (thesis.monitor.monitor.run_monitor_window) against the frozen Vk over
     that horizon's raw incoming alert groups, logging every signal and every
     alarm it raises. The monitor is observe-only here: nothing is ever
@@ -312,6 +330,14 @@ class MonitorDriftConfig:
     scenario: str
     shortlist_path: Path
     train_frac_within_window: float = 0.7
+    # What the source window is -- identical semantics to
+    # TemporalDecayConfig.source_split_mode/source_split_time (see that
+    # class's docstring). "baseline_split" requires source_split_time and is
+    # only meaningful for CSCAS; W_src is then fixed to the CSCAS baseline's
+    # own train/test boundary regardless of granularity -- only the horizon
+    # walk over the post-split remainder is granularity-dependent.
+    source_split_mode: Literal["window0", "baseline_split"] = "window0"
+    source_split_time: str | None = None
     mining_settings_path: Path = field(
         default_factory=lambda: Path(
             "src/thesis/configs/screening_mining_settings.yaml"
@@ -331,6 +357,13 @@ class MonitorDriftConfig:
     # Passed straight through to run_monitor_window at every horizon.
     monitor_consecutive_windows: int = 3
     monitor_min_samples_signal_2: int = 30
+
+    def __post_init__(self) -> None:
+        if self.source_split_mode == "baseline_split" and not self.source_split_time:
+            raise ValueError(
+                "source_split_mode='baseline_split' requires source_split_time "
+                "(ISO8601, e.g. the CSCAS baseline's '2022-01-26 06:23:21+02:00')"
+            )
 
 
 @dataclass

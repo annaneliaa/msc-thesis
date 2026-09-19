@@ -33,9 +33,19 @@ for the IsolationForest scripts a 5-seed breakdown) -- a stale-format
 result left over from an older run is recomputed automatically, no need to
 hand-delete it. Set AIT_ADS_FORCE=1 to force a full re-run.
 
+Two attribute-mining tree modes, via the AIT_ADS_MINING_MODE env var --
+exactly the same modes/config as cscas_mining_anomaly_iforest.py's own
+CSCAS_MINING_MODE (see baselines/_mining_modes.py), same discard behavior
+as this script's OneClassSVM sibling (ait_ads_mining_anomaly.py): "two_tree"
+additionally calls discard_attack_patterns() so this detector's (base +
+mined) training matrix never carries attack-derived information either.
+Writes "_twotree"-suffixed result files so single-tree results are never
+overwritten.
+
 Run:
     cd src/thesis/baselines
-    python ait_ads_mining_anomaly_iforest.py
+    python ait_ads_mining_anomaly_iforest.py                              # single-tree
+    AIT_ADS_MINING_MODE=two_tree python ait_ads_mining_anomaly_iforest.py  # two-tree add-on
 """
 
 import os
@@ -50,6 +60,12 @@ from thesis.baselines._ait_ads_data import (
     load_ait_ads_baseline_split_with_groups,
 )
 from thesis.baselines._ait_ads_grouping import LEAKAGE_SCENARIOS, LEARNED_METHODS
+from thesis.baselines._mining_modes import (
+    MINING_MODE_SUFFIX,
+    active_mining_mode,
+    discard_attack_patterns,
+    mining_attribute_config_anomaly,
+)
 from thesis.baselines._results import anomaly_results_current, save_anomaly_results
 from thesis.configs import load_scenarios
 from thesis.encoders.symbolic import SymbolicFeatureEncoder
@@ -57,7 +73,6 @@ from thesis.features.schema_builder import build_symbolic_feature_schema
 from thesis.mining.attribute_mining_job import run_alert_group_attribute_mining_job
 from thesis.paths import CACHE_DIR
 from thesis.pipeline.pipeline import save_alert_groups_json
-from thesis.schemas.mining import AttributeMiningConfig
 from thesis.training.workload import (
     average_workload_at_recall,
     compute_workload_at_recall,
@@ -83,10 +98,18 @@ GROUPING_METHODS = (
     else ALL_GROUPING_METHODS
 )
 
+# Mining tree mode -- AIT_ADS_MINING_MODE env var picks "single_tree"
+# (default, unchanged result files) or "two_tree" (add-on, "_twotree"-suffixed
+# result files) -- exactly the same modes/config as
+# cscas_mining_anomaly_iforest.py's CSCAS_MINING_MODE. See _mining_modes.py.
+MINING_MODE = active_mining_mode("AIT_ADS_MINING_MODE")
+MODE_SUFFIX = MINING_MODE_SUFFIX[MINING_MODE]
+print(f"Mining tree mode: {MINING_MODE}")
+
 
 def run_scenario(scenario: str, grouping_method: str) -> None:
     run_tag = f"{grouping_method}_{scenario}"
-    result_name = f"ait_ads_mining_anomaly_{run_tag}_iforest"
+    result_name = f"ait_ads_mining_anomaly_{run_tag}_iforest{MODE_SUFFIX}"
     print(
         f"\n{'=' * 70}\n  SCENARIO: {scenario} / GROUPING: {grouping_method}\n{'=' * 70}"
     )
@@ -135,21 +158,31 @@ def run_scenario(scenario: str, grouping_method: str) -> None:
     train_alert_groups_path.parent.mkdir(parents=True, exist_ok=True)
     save_alert_groups_json(train_groups, train_alert_groups_path)
 
-    print(f"  Mining attribute schema on {run_tag} train split...")
+    print(f"  Mining attribute schema on {run_tag} train split ({MINING_MODE} mode)...")
     mining_result = run_alert_group_attribute_mining_job(
         alert_groups_path=train_alert_groups_path,
         scenario_name=scenario,
-        run_name=f"ait_ads_mining_anomaly_{run_tag}",
-        config=AttributeMiningConfig(),
+        run_name=f"ait_ads_mining_anomaly_{run_tag}{MODE_SUFFIX}",
+        config=mining_attribute_config_anomaly(MINING_MODE),
     )
     print(f"    Mined {len(mining_result.predicates)} predicates from train split.")
 
+    # two_tree mode only: discard every attack-leaning mined pattern before
+    # building the symbolic schema -- see ait_ads_mining_anomaly.py (this
+    # script's OneClassSVM sibling) / _mining_modes.discard_attack_patterns.
+    if MINING_MODE == "two_tree":
+        mined_df, mined_predicates = discard_attack_patterns(
+            mining_result.mined_df, mining_result.predicates
+        )
+    else:
+        mined_df, mined_predicates = mining_result.mined_df, mining_result.predicates
+
     symbolic_schema = build_symbolic_feature_schema(
-        df=mining_result.mined_df,
+        df=mined_df,
         source_label="attack",
         schema_name=f"ait_ads_mining_anomaly_symbolic_{run_tag}",
         schema_version="0.1.0",
-        predicates=mining_result.predicates,
+        predicates=mined_predicates,
     )
     print(f"    Built {len(symbolic_schema.features)} symbolic features.")
 
@@ -215,8 +248,14 @@ def run_scenario(scenario: str, grouping_method: str) -> None:
         description=(
             f"AIT-ADS scenario '{scenario}' grouped with '{grouping_method}': "
             "5-column base schema + attribute-mined symbolic features "
-            "(contrast-set + decision-tree rules, mined on the same train "
-            "split), IsolationForest(n_estimators=100, contamination=0.05) "
+            f"(contrast-set + decision-tree rules, {MINING_MODE} mode, mined "
+            "on the same train split"
+            + (
+                ", attack-leaning mined patterns discarded before schema-building"
+                if MINING_MODE == "two_tree"
+                else ""
+            )
+            + "), IsolationForest(n_estimators=100, contamination=0.05) "
             "fit on benign-only train rows, evaluated on the scenario's full "
             "test split. Test-side-only single-class guard -- IsolationForest "
             "sibling of ait_ads_mining_anomaly.py's OneClassSVM. Mean over 5 "

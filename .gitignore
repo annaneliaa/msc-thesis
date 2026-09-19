@@ -66,6 +66,7 @@ out
 .pdf
 .npz
 src/thesis/baselines/results/
+results/
 
 # Docker
 .dockerignore

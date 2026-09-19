@@ -2,13 +2,17 @@
 Experiment 4: Drift-Monitor Evaluation (observe-only).
 
 Purpose: for a shortlisted (feature_set, mining_setting, granularity, model)
-config, mine a schema and fit a model once on window 0's train split (same
-freeze-and-decay design as experiments/temporal_decay.py -- W_src is always
-window 0, with its own internal 70/30 train/test split), and additionally --
-for symbolic configs -- build a deployment-scoped DynamicSchema (Vk) from
-that same mining pass. Freeze schema, model, threshold, and Vk. Walk forward
-one window at a time from h=0 (W_src's own held-out test split) to
-h=n_windows-1, scoring the frozen model exactly like temporal_decay.py, and
+config, mine a schema and fit a model once on the source window's (W_src)
+train split (same freeze-and-decay design as experiments/temporal_decay.py,
+including its source_split_mode choice of W_src -- "window0" (default) or
+"baseline_split", see temporal_decay.WindowScheme -- with its own internal
+70/30 train/test split), and additionally -- for symbolic configs -- build a
+deployment-scoped DynamicSchema (Vk) from that same mining pass. Freeze
+schema, model, threshold, and Vk. Walk forward one window at a time from h=0
+(W_src's own held-out test split) to h=n_windows-1, scoring the frozen model
+exactly like temporal_decay.py (with the same WindowScheme, so the horizons
+line up 1:1 with a temporal_decay.py run using the same source_split_mode),
+and
 at every horizon also run thesis.monitor.monitor.run_monitor_window against
 the frozen Vk over that horizon's raw incoming alert groups, logging every
 signal it computes and every alarm it raises (which predicate/rule, which
@@ -66,7 +70,11 @@ from thesis.experiments._shared import (
     metrics_at_threshold,
     nan_metrics,
 )
-from thesis.system_eval.temporal_decay import _build_decay_summary
+from thesis.system_eval.temporal_decay import (
+    WindowScheme,
+    _build_decay_summary,
+    _build_window_scheme,
+)
 from thesis.features.dynamic_schema_builder import build_dynamic_schema
 from thesis.features.schema_builder import build_symbolic_feature_schema
 from thesis.metrics.shortlist import ShortlistedConfig, load_shortlist
@@ -84,7 +92,7 @@ from thesis.mining.decision_tree_rule_mining import (
 from thesis.monitor.monitor import run_monitor_window
 from thesis.monitor.state import MonitorState
 from thesis.paths import ensure_artifact_dirs
-from thesis.pipeline.pipeline import compute_window_bounds, compute_window_train_end
+from thesis.pipeline.pipeline import compute_window_train_end
 from thesis.schemas.dynamic_schema import DynamicSchema
 from thesis.schemas.experiments import MonitorDriftConfig
 from thesis.schemas.features import FeatureSchema
@@ -126,15 +134,19 @@ def fit_source_window_and_dynamic_schema(
     train_frac_within_window: float,
     threshold_mode: str,
     calibrated_recall_target: float,
+    scheme: WindowScheme,
 ) -> MonitorSourceWindowFit | None:
-    """Mine (if cfg.feature_set == "symbolic") on window 0's train split via
+    """Mine (if cfg.feature_set == "symbolic") on W_src's train split via
     the direct two-stage mining building blocks (not the cached wrapper
     temporal_decay.py uses -- that wrapper's return chain only keeps the
     post-concatenation mined_df, losing the attack/benign split
     build_dynamic_schema needs), fit cfg.model on that same train split, and
-    decide a frozen threshold from its own scores. Returns None (warns,
-    never raises) for the same non-fatal "this config can't run" conditions
-    fit_source_window does."""
+    decide a frozen threshold from its own scores. `scheme` picks what W_src
+    is (window 0, or the CSCAS baseline's fixed train/test boundary --
+    see temporal_decay.WindowScheme); its source_bounds are independent of
+    granularity, so W_src never changes when only the horizon-walk
+    granularity does. Returns None (warns, never raises) for the same
+    non-fatal "this config can't run" conditions fit_source_window does."""
     if cfg.feature_set in ("cscas_full", "cscas_full_symbolic"):
         print(
             f"  [warn] feature_set={cfg.feature_set!r} is only supported by the "
@@ -143,7 +155,8 @@ def fit_source_window_and_dynamic_schema(
         return None
 
     gran = cfg.granularity
-    win_start, win_end, n_windows = compute_window_bounds(n_total, gran, 0)
+    win_start, win_end = scheme.source_bounds(gran)
+    n_windows = scheme.n_windows(gran)
     win_train_end = compute_window_train_end(
         win_start, win_end, train_frac_within_window
     )
@@ -153,7 +166,7 @@ def fit_source_window_and_dynamic_schema(
     n_attack_src = int(np.nansum(labels))
 
     print(
-        f"  [W_src=window 0] n={len(window_rows)} attack={n_attack_src} "
+        f"  [W_src={scheme.mode}] n={len(window_rows)} attack={n_attack_src} "
         f"train_end(local)={local_train_end}"
     )
 
@@ -348,6 +361,13 @@ def _signal_rows_for_horizon(
                 "significant": sig.significant,
                 "n_observed": sig.n_observed,
                 "n_matching": None,
+                # Static per-predicate mining-time support, kept alongside
+                # the already-pi-blended p_expected ("mined_value") so a
+                # post-hoc decoupled expectation (a different pi_h in place
+                # of the frozen base_attack_rate) can be recomputed without
+                # rejoining against the DynamicSchema artifact.
+                "attack_support": pred.attack_support,
+                "benign_support": pred.benign_support,
             }
         )
     for sig in snapshot.signal_2_results:
@@ -373,6 +393,8 @@ def _signal_rows_for_horizon(
                 "significant": None,
                 "n_observed": None,
                 "n_matching": sig.n_matching,
+                "attack_support": None,
+                "benign_support": None,
             }
         )
     return rows
@@ -387,6 +409,7 @@ def _run_one_monitor_config(
     base_schema: FeatureSchema,
     mining_settings_by_name: dict,
     mining_settings_path: Path,
+    scheme: WindowScheme,
 ) -> tuple[list[dict], list[dict]]:
     print(
         f"\n[{cfg.feature_set}/{cfg.mining_setting}/gran={cfg.granularity:g}] starting"
@@ -403,6 +426,7 @@ def _run_one_monitor_config(
         train_frac_within_window=config.train_frac_within_window,
         threshold_mode=config.threshold_mode,
         calibrated_recall_target=config.calibrated_recall_target,
+        scheme=scheme,
     )
     if fit is None:
         return [], []
@@ -537,7 +561,7 @@ def _run_one_monitor_config(
     _record_horizon(0, fit.X_test, fit.y_test, len(fit.X_test), fit.test_groups_raw)
 
     for k in range(1, fit.n_windows):
-        t_start, t_end, _ = compute_window_bounds(n_total, fit.gran, k)
+        t_start, t_end = scheme.target_bounds(fit.gran, k)
         target_rows = alert_groups[t_start:t_end]
         t_labels, t_mask = labels_and_mask(target_rows)
         encoded_tgt = encode_alert_groups_for_schema(target_rows, fit.schema)
@@ -569,6 +593,8 @@ def run_monitor_drift_experiment(config: MonitorDriftConfig) -> Path:
     shortlist = load_shortlist(config.shortlist_path)
     print(f"  {len(shortlist)} shortlisted configs")
 
+    scheme = _build_window_scheme(config, alert_groups, n_total)
+
     horizon_rows: list[dict] = []
     signal_rows: list[dict] = []
 
@@ -587,6 +613,7 @@ def run_monitor_drift_experiment(config: MonitorDriftConfig) -> Path:
                 base_schema=base_schema,
                 mining_settings_by_name=mining_settings_by_name,
                 mining_settings_path=mining_settings_path,
+                scheme=scheme,
             ): cfg
             for cfg in shortlist
         }

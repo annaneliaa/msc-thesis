@@ -17,16 +17,25 @@ feature_set is one of "baseline", "symbolic", "cscas_full", or
 each means; the cscas_full base-column logic (incl. dropping `scas` for a
 one-class model) is imported from there rather than duplicated.
 
-For a given granularity g, the timeline is carved into n(g) windows exactly
-as in screening_sweep.py/temporal_decay.py (pipeline.compute_window_bounds).
-Walking i = 0 .. n(g)-2 (n(g)-1 steps total):
+config.source_split_mode picks what step 0's window (W_src) is -- identical
+semantics and WindowScheme machinery to temporal_decay.py's own
+source_split_mode: "window0" (default) walks the whole timeline, windows
+0..n(g)-1; "baseline_split" fixes step 0 to the CSCAS baseline's own
+train/test boundary (independent of g), and every subsequent step walks
+only the post-split remainder at granularity g -- so this experiment's
+step sequence lines up 1:1 with a temporal_decay.py/monitor_drift.py run
+using the same source_split_mode, letting all three be overlaid on the
+same horizon axis. For a given granularity g, walking i = 0 .. n(g)-2
+(n(g)-1 steps total):
 
-  1. Mine a schema on the *full* window Wi -- no held-out split within Wi,
-     unlike screening_sweep/temporal_decay's train-split-only mining
-     (mining.window_schema_cache.get_or_mine_full_window_attribute_schema).
-     Those experiments hold back part of a window because they evaluate on
-     that same window; here the held-out evaluation set is the disjoint
-     window Wi+1, so all of Wi is available to mine and train on.
+  1. Mine a schema on the *full* step window Wi -- no held-out split within
+     Wi, unlike screening_sweep/temporal_decay's train-split-only mining
+     (mining.window_schema_cache.get_or_mine_full_window_attribute_schema,
+     or its slice-based sibling get_or_mine_slice_attribute_schema under
+     "baseline_split"). Those experiments hold back part of a window
+     because they evaluate on that same window; here the held-out
+     evaluation set is the disjoint window Wi+1, so all of Wi is available
+     to mine and train on.
   2. Fit the config's model on all of Wi's encoding.
   3. Decide a threshold from Wi's own (in-sample) scores -- same method
      (flat 0.5, or calibrated-recall) at every step, per the experiment
@@ -86,14 +95,18 @@ from thesis.experiments._shared import (
 )
 from thesis.system_eval.temporal_decay import (
     _SYMBOLIC_FEATURE_SETS,
+    _build_window_scheme,
     _cscas_full_base,
     encode_target_window,
+    WindowScheme,
 )
 from thesis.features.persistence import load_symbolic_feature_schema
 from thesis.metrics.shortlist import ShortlistedConfig, load_shortlist
-from thesis.mining.window_schema_cache import get_or_mine_full_window_attribute_schema
+from thesis.mining.window_schema_cache import (
+    get_or_mine_full_window_attribute_schema,
+    get_or_mine_slice_attribute_schema,
+)
 from thesis.paths import RESULTS_DIR, ensure_artifact_dirs
-from thesis.pipeline.pipeline import compute_window_bounds
 from thesis.schemas.experiments import RollingWalkForwardConfig
 from thesis.schemas.features import FeatureSchema
 from thesis.training.explain import (
@@ -130,6 +143,19 @@ class WindowFit:
     X_fit: pd.DataFrame
 
 
+def _step_bounds(scheme: WindowScheme, gran: float, step_idx: int) -> tuple[int, int]:
+    """Row bounds of walk step `step_idx`'s training window Wi. step_idx=0 is
+    W_src (scheme.source_bounds -- window 0 under "window0", or the CSCAS
+    baseline's fixed train/test boundary under "baseline_split", independent
+    of gran); step_idx>=1 is the step_idx'th horizon window
+    (scheme.target_bounds), which walks only the post-split remainder under
+    "baseline_split". Under "window0" this reproduces the pre-WindowScheme
+    behavior exactly: step i trains on window i, evaluates on window i+1."""
+    if step_idx == 0:
+        return scheme.source_bounds(gran)
+    return scheme.target_bounds(gran, step_idx)
+
+
 def fit_window(
     cfg: ShortlistedConfig,
     scenario: str,
@@ -142,21 +168,26 @@ def fit_window(
     mining_settings_path: Path,
     threshold_mode: str,
     calibrated_recall_target: float,
+    scheme: WindowScheme,
     force_remine: bool = False,
 ) -> WindowFit | None:
     """Mine (for `cfg.feature_set` in {"symbolic", "cscas_full_symbolic"}) on
-    the *full* window `win_idx`, fit `cfg.model` on all of it, and decide a
-    threshold from its own in-sample scores. Returns None (with a warning
-    printed, never raises) if the mining setting can't be resolved or the
-    window turns out to be single-class -- both non-fatal, "this step can't
-    run" conditions the caller is expected to skip past."""
+    the *full* step window `win_idx` (see _step_bounds), fit `cfg.model` on
+    all of it, and decide a threshold from its own in-sample scores. Returns
+    None (with a warning printed, never raises) if the mining setting can't
+    be resolved or the window turns out to be single-class -- both
+    non-fatal, "this step can't run" conditions the caller is expected to
+    skip past."""
     gran = cfg.granularity
-    win_start, win_end, _ = compute_window_bounds(n_total, gran, win_idx)
+    win_start, win_end = _step_bounds(scheme, gran, win_idx)
     window_rows = alert_groups[win_start:win_end]
     labels, mask = labels_and_mask(window_rows)
     n_attack = int(np.nansum(labels))
 
-    print(f"  [Wi=window {win_idx}] n={len(window_rows)} attack={n_attack}")
+    print(
+        f"  [Wi=step {win_idx}, {scheme.mode}] rows[{win_start}:{win_end}] "
+        f"n={len(window_rows)} attack={n_attack}"
+    )
 
     spec = None
     if cfg.feature_set in _SYMBOLIC_FEATURE_SETS:
@@ -184,15 +215,36 @@ def fit_window(
         # ("symbolic") or the full CSCAS columns ("cscas_full_symbolic").
         # encode_alert_groups_for_schema drops any column the two halves
         # share, so the base features aren't doubled.
-        schema_result = get_or_mine_full_window_attribute_schema(
-            scenario=scenario,
-            alert_groups=alert_groups,
-            alert_groups_path=alert_groups_path,
-            gran=gran,
-            win_idx=win_idx,
-            attribute_mining_config=spec.to_attribute_mining_config(),
-            force=force_remine,
-        )
+        if scheme.mode == "baseline_split":
+            # win_idx==0 is W_src -- the CSCAS baseline's fixed train/test
+            # boundary, independent of gran (see _step_bounds), so its tag
+            # excludes gran too, unlike step>=1's post-split horizon
+            # windows, which do depend on it.
+            slice_tag = (
+                "rwf_baseline_split_wsrc"
+                if win_idx == 0
+                else f"rwf_baseline_split_gran{gran:g}_step{win_idx}"
+            )
+            schema_result = get_or_mine_slice_attribute_schema(
+                scenario=scenario,
+                alert_groups=alert_groups,
+                alert_groups_path=alert_groups_path,
+                slice_start=win_start,
+                slice_end=win_end,
+                slice_tag=slice_tag,
+                attribute_mining_config=spec.to_attribute_mining_config(),
+                force=force_remine,
+            )
+        else:
+            schema_result = get_or_mine_full_window_attribute_schema(
+                scenario=scenario,
+                alert_groups=alert_groups,
+                alert_groups_path=alert_groups_path,
+                gran=gran,
+                win_idx=win_idx,
+                attribute_mining_config=spec.to_attribute_mining_config(),
+                force=force_remine,
+            )
         symbolic = load_symbolic_feature_schema(schema_result.schema_path)
         cache_hit = schema_result.cache_hit
         if cfg.feature_set == "cscas_full_symbolic":
@@ -364,6 +416,8 @@ def run_rolling_walk_forward_experiment(config: RollingWalkForwardConfig) -> Pat
     shortlist = load_shortlist(config.shortlist_path)
     print(f"  {len(shortlist)} shortlisted configs")
 
+    scheme = _build_window_scheme(config, alert_groups, n_total)
+
     step_rows: list[dict] = []
     explain_rows: list[dict] = []
     fidelity_rows: list[dict] = []
@@ -388,6 +442,7 @@ def run_rolling_walk_forward_experiment(config: RollingWalkForwardConfig) -> Pat
                 base_schema=base_schema,
                 mining_settings_by_name=mining_settings_by_name,
                 mining_settings_path=mining_settings_path,
+                scheme=scheme,
             ): cfg
             for cfg in shortlist
         }
@@ -483,12 +538,13 @@ def _run_one_config(
     base_schema: FeatureSchema,
     mining_settings_by_name: dict,
     mining_settings_path: Path,
+    scheme: WindowScheme,
 ) -> tuple[list[dict], list[dict], list[dict]]:
     print(
         f"\n[{cfg.feature_set}/{cfg.mining_setting}/gran={cfg.granularity:g}] starting"
     )
 
-    _, _, n_windows = compute_window_bounds(n_total, cfg.granularity, 0)
+    n_windows = scheme.n_windows(cfg.granularity)
 
     base_row = {
         "scenario": scenario,
@@ -516,6 +572,7 @@ def _run_one_config(
             mining_settings_path=mining_settings_path,
             threshold_mode=config.threshold_mode,
             calibrated_recall_target=config.calibrated_recall_target,
+            scheme=scheme,
             force_remine=config.force_remine,
         )
         if fit is None:
@@ -545,7 +602,7 @@ def _run_one_config(
             fit.model._skip_shap = True
 
         X_next, y_next, n_alert_groups_next = encode_target_window(
-            alert_groups, n_total, cfg.granularity, i + 1, fit.schema
+            alert_groups, scheme, cfg.granularity, i + 1, fit.schema
         )
         if len(y_next) == 0:
             print(

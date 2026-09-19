@@ -46,9 +46,22 @@ saved -- so adding LogReg/XGBoost to a tree already carrying RF results does
 not recompute or overwrite the RF JSON. Set AIT_ADS_FORCE=1 to force a full
 re-run.
 
+Two attribute-mining tree modes, via the AIT_ADS_MINING_MODE env var (default
+"single_tree", the original config every existing ait_ads_mining*.json result
+was produced with) -- exactly the same modes, same _mining_modes.py config
+values, as cscas_mining.py's own CSCAS_MINING_MODE (see
+baselines/_mining_modes.mining_attribute_config for what "two_tree" changes:
+a second, deeper tree for attack-leaning leaves, each tree additionally
+refit once more with its used feature(s) excluded). "two_tree" is an add-on,
+not a replacement: it writes to separate "_twotree"-suffixed result files
+(ait_ads_mining_<run_tag>_twotree, ait_ads_mining_logreg_<run_tag>_twotree,
+ait_ads_mining_xgboost_<run_tag>_twotree) so single-tree results are never
+overwritten.
+
 Run:
     cd src/thesis/baselines
-    python ait_ads_mining.py
+    python ait_ads_mining.py                              # single-tree (default)
+    AIT_ADS_MINING_MODE=two_tree python ait_ads_mining.py  # two-tree add-on
 """
 
 import os
@@ -68,6 +81,11 @@ from thesis.baselines._ait_ads_data import (
     load_ait_ads_baseline_split_with_groups,
 )
 from thesis.baselines._ait_ads_grouping import LEAKAGE_SCENARIOS, LEARNED_METHODS
+from thesis.baselines._mining_modes import (
+    MINING_MODE_SUFFIX,
+    active_mining_mode,
+    mining_attribute_config,
+)
 from thesis.baselines._results import results_exist, save_baseline_results
 from thesis.baselines._sampling import class_weighted_pool, random_undersample_pool
 from thesis.configs import load_scenarios
@@ -76,7 +94,6 @@ from thesis.features.schema_builder import build_symbolic_feature_schema
 from thesis.mining.attribute_mining_job import run_alert_group_attribute_mining_job
 from thesis.paths import CACHE_DIR
 from thesis.pipeline.pipeline import save_alert_groups_json
-from thesis.schemas.mining import AttributeMiningConfig
 
 FEATURE_COLS = ["hour_of_day", "n_alerts", "n_sigs", "n_hosts", "n_shorts"]
 N_SEEDS = 5  # same seed count as ait_ads_rf.py
@@ -142,12 +159,20 @@ GROUPING_METHODS = (
     else ALL_GROUPING_METHODS
 )
 
+# Mining tree mode -- AIT_ADS_MINING_MODE env var picks "single_tree"
+# (default, unchanged result files) or "two_tree" (add-on, "_twotree"-suffixed
+# result files) -- exactly the same modes/config as cscas_mining.py's
+# CSCAS_MINING_MODE. See _mining_modes.py.
+MINING_MODE = active_mining_mode("AIT_ADS_MINING_MODE")
+MODE_SUFFIX = MINING_MODE_SUFFIX[MINING_MODE]
+print(f"Mining tree mode: {MINING_MODE}")
+
 
 def _result_name(model: str, run_tag: str) -> str:
     return (
-        f"ait_ads_mining_{run_tag}"
+        f"ait_ads_mining_{run_tag}{MODE_SUFFIX}"
         if model == "rf"
-        else f"ait_ads_mining_{model}_{run_tag}"
+        else f"ait_ads_mining_{model}_{run_tag}{MODE_SUFFIX}"
     )
 
 
@@ -205,12 +230,12 @@ def run_scenario(scenario: str, grouping_method: str) -> None:
     train_alert_groups_path.parent.mkdir(parents=True, exist_ok=True)
     save_alert_groups_json(train_groups, train_alert_groups_path)
 
-    print(f"  Mining attribute schema on {run_tag} train split...")
+    print(f"  Mining attribute schema on {run_tag} train split ({MINING_MODE} mode)...")
     mining_result = run_alert_group_attribute_mining_job(
         alert_groups_path=train_alert_groups_path,
         scenario_name=scenario,
-        run_name=f"ait_ads_mining_{run_tag}",
-        config=AttributeMiningConfig(),
+        run_name=f"ait_ads_mining_{run_tag}{MODE_SUFFIX}",
+        config=mining_attribute_config(MINING_MODE),
     )
     print(f"    Mined {len(mining_result.predicates)} predicates from train split.")
 
@@ -286,10 +311,10 @@ def run_scenario(scenario: str, grouping_method: str) -> None:
             description=(
                 f"AIT-ADS scenario '{scenario}' grouped with '{grouping_method}': "
                 "5-column base schema + attribute-mined symbolic features "
-                "(contrast-set + decision-tree rules, mined on the same train "
-                f"split), {model_desc}, random + class-weighted training-pool "
-                "conditions (no 'guided' -- CSCAS-only), evaluated on the "
-                "scenario's full test split"
+                f"(contrast-set + decision-tree rules, {MINING_MODE} mode, mined "
+                f"on the same train split), {model_desc}, random + class-weighted "
+                "training-pool conditions (no 'guided' -- CSCAS-only), evaluated "
+                "on the scenario's full test split"
             ),
             results=results,
         )

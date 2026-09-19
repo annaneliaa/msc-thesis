@@ -49,12 +49,15 @@ if ! python -c "import thesis, sklearn, numpy, pandas" 2>/dev/null; then
 fi
 
 SCENARIOS=(cscas)
-# Trimmed to the "two_tree" mining point (md1/mda4) at diverse-rounds 2 and 3
-# only -- see that file's header. Kept in sync with run_temporal_decay.sh so
-# both experiments score the exact same schemas. Both entries share their
-# contrast/tree values (and names) with screening_mining_settings.yaml's
-# full 10-point grid, so this doesn't invalidate or bypass the mining cache.
-MINING_SETTINGS="$REPO_ROOT/src/thesis/configs/temporal_decay_two_tree_grid.yaml"
+# Trimmed to the single sys-eval-adopted "two_tree" mining point --
+# gr3_md1_mda4_rounds2 (md1/mda4, max_diverse_rounds=2), the config actually
+# used by cscas_mining.py's CSCAS_MINING_MODE=two_tree baseline (see
+# baselines/_mining_modes.py) -- not the broader rounds=2/3 pair. Kept in
+# sync with run_temporal_decay.sh so both experiments score the exact same
+# schema. Shares its contrast/tree values (and name) with
+# screening_mining_settings.yaml's full 10-point grid, so this doesn't
+# invalidate or bypass the mining cache.
+MINING_SETTINGS="$REPO_ROOT/src/thesis/configs/monitor_eda_mining_setting.yaml"
 GRANULARITIES=(0.1 0.05)  # kept in sync with run_temporal_decay.sh: 0.1
                           # matches the CSCAS dataset's own train-window
                           # size, 0.05 zooms in. Unlike Exp2's baseline_split
@@ -69,6 +72,12 @@ GRANULARITIES=(0.1 0.05)  # kept in sync with run_temporal_decay.sh: 0.1
 MODELS=(xgboost rf)
 THRESHOLD_MODE="fixed"  # or "calibrated_recall" -- keep in sync with run_temporal_decay.sh
 CALIBRATED_RECALL_TARGET="0.90"  # only used when THRESHOLD_MODE=calibrated_recall
+# Step 0's window: "window0" walks the whole timeline; "baseline_split" fixes
+# step 0 to the CSCAS baseline's own train/test boundary (independent of
+# granularity) and walks only the post-split remainder afterward -- so this
+# experiment's steps line up with run_temporal_decay.sh's horizons. Kept in
+# sync with run_temporal_decay.sh's SOURCE_SPLIT_MODE.
+SOURCE_SPLIT_MODE="baseline_split"  # or "window0"
 # CSCAS_FULL=1 adds one cscas_full feature-set row per (granularity, model):
 # the CSCAS paper's own full feature set (5 base cols + SCAS + Similarity +
 # SignatureIDSimilarity + 33 attr-similarity columns). A non-deployable
@@ -141,6 +150,7 @@ for scenario in "${SCENARIOS[@]}"; do
     --granularities "${GRANULARITIES[@]}" \
     --models "${MODELS[@]}" \
     --threshold-mode "$THRESHOLD_MODE" \
+    --source-split-mode "$SOURCE_SPLIT_MODE" \
     --explain-sample-n "$EXPLAIN_SAMPLE_N" \
     --lime-num-samples "$LIME_NUM_SAMPLES")
   if [[ "$THRESHOLD_MODE" == "calibrated_recall" ]]; then

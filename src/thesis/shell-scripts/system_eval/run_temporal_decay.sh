@@ -46,12 +46,14 @@ if ! python -c "import thesis, sklearn, numpy, pandas" 2>/dev/null; then
 fi
 
 SCENARIOS=(cscas)
-# Trimmed to the "two_tree" mining point (md1/mda4) at diverse-rounds 2 and 3
-# only -- see that file's header. Both entries share their contrast/tree
-# values (and names) with screening_mining_settings.yaml's full 10-point
-# grid, so this doesn't invalidate or bypass the mining cache -- it's still a
-# cache hit if the full grid was ever run.
-MINING_SETTINGS="$REPO_ROOT/src/thesis/configs/temporal_decay_two_tree_grid.yaml"
+# Trimmed to the single sys-eval-adopted "two_tree" mining point --
+# gr3_md1_mda4_rounds2 (md1/mda4, max_diverse_rounds=2), the config actually
+# used by cscas_mining.py's CSCAS_MINING_MODE=two_tree baseline (see
+# baselines/_mining_modes.py) -- not the broader rounds=2/3 pair. Shares its
+# contrast/tree values (and name) with screening_mining_settings.yaml's full
+# 10-point grid, so this doesn't invalidate or bypass the mining cache --
+# it's still a cache hit if the full grid was ever run.
+MINING_SETTINGS="$REPO_ROOT/src/thesis/configs/monitor_eda_mining_setting.yaml"
 GRANULARITIES=(0.1 0.05)  # 0.1 matches the CSCAS dataset's own train-window
                           # size; 0.05 zooms in for a finer decay/drift curve.
                           # Mining happens once on W_src regardless of gran in
