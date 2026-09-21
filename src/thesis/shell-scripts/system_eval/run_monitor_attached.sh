@@ -1,43 +1,65 @@
 #!/usr/bin/env bash
 #
 # Monitor Attached: for each scenario, runs run_monitor_attached.py over the
-# parameter grid -- every entry in MINING_SETTINGS
-# (configs/screening_mining_settings.yaml) crossed with GRANULARITIES below.
-# Only feature_set='symbolic' configs ever produce a DynamicSchema, so the
-# derived shortlist is filtered to those (see run_monitor_attached.py). For
-# each config, mines/fits once on window 0's train split -- identical setup
+# parameter grid -- MINING_SETTINGS below crossed with GRANULARITIES x
+# MODELS. Locked to the same "monitor EDA" scope as run_temporal_decay.sh /
+# run_rolling_walk_forward.sh / run_monitor_drift.sh (see those scripts' own
+# comments) so all four experiments' horizons/configs line up and can be
+# overlaid directly: single mining setting gr3_md1_mda4_rounds2 (="two_tree"),
+# models in {xgboost, rf}, granularities in {0.1, 0.05}, source window
+# anchored to the CSCAS baseline's own train/test boundary
+# (source_split_mode=baseline_split). Only feature_set='symbolic' configs
+# ever produce a DynamicSchema, so the derived shortlist is filtered to
+# those (see run_monitor_attached.py).
+#
+# For each config, mines/fits once on W_src's train split -- identical setup
 # to run_monitor_drift.py -- then walks the schema/model/Vk forward one
 # window at a time, but here a sustained monitor signal actually retrains or
 # remines in place instead of only being logged. Every horizon is timed
 # (fast-route serving cost, workload funnel) and every retrain/remine event
 # is timed and diffed against the schema it replaced.
 #
-# PSI_THRESHOLD/CAL_THRESHOLD below should be the values selected by Drift
-# Signal EDA's threshold sweep (03_monitor_signal_drift.ipynb, Analysis 3)
-# for this scenario -- the defaults here are the untuned starting values,
-# not a result.
+# PSI_THRESHOLD/CAL_THRESHOLD/CONSECUTIVE_WINDOWS/MIN_SAMPLES_SIGNAL_2 are
+# required arguments, not defaults baked into this script: PSI_THRESHOLD and
+# CAL_THRESHOLD gate real retrain/remine actions here (unlike
+# run_monitor_drift.py's purely diagnostic `elevated` column), so they must
+# be the values Drift Signal EDA's threshold sweep actually selected
+# (03_monitor_signal_drift.ipynb, Analysis 3) -- there is no "untuned
+# default" that's safe to silently fall back to for a real run.
 #
 # Usage:
-#   src/thesis/shell-scripts/system_eval/run_monitor_attached.sh
+#   src/thesis/shell-scripts/system_eval/run_monitor_attached.sh \
+#     <psi_threshold> <cal_threshold> <consecutive_windows> <min_samples_signal_2>
 #
-# Edit the variables below to change the scenario(s), granularities,
-# thresholds, or monitor sensitivity.
+# Example:
+#   src/thesis/shell-scripts/system_eval/run_monitor_attached.sh 0.15 0.12 3 30
+#
+# Edit SCENARIOS/MINING_SETTINGS/GRANULARITIES/MODELS below to change what
+# else runs.
 
 set -uo pipefail
+
+if [[ $# -ne 4 ]]; then
+  echo "Usage: $0 <psi_threshold> <cal_threshold> <consecutive_windows> <min_samples_signal_2>" >&2
+  echo "  e.g. $0 0.15 0.12 3 30   (psi/cal from Drift Signal EDA's Analysis 3 sweep)" >&2
+  exit 1
+fi
+PSI_THRESHOLD="$1"
+CAL_THRESHOLD="$2"
+MONITOR_CONSECUTIVE_WINDOWS="$3"
+MONITOR_MIN_SAMPLES_SIGNAL_2="$4"
 
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate thesis
 
 SCENARIOS=(cscas)
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
-MINING_SETTINGS="$REPO_ROOT/src/thesis/configs/screening_mining_settings.yaml"
-GRANULARITIES=(0.1)
+MINING_SETTINGS="$REPO_ROOT/src/thesis/configs/monitor_eda_mining_setting.yaml"
+GRANULARITIES=(0.1 0.05)
+MODELS=(xgboost rf)
+SOURCE_SPLIT_MODE="baseline_split"  # anchors W_src to the CSCAS baseline's own train/test boundary
 THRESHOLD_MODE="fixed"  # or "calibrated_recall" -- keep in sync with the other experiment scripts
 CALIBRATED_RECALL_TARGET="0.90"  # only used when THRESHOLD_MODE=calibrated_recall
-PSI_THRESHOLD="0.1"    # Drift Signal EDA's selected Signal-1 elevation cutoff -- untuned default shown
-CAL_THRESHOLD="0.10"   # Drift Signal EDA's selected Signal-2 elevation cutoff -- untuned default shown
-MONITOR_CONSECUTIVE_WINDOWS="3"
-MONITOR_MIN_SAMPLES_SIGNAL_2="30"
 LATENCY_SAMPLE_N="200"  # total individually-timed single-alert-group calls per config; 0 disables
 
 LOG_DIR="$REPO_ROOT/artifacts/logs/monitor_attached"
@@ -65,6 +87,8 @@ for scenario in "${SCENARIOS[@]}"; do
     "$scenario" \
     --mining-settings "$MINING_SETTINGS" \
     --granularities "${GRANULARITIES[@]}" \
+    --models "${MODELS[@]}" \
+    --source-split-mode "$SOURCE_SPLIT_MODE" \
     --threshold-mode "$THRESHOLD_MODE" \
     --psi-threshold "$PSI_THRESHOLD" \
     --cal-threshold "$CAL_THRESHOLD" \

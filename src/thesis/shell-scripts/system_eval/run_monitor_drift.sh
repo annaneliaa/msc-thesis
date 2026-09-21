@@ -1,28 +1,53 @@
 #!/usr/bin/env bash
 #
 # Drift-Monitor Evaluation (Experiment 4, observe-only): for each scenario,
-# runs run_monitor_drift.py over the parameter grid -- every entry in
-# MINING_SETTINGS (configs/screening_mining_settings.yaml) crossed with
-# GRANULARITIES below, plus a baseline row per granularity. That YAML is the
-# single input: no feasible-config CSV, no notebook export step, no
-# real-evaluation ranking. Edit the YAML to change what runs. For
-# each resulting config, mines/fits once on window 0's train split -- plus,
+# runs run_monitor_drift.py over the parameter grid -- MINING_SETTINGS below
+# crossed with GRANULARITIES x MODELS, plus a baseline row per
+# (granularity, model). Locked to the same "monitor EDA" scope as
+# run_temporal_decay.sh / run_rolling_walk_forward.sh (see those scripts'
+# own comments) so all three experiments' horizons/configs line up and can
+# be overlaid directly: single mining setting gr3_md1_mda4_rounds2 (="two_tree",
+# the config baselines/_mining_modes.py's CSCAS_MINING_MODE=two_tree uses),
+# models in {xgboost, rf}, granularities in {0.1, 0.05}, source window
+# anchored to the CSCAS baseline's own train/test boundary
+# (source_split_mode=baseline_split). Edit MINING_SETTINGS to point at a
+# different grid if you deliberately want to diverge from that lock.
+#
+# For each resulting config, mines/fits once on W_src's train split -- plus,
 # for symbolic configs, builds a deployment-scoped DynamicSchema (Vk) from
 # that same mining pass -- then walks the frozen schema/model/Vk forward one
 # window at a time, running the drift monitor at every horizon and logging
 # every signal/alarm it raises. The monitor never triggers an actual
 # re-mine/retrain here -- it only observes and records what it would have
 # done. Unlike the other two experiments, mining is never cached here (see
-# experiments/monitor_drift.py's module docstring), so every run mines fresh
+# system_eval/monitor_drift.py's module docstring), so every run mines fresh
 # for symbolic configs.
 #
-# Usage:
-#   src/thesis/shell-scripts/system_eval/run_monitor_drift.sh
+# CONSECUTIVE_WINDOWS/MIN_SAMPLES_SIGNAL_2 are required arguments, not
+# defaults baked into this script -- they gate what "elevated"/"action" this
+# run logs, and Analysis 3 in 03_monitor_signal_drift.ipynb treats this
+# run's own MIN_SAMPLES_SIGNAL_2 as a hard floor it can't sweep below
+# without a rerun, so a silently-stale value here would silently cap that
+# sweep too.
 #
-# Edit the variables below to change the scenario(s), granularities,
-# threshold mode, or monitor sensitivity.
+# Usage:
+#   src/thesis/shell-scripts/system_eval/run_monitor_drift.sh <consecutive_windows> <min_samples_signal_2>
+#
+# Example:
+#   src/thesis/shell-scripts/system_eval/run_monitor_drift.sh 3 30
+#
+# Edit SCENARIOS/MINING_SETTINGS/GRANULARITIES/MODELS below to change what
+# else runs.
 
 set -uo pipefail
+
+if [[ $# -ne 2 ]]; then
+  echo "Usage: $0 <consecutive_windows> <min_samples_signal_2>" >&2
+  echo "  e.g. $0 3 30" >&2
+  exit 1
+fi
+MONITOR_CONSECUTIVE_WINDOWS="$1"
+MONITOR_MIN_SAMPLES_SIGNAL_2="$2"
 
 # Don't rely on the caller's shell already having `thesis` active -- activate
 # it explicitly so this script works the same from a cron job, CI, or a
@@ -32,12 +57,12 @@ conda activate thesis
 
 SCENARIOS=(cscas)
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
-MINING_SETTINGS="$REPO_ROOT/src/thesis/configs/screening_mining_settings.yaml"
-GRANULARITIES=(0.1)
+MINING_SETTINGS="$REPO_ROOT/src/thesis/configs/monitor_eda_mining_setting.yaml"
+GRANULARITIES=(0.1 0.05)
+MODELS=(xgboost rf)
+SOURCE_SPLIT_MODE="baseline_split"  # anchors W_src to the CSCAS baseline's own train/test boundary
 THRESHOLD_MODE="fixed"  # or "calibrated_recall" -- keep in sync with the other experiment scripts
 CALIBRATED_RECALL_TARGET="0.90"  # only used when THRESHOLD_MODE=calibrated_recall
-MONITOR_CONSECUTIVE_WINDOWS="3"  # consecutive elevated horizons before a soft alert hard-triggers
-MONITOR_MIN_SAMPLES_SIGNAL_2="30"  # min labeled matching rows before a rule's calibration drift is evaluated
 
 LOG_DIR="$REPO_ROOT/artifacts/logs/monitor_drift"
 mkdir -p "$LOG_DIR"
@@ -70,6 +95,8 @@ for scenario in "${SCENARIOS[@]}"; do
     "$scenario" \
     --mining-settings "$MINING_SETTINGS" \
     --granularities "${GRANULARITIES[@]}" \
+    --models "${MODELS[@]}" \
+    --source-split-mode "$SOURCE_SPLIT_MODE" \
     --threshold-mode "$THRESHOLD_MODE" \
     --monitor-consecutive-windows "$MONITOR_CONSECUTIVE_WINDOWS" \
     --monitor-min-samples-signal-2 "$MONITOR_MIN_SAMPLES_SIGNAL_2")
