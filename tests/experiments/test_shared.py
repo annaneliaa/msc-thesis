@@ -6,10 +6,13 @@ import pytest
 
 from thesis.experiments._shared import (
     decide_threshold,
+    fast_route_and_funnel,
     metrics_at_threshold,
     nan_metrics,
     sample_rows,
 )
+from thesis.schemas.features import BaseFeatureSchema, FeatureSchema
+from thesis.schemas.groups import AlertGroup
 
 
 # ---- metrics_at_threshold ---------------------------------------------------
@@ -88,3 +91,65 @@ def test_sample_rows_caps_at_available_rows():
 def test_sample_rows_empty_input_stays_empty():
     X = pd.DataFrame({"a": []})
     assert sample_rows(X, 10, random_state=0).empty
+
+
+# ---- fast_route_and_funnel --------------------------------------------------
+
+
+class _FakeModel:
+    """predict_proba that reads the row count off the base feature it was
+    given (signature_matches_per_day), so the fake scores line up 1:1 with
+    n_alerts below without needing a real fitted estimator."""
+
+    def predict_proba(self, X):
+        proba = (X["signature_matches_per_day"].to_numpy() >= 5).astype(float)
+        return np.column_stack([1 - proba, proba])
+
+
+def _group(gid: str, n_alerts: int, high_signal: bool) -> AlertGroup:
+    return AlertGroup(
+        alert_group_id=gid,
+        group_id=gid,
+        method="cscas_pregrouped",
+        start_ts=0,
+        end_ts=0,
+        n_alerts=n_alerts,
+        group_label="attack" if high_signal else "benign",
+        category="POLICY",
+        ruleset="ET",
+        proto=6,
+        signature_matches_per_day=10.0 if high_signal else 1.0,
+    )
+
+
+def _schema() -> FeatureSchema:
+    return FeatureSchema(
+        schema_name="base",
+        schema_version="0.1.0",
+        base=BaseFeatureSchema(features=["signature_matches_per_day"]),
+        symbolic=None,
+    )
+
+
+def test_fast_route_and_funnel_empty_window_returns_none_shape():
+    result = fast_route_and_funnel([], _schema(), _FakeModel(), threshold=0.5)
+    assert result["fast_route_wall_s"] is None
+    assert result["n_alerts_in"] == 0
+    assert result["n_groups_escalated"] is None
+
+
+def test_fast_route_and_funnel_splits_escalated_vs_suppressed_by_threshold():
+    rows = [
+        _group("g1", n_alerts=3, high_signal=True),  # proba=1.0 -> escalated
+        _group("g2", n_alerts=2, high_signal=False),  # proba=0.0 -> suppressed
+        _group("g3", n_alerts=5, high_signal=False),  # proba=0.0 -> suppressed
+    ]
+    result = fast_route_and_funnel(rows, _schema(), _FakeModel(), threshold=0.5)
+
+    assert result["fast_route_wall_s"] >= 0
+    assert result["fast_route_cpu_s"] >= 0
+    assert result["n_alerts_in"] == 10  # 3+2+5
+    assert result["n_groups_escalated"] == 1
+    assert result["n_groups_suppressed"] == 2
+    assert result["n_alerts_escalated"] == 3  # g1 only
+    assert result["n_alerts_suppressed"] == 7  # g2+g3

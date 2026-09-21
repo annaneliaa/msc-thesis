@@ -72,6 +72,7 @@ sample), summary.txt, config.json.
 from __future__ import annotations
 
 import shutil
+import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
@@ -86,6 +87,7 @@ from thesis.experiments._shared import (
     CONFIG_COLS,
     ONE_CLASS_MODELS,
     decide_threshold,
+    fast_route_and_funnel,
     fit_scored_model,
     labels_and_mask,
     load_scenario_context,
@@ -141,6 +143,15 @@ class WindowFit:
     feature_names: list[str]
     cache_hit: bool | None
     X_fit: pd.DataFrame
+    # Every-step adaptation cost (system-operationality instrumentation):
+    # unlike temporal_decay.py's SourceWindowFit (paid once, at h=0), this
+    # is the "always retrain" anchor -- every step pays it again.
+    # mining_wall_s/mining_cpu_s are None for feature_set in
+    # {"baseline", "cscas_full"} (no mining call that step).
+    mining_wall_s: float | None = None
+    mining_cpu_s: float | None = None
+    fit_wall_s: float = 0.0
+    fit_cpu_s: float = 0.0
 
 
 def _step_bounds(scheme: WindowScheme, gran: float, step_idx: int) -> tuple[int, int]:
@@ -200,6 +211,8 @@ def fit_window(
             return None
 
     cache_hit = None
+    mining_wall_s: float | None = None
+    mining_cpu_s: float | None = None
     if cfg.feature_set == "baseline":
         schema = base_schema
     elif cfg.feature_set == "cscas_full":
@@ -215,6 +228,8 @@ def fit_window(
         # ("symbolic") or the full CSCAS columns ("cscas_full_symbolic").
         # encode_alert_groups_for_schema drops any column the two halves
         # share, so the base features aren't doubled.
+        _t0_mine = time.perf_counter()
+        _tc0_mine = time.process_time()
         if scheme.mode == "baseline_split":
             # win_idx==0 is W_src -- the CSCAS baseline's fixed train/test
             # boundary, independent of gran (see _step_bounds), so its tag
@@ -247,6 +262,8 @@ def fit_window(
             )
         symbolic = load_symbolic_feature_schema(schema_result.schema_path)
         cache_hit = schema_result.cache_hit
+        mining_wall_s = time.perf_counter() - _t0_mine
+        mining_cpu_s = time.process_time() - _tc0_mine
         if cfg.feature_set == "cscas_full_symbolic":
             base_part = _cscas_full_base(cfg.model)
             schema_tag = "cscas_full+symbolic"
@@ -280,10 +297,14 @@ def fit_window(
     # low-recall corner at a flat 0.5 on this scenario's imbalance). logreg
     # and rf hardcode "balanced" in their own factory entry either way, so
     # this is a no-op for them but the only correct path for xgboost.
+    _t0_fit = time.perf_counter()
+    _tc0_fit = time.process_time()
     model = fit_scored_model(cfg.model, X, y)
     if model is None:
         print(f"    [warn] window {win_idx}: {cfg.model} could not be fit -- skipping")
         return None
+    fit_wall_s = time.perf_counter() - _t0_fit
+    fit_cpu_s = time.process_time() - _tc0_fit
     proba = model.predict_proba(X)[:, 1]
 
     threshold = decide_threshold(
@@ -297,6 +318,10 @@ def fit_window(
         feature_names=list(X.columns),
         cache_hit=cache_hit,
         X_fit=X,
+        mining_wall_s=mining_wall_s,
+        mining_cpu_s=mining_cpu_s,
+        fit_wall_s=fit_wall_s,
+        fit_cpu_s=fit_cpu_s,
     )
 
 
@@ -585,6 +610,17 @@ def _run_one_config(
                     "n_alert_groups": 0,
                     "n_attack": 0,
                     **nan_metrics(),
+                    "mining_wall_s": None,
+                    "mining_cpu_s": None,
+                    "fit_wall_s": None,
+                    "fit_cpu_s": None,
+                    "fast_route_wall_s": None,
+                    "fast_route_cpu_s": None,
+                    "n_alerts_in": 0,
+                    "n_groups_escalated": None,
+                    "n_groups_suppressed": None,
+                    "n_alerts_escalated": None,
+                    "n_alerts_suppressed": None,
                 }
             )
             continue
@@ -604,6 +640,23 @@ def _run_one_config(
         X_next, y_next, n_alert_groups_next = encode_target_window(
             alert_groups, scheme, cfg.granularity, i + 1, fit.schema
         )
+
+        # Fast-route serving cost + workload funnel (system-operationality
+        # instrumentation): a separate pass from the labeled-only
+        # X_next/proba_next below, so encode_target_window's existing
+        # contract (and its callers/tests) stays untouched.
+        next_start, next_end = scheme.target_bounds(cfg.granularity, i + 1)
+        raw_rows_next = alert_groups[next_start:next_end]
+        adapt_cost = {
+            "mining_wall_s": fit.mining_wall_s,
+            "mining_cpu_s": fit.mining_cpu_s,
+            "fit_wall_s": fit.fit_wall_s,
+            "fit_cpu_s": fit.fit_cpu_s,
+        }
+        funnel = fast_route_and_funnel(
+            raw_rows_next, fit.schema, fit.model, fit.threshold
+        )
+
         if len(y_next) == 0:
             print(
                 f"    [warn] step {i}: window {i + 1} has no labeled rows -- recording nan metrics"
@@ -617,6 +670,8 @@ def _run_one_config(
                     "n_alert_groups": n_alert_groups_next,
                     "n_attack": 0,
                     **nan_metrics(),
+                    **adapt_cost,
+                    **funnel,
                 }
             )
             continue
@@ -632,6 +687,8 @@ def _run_one_config(
                 "n_alert_groups": n_alert_groups_next,
                 "n_attack": int(np.nansum(y_next)),
                 **metrics,
+                **adapt_cost,
+                **funnel,
             }
         )
 

@@ -79,6 +79,22 @@ class _FakeModel:
         return np.column_stack([1 - self._proba_pos, self._proba_pos])
 
 
+def _fake_fast_route_and_funnel(*args, **kwargs):
+    """Stub for fast_route_and_funnel -- these tests exercise the
+    walk/skip/explanation-wiring logic with fake alert_groups/schema
+    ([object()] * 100), which the real function can't encode; the exact
+    funnel values don't matter to what's being tested here."""
+    return {
+        "fast_route_wall_s": 0.0,
+        "fast_route_cpu_s": 0.0,
+        "n_alerts_in": 0,
+        "n_groups_escalated": 0,
+        "n_groups_suppressed": 0,
+        "n_alerts_escalated": 0,
+        "n_alerts_suppressed": 0,
+    }
+
+
 def test_run_one_config_walks_every_step_and_skips_gracefully(monkeypatch):
     """n_total=100, gran=0.2 -> win_size=20, n_windows=5 -> steps i=0..3.
     Step 0: fit succeeds, target window has labeled rows -> real metrics.
@@ -118,6 +134,7 @@ def test_run_one_config_walks_every_step_and_skips_gracefully(monkeypatch):
 
     monkeypatch.setattr(rwf, "fit_window", fake_fit_window)
     monkeypatch.setattr(rwf, "encode_target_window", fake_encode_target_window)
+    monkeypatch.setattr(rwf, "fast_route_and_funnel", _fake_fast_route_and_funnel)
 
     rows, explain_rows, fidelity_rows = rwf._run_one_config(
         cfg=cfg,
@@ -473,6 +490,7 @@ def test_run_one_config_explanations_use_wi_background_and_wi1_sample(monkeypatc
     monkeypatch.setattr(rwf, "fit_window", fake_fit_window)
     monkeypatch.setattr(rwf, "encode_target_window", fake_encode_target_window)
     monkeypatch.setattr(rwf, "_explanation_rows", fake_explanation_rows)
+    monkeypatch.setattr(rwf, "fast_route_and_funnel", _fake_fast_route_and_funnel)
 
     rwf._run_one_config(
         cfg=cfg,
@@ -516,6 +534,7 @@ def test_run_one_config_flags_skip_shap_for_oneclass_models(monkeypatch):
     monkeypatch.setattr(rwf, "fit_window", fake_fit_window)
     monkeypatch.setattr(rwf, "encode_target_window", fake_encode_target_window)
     monkeypatch.setattr(rwf, "_explanation_rows", lambda *a, **k: ([], []))
+    monkeypatch.setattr(rwf, "fast_route_and_funnel", _fake_fast_route_and_funnel)
 
     rwf._run_one_config(
         cfg=cfg,

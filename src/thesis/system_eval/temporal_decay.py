@@ -121,6 +121,7 @@ positive at horizon 5") without re-running the whole sweep.
 from __future__ import annotations
 
 import shutil
+import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
@@ -137,6 +138,7 @@ from thesis.experiments._shared import (
     METRIC_COLS,
     ONE_CLASS_MODELS,
     decide_threshold,
+    fast_route_and_funnel,
     fit_scored_model,
     labels_and_mask,
     load_scenario_context,
@@ -387,6 +389,15 @@ class SourceWindowFit:
     train_item_keys: set = field(default_factory=set)
     train_crp_keys: set = field(default_factory=set)
     h0_rows: list = field(default_factory=list)
+    # One-time setup cost (system-operationality instrumentation): the
+    # "never-retrain" anchor pays this exactly once, at h=0, then nothing
+    # ever again -- the opposite extreme from rolling_walk_forward.py's
+    # every-step mining_wall_s/fit_wall_s. mining_wall_s/mining_cpu_s are
+    # None for feature_set in {"baseline", "cscas_full"} (no mining call).
+    mining_wall_s: float | None = None
+    mining_cpu_s: float | None = None
+    fit_wall_s: float = 0.0
+    fit_cpu_s: float = 0.0
 
 
 def fit_source_window(
@@ -442,6 +453,8 @@ def fit_source_window(
     )
 
     cache_hit = None
+    mining_wall_s: float | None = None
+    mining_cpu_s: float | None = None
     if cfg.feature_set == "baseline":
         schema = base_schema
     elif cfg.feature_set == "cscas_full":
@@ -452,6 +465,8 @@ def fit_source_window(
         # ("symbolic") or the full CSCAS columns ("cscas_full_symbolic").
         # encode_alert_groups_for_schema drops any column the two halves
         # share, so the base features aren't doubled.
+        _t0_mine = time.perf_counter()
+        _tc0_mine = time.process_time()
         if scheme.mode == "baseline_split":
             tf_tag = f"{train_frac_within_window:.6f}".rstrip("0").rstrip(".")
             schema_result = get_or_mine_slice_attribute_schema(
@@ -477,6 +492,8 @@ def fit_source_window(
             )
         symbolic = load_symbolic_feature_schema(schema_result.schema_path)
         cache_hit = schema_result.cache_hit
+        mining_wall_s = time.perf_counter() - _t0_mine
+        mining_cpu_s = time.process_time() - _tc0_mine
         if cfg.feature_set == "cscas_full_symbolic":
             base_part = _cscas_full_base(cfg.model)
             schema_tag = "cscas_full+symbolic"
@@ -517,10 +534,14 @@ def fit_source_window(
     #  - one-class anomaly models ("iforest", "ocsvm") fit unsupervised on
     #    the benign rows, then get a frozen 1-D Platt scaler over the labeled
     #    split so their anomaly score reads as a probability downstream.
+    _t0_fit = time.perf_counter()
+    _tc0_fit = time.process_time()
     model = fit_scored_model(cfg.model, X_train, y_train)
     if model is None:
         print("    [warn] W_src train split can't fit/calibrate this model -- skipping")
         return None
+    fit_wall_s = time.perf_counter() - _t0_fit
+    fit_cpu_s = time.process_time() - _tc0_fit
     proba_train = model.predict_proba(X_train)[:, 1]
 
     threshold = decide_threshold(
@@ -548,6 +569,10 @@ def fit_source_window(
         train_item_keys=train_item_keys,
         train_crp_keys=train_crp_keys,
         h0_rows=h0_rows,
+        mining_wall_s=mining_wall_s,
+        mining_cpu_s=mining_cpu_s,
+        fit_wall_s=fit_wall_s,
+        fit_cpu_s=fit_cpu_s,
     )
 
 
@@ -899,6 +924,13 @@ def _run_one_config(
         "threshold_mode": config.threshold_mode,
         "threshold": fit.threshold,
         "mining_cache_hit": fit.cache_hit,
+        # One-time setup cost (system-operationality instrumentation) --
+        # identical on every horizon row for this config, since the
+        # never-retrain design pays it exactly once, at h=0.
+        "mining_wall_s": fit.mining_wall_s,
+        "mining_cpu_s": fit.mining_cpu_s,
+        "fit_wall_s": fit.fit_wall_s,
+        "fit_cpu_s": fit.fit_cpu_s,
     }
 
     horizon_rows: list[dict] = []
@@ -916,6 +948,8 @@ def _run_one_config(
             horizon_window_index / (fit.n_windows - 1) if fit.n_windows > 1 else 0.0
         )
         novelty = _novelty_metrics(raw_rows_h, fit.train_item_keys, fit.train_crp_keys)
+        funnel = fast_route_and_funnel(raw_rows_h, fit.schema, fit.model, fit.threshold)
+
         if len(y_h) == 0:
             print(
                 f"    [warn] horizon {horizon_window_index} has no labeled rows "
@@ -932,6 +966,7 @@ def _run_one_config(
                     "n_attack": 0,
                     **nan_metrics(),
                     **novelty,
+                    **funnel,
                 }
             )
             return
@@ -950,6 +985,7 @@ def _run_one_config(
                 "n_attack": int(np.nansum(y_h)),
                 **metrics,
                 **novelty,
+                **funnel,
             }
         )
         if config.compute_explanations:

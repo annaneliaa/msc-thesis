@@ -8,6 +8,7 @@ mine/fit/evaluate/aggregate the same way instead of drifting apart.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -24,6 +25,7 @@ from sklearn.metrics import (
 
 from thesis.config import load_mining_settings
 from thesis.configs import dataset_for_scenario, load_base_features
+from thesis.encoders.service import encode_alert_groups_for_schema
 from thesis.pipeline.pipeline import (
     ensure_feature_manifest,
     ingest_ait_scenario,
@@ -130,6 +132,62 @@ def nan_metrics() -> dict:
         "tn": 0,
         "fn": 0,
         "fpr": np.nan,
+    }
+
+
+_EMPTY_FUNNEL = {
+    "fast_route_wall_s": None,
+    "fast_route_cpu_s": None,
+    "n_alerts_in": 0,
+    "n_groups_escalated": None,
+    "n_groups_suppressed": None,
+    "n_alerts_escalated": None,
+    "n_alerts_suppressed": None,
+}
+
+
+def fast_route_and_funnel(
+    raw_rows: list[AlertGroup], schema: FeatureSchema, model, threshold: float
+) -> dict:
+    """System-operationality instrumentation, shared by temporal_decay.py
+    (never-retrain anchor), rolling_walk_forward.py (always-retrain anchor),
+    and monitor_attached.py (the monitor-gated policy between them), so the
+    three land on directly comparable columns for a 3-way cost comparison.
+
+    A single batched encode+predict call over EVERY incoming group in
+    `raw_rows` -- labeled or not, since production scores every alert, not
+    just the ones that later get a label -- timed with wall (perf_counter)
+    and CPU (process_time) clocks. The same proba array is then thresholded
+    into the escalated/suppressed workload funnel at both group count and
+    raw-alert count (AlertGroup.n_alerts) granularity, with zero extra
+    model calls. Deliberately a *second*, separate encode+predict pass from
+    whatever labeled-only one a caller does for its own quality metrics
+    (X_h/proba_h etc.) -- kept apart so this stays a pure addition on top of
+    each experiment's existing masked-encoding path, not a refactor of it.
+
+    Returns the all-None/0 shape (_EMPTY_FUNNEL) for an empty window, so a
+    caller can always spread the result into a row dict without its own
+    branch."""
+    if not raw_rows:
+        return dict(_EMPTY_FUNNEL)
+
+    t0_wall = time.perf_counter()
+    t0_cpu = time.process_time()
+    encoded = encode_alert_groups_for_schema(raw_rows, schema)
+    proba = model.predict_proba(encoded)[:, 1]
+    fast_route_wall_s = time.perf_counter() - t0_wall
+    fast_route_cpu_s = time.process_time() - t0_cpu
+
+    y_pred = (proba >= threshold).astype(int)
+    alerts_arr = np.array([tx.n_alerts for tx in raw_rows])
+    return {
+        "fast_route_wall_s": fast_route_wall_s,
+        "fast_route_cpu_s": fast_route_cpu_s,
+        "n_alerts_in": int(alerts_arr.sum()),
+        "n_groups_escalated": int(y_pred.sum()),
+        "n_groups_suppressed": int((y_pred == 0).sum()),
+        "n_alerts_escalated": int(alerts_arr[y_pred == 1].sum()),
+        "n_alerts_suppressed": int(alerts_arr[y_pred == 0].sum()),
     }
 
 
