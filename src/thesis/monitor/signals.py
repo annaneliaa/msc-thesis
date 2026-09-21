@@ -55,6 +55,7 @@ def compute_psi(p_expected: float, p_observed: float, eps: float = 1e-6) -> floa
 def compute_signal_1(
     schema: DynamicSchema,
     incoming_groups: Sequence[AlertGroup],
+    psi_threshold: float = PSI_ELEVATED_THRESHOLD,
 ) -> list[PredicateSignal]:
     """
     p_expected = attack_support*base_attack_rate +
@@ -64,6 +65,14 @@ def compute_signal_1(
     compute_candidate_attribute_features(tx) is called once per group (it
     does real per-group computation, not a cheap lookup -- see
     mining/attribute_features.py), not once per predicate.
+
+    psi_threshold overrides the module-default PSI_ELEVATED_THRESHOLD for
+    `elevated` -- the observe-only monitor_drift.py experiment leaves this
+    at the default and lets the notebook re-simulate elevation post-hoc at
+    swept thresholds; monitor_attached.py passes the value selected by that
+    sweep so the reactive policy actually acts on it. `significant` always
+    uses the fixed PSI_SIGNIFICANT_THRESHOLD -- only the elevation cutoff is
+    swept in the thesis's threshold-selection step.
     """
     feats_by_group = [
         compute_candidate_attribute_features(tx) for tx in incoming_groups
@@ -93,7 +102,7 @@ def compute_signal_1(
                 p_expected=p_expected,
                 p_observed=p_observed,
                 psi=psi,
-                elevated=psi > PSI_ELEVATED_THRESHOLD,
+                elevated=psi > psi_threshold,
                 significant=psi > PSI_SIGNIFICANT_THRESHOLD,
                 n_observed=n_observed,
             )
@@ -105,6 +114,7 @@ def compute_signal_2(
     schema: DynamicSchema,
     labeled_incoming_groups: Sequence[AlertGroup],
     min_samples: int = DEFAULT_MIN_SAMPLES_SIGNAL_2,
+    cal_threshold: float = CALIBRATION_DRIFT_THRESHOLD,
 ) -> list[RuleSignal]:
     """
     For every compound rule, filter labeled_incoming_groups (group_label in
@@ -114,6 +124,10 @@ def compute_signal_2(
     observed_confidence is the fraction of matching rows whose true label
     equals rule.prediction, and drift is the absolute difference from the
     mined confidence.
+
+    cal_threshold overrides the module-default CALIBRATION_DRIFT_THRESHOLD
+    for `elevated` -- see compute_signal_1's psi_threshold for why this is
+    a parameter rather than always the module constant.
     """
     feats_by_group = [
         (tx, compute_candidate_attribute_features(tx)) for tx in labeled_incoming_groups
@@ -153,7 +167,7 @@ def compute_signal_2(
                 mined_confidence=rule.confidence,
                 observed_confidence=observed_confidence,
                 drift=drift,
-                elevated=drift > CALIBRATION_DRIFT_THRESHOLD,
+                elevated=drift > cal_threshold,
                 n_matching=n_matching,
             )
         )

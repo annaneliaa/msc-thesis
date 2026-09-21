@@ -5,7 +5,9 @@ from datetime import datetime
 from typing import Sequence
 
 from thesis.monitor.signals import (
+    CALIBRATION_DRIFT_THRESHOLD,
     DEFAULT_MIN_SAMPLES_SIGNAL_2,
+    PSI_ELEVATED_THRESHOLD,
     PredicateSignal,
     RuleSignal,
     compute_signal_1,
@@ -43,14 +45,23 @@ def run_monitor_window(
     window_end: datetime,
     consecutive_windows: int = DEFAULT_CONSECUTIVE_WINDOWS,
     min_samples_signal_2: int = DEFAULT_MIN_SAMPLES_SIGNAL_2,
+    psi_threshold: float = PSI_ELEVATED_THRESHOLD,
+    cal_threshold: float = CALIBRATION_DRIFT_THRESHOLD,
 ) -> MonitorSnapshot:
     """
     Pure decision function: computes both signals, advances `state` in
     place, classifies the action, returns a full snapshot. Never calls
-    DynamicSchemaRegistry.deploy() or any mining job -- a future Experiment 4
-    calls this once per rolling window (same compute_window_bounds walk
-    pattern as experiments/rolling_walk_forward.py) and decides, externally,
-    whether to act on `action`.
+    DynamicSchemaRegistry.deploy() or any mining job -- system_eval/
+    monitor_attached.py calls this once per rolling window (same
+    compute_window_bounds walk pattern as system_eval/rolling_walk_forward.py)
+    and decides, externally, whether to act on `action`; system_eval/
+    monitor_drift.py calls this too but only to observe -- it never acts.
+
+    psi_threshold/cal_threshold default to the signals module's own
+    placeholder constants (the values the monitor started with, never
+    confirmed against real data) -- pass the values selected by the
+    threshold sweep (Drift Signal EDA, Analysis 3) to deploy a tuned
+    monitor instead.
     """
     if state.deployed_schema_version != schema.version:
         raise ValueError(
@@ -64,9 +75,14 @@ def run_monitor_window(
         tx for tx in incoming_groups if tx.group_label in ("benign", "attack")
     ]
 
-    signal_1_results = compute_signal_1(schema, incoming_groups)
+    signal_1_results = compute_signal_1(
+        schema, incoming_groups, psi_threshold=psi_threshold
+    )
     signal_2_results = compute_signal_2(
-        schema, labeled_groups, min_samples=min_samples_signal_2
+        schema,
+        labeled_groups,
+        min_samples=min_samples_signal_2,
+        cal_threshold=cal_threshold,
     )
 
     signal_1_elevated = any(r.elevated for r in signal_1_results)

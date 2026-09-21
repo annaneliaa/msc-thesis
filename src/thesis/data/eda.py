@@ -794,15 +794,19 @@ def save_overview_plots(
     label: str,
     fmt: str = "png",
     close: bool = True,
+    prefix: str = "",
 ) -> None:
-    """Annotate + save every (label, name, fig) triple from build_overview_plots."""
+    """Annotate + save every (label, name, fig) triple from build_overview_plots.
+    `prefix` (e.g. "ait-ads") is prepended as "{prefix}_{name}.{fmt}" -- useful
+    when plots_dir isn't itself dataset-scoped."""
     import matplotlib.pyplot as plt
 
     plots_dir.mkdir(parents=True, exist_ok=True)
     print(f"\n[plots] Saving to {plots_dir}")
+    stem = f"{prefix}_" if prefix else ""
     for plot_label, name, fig in plots:
         print(f"  Saving {plot_label}...", end=" ", flush=True)
-        annotate_and_save(fig, plots_dir / f"{name}.{fmt}", label)
+        annotate_and_save(fig, plots_dir / f"{stem}{name}.{fmt}", label)
         if close:
             plt.close(fig)
         print("done")
@@ -1000,10 +1004,18 @@ def write_host_summary(
 
 
 def run_host_scenario_eda(
-    scenario: str, run_dir: Path, filtered: bool = False, delta: float = ALERTBERT_DELTA
+    scenario: str,
+    run_dir: Path,
+    filtered: bool = False,
+    delta: float = ALERTBERT_DELTA,
+    img_dir: Path | None = None,
 ) -> None:
     """Per-host stream analysis + all six per-host plots + text summary for
-    one AIT-ADS scenario. Mirrors the old run_eda_host.py run_scenario()."""
+    one AIT-ADS scenario. Mirrors the old run_eda_host.py run_scenario().
+    `img_dir`, if given, is a flat (not per-scenario) directory the six plots
+    are saved to instead of `run_dir/scenario`, with the scenario prefixed
+    onto each filename since they'd otherwise collide across scenarios there;
+    per-host CSVs and the text summary always stay under `run_dir/scenario`."""
     from thesis.paths import ROOT
     from thesis.visualization.eda import (
         plot_host_alert_type_heatmap,
@@ -1027,6 +1039,9 @@ def run_host_scenario_eda(
     out_dir = run_dir / scenario
     per_host_dir = out_dir / "per_host"
     per_host_dir.mkdir(parents=True, exist_ok=True)
+    fig_dir = img_dir if img_dir is not None else out_dir
+    fig_dir.mkdir(parents=True, exist_ok=True)
+    fig_stem = f"{scenario}_" if img_dir is not None else ""
 
     host_summaries = []
     for host in df.groupby("host").size().sort_values(ascending=False).index:
@@ -1048,27 +1063,27 @@ def run_host_scenario_eda(
 
     print("  Plotting heatmap...")
     fig, _ = plot_host_alert_type_heatmap(df, scenario)
-    annotate_and_save(fig, out_dir / "host_alert_type_heatmap.png", label)
+    annotate_and_save(fig, fig_dir / f"{fig_stem}host_alert_type_heatmap.png", label)
 
     print("  Plotting timelines...")
     fig, _ = plot_host_timeline(df, scenario)
-    annotate_and_save(fig, out_dir / "host_timeline.png", label)
+    annotate_and_save(fig, fig_dir / f"{fig_stem}host_timeline.png", label)
 
     print("  Plotting inter-arrival CDFs...")
     fig, _ = plot_host_interarrival_cdf(df, scenario, delta=delta)
-    annotate_and_save(fig, out_dir / "host_interarrival_cdf.png", label)
+    annotate_and_save(fig, fig_dir / f"{fig_stem}host_interarrival_cdf.png", label)
 
     print("  Plotting burst profile...")
     fig, _ = plot_host_burst_profile(host_summaries, scenario, delta=delta)
-    annotate_and_save(fig, out_dir / "host_burst_profile.png", label)
+    annotate_and_save(fig, fig_dir / f"{fig_stem}host_burst_profile.png", label)
 
     print("  Plotting type overlap...")
     fig, _ = plot_host_type_overlap(df, scenario)
-    annotate_and_save(fig, out_dir / "host_type_overlap.png", label)
+    annotate_and_save(fig, fig_dir / f"{fig_stem}host_type_overlap.png", label)
 
     print("  Plotting exclusivity...")
     fig, _ = plot_host_exclusive_types(df, scenario)
-    annotate_and_save(fig, out_dir / "host_exclusive_types.png", label)
+    annotate_and_save(fig, fig_dir / f"{fig_stem}host_exclusive_types.png", label)
 
     write_host_summary(df, host_summaries, scenario, out_dir / "summary.txt")
-    print(f"  → {out_dir}")
+    print(f"  → figures: {fig_dir}  |  csvs/summary: {out_dir}")

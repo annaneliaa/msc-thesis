@@ -40,6 +40,7 @@ the slice file's existence.
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -57,6 +58,28 @@ from thesis.mining.attribute_schema_cache import (
 )
 from thesis.schemas.groups import AlertGroup
 from thesis.schemas.mining import AttributeMiningConfig
+
+
+_fingerprint_locks: dict[str, threading.Lock] = {}
+_fingerprint_locks_guard = threading.Lock()
+
+
+def _lock_for_fingerprint(fingerprint: str) -> threading.Lock:
+    """One lock per fingerprint, so concurrent get_or_mine_* calls for
+    *different* schemas never block each other, but two threads racing on
+    the *same* fingerprint (e.g. the run_rolling_walk_forward.sh grid
+    firing rf and xgboost configs -- or both granularities under
+    baseline_split, where the source window is granularity-independent --
+    concurrently via ThreadPoolExecutor) serialize instead of both writing
+    /mining/deleting the same shared window-slice file. Without this, one
+    thread's _mine_and_discard_slice delete could race a second thread that
+    had just decided (via _resolve_window_slice_alert_groups_path's
+    exists-check) it didn't need to write the file itself, producing either
+    a FileNotFoundError or a truncated/empty-JSON read on the second
+    thread -- exactly the failure mode that silently dropped whole configs
+    from a rolling_walk_forward run."""
+    with _fingerprint_locks_guard:
+        return _fingerprint_locks.setdefault(fingerprint, threading.Lock())
 
 
 @dataclass(slots=True)
@@ -88,6 +111,7 @@ def _resolve_window_slice_alert_groups_path(
     file's mtime (see resolve_window_alert_groups_path for the same issue).
     """
     import json
+    import os
 
     gran_tag = f"{gran:.6f}".rstrip("0").rstrip(".")
     win_path = (
@@ -95,11 +119,18 @@ def _resolve_window_slice_alert_groups_path(
         / f"alert_groups_gran{gran_tag}_win{win_idx}_{tag}.json"
     )
     if not win_path.exists():
-        win_path.write_text(
+        # Write to a sibling temp file then atomically rename into place, so
+        # a concurrent reader (e.g. another process not covered by this
+        # module's in-process _lock_for_fingerprint) never observes a
+        # partially-written/empty file at win_path -- os.replace is atomic
+        # on POSIX and Windows.
+        tmp_path = win_path.with_suffix(f".{os.getpid()}.{id(alert_groups)}.tmp")
+        tmp_path.write_text(
             json.dumps(
                 [alert_group_to_dict(t) for t in alert_groups[slice_start:slice_end]]
             )
         )
+        os.replace(tmp_path, win_path)
     return win_path
 
 
@@ -221,41 +252,42 @@ def get_or_mine_window_attribute_schema(
         identity, attribute_mining_config, exclude_fields
     )
 
-    cached_schema_path = (
-        None if force else lookup_cached_schema(scenario, fingerprint, root_dir)
-    )
-    if cached_schema_path is not None:
-        return WindowSchemaResult(
-            schema_path=cached_schema_path,
-            mining_run_dir=None,
-            mining_stats={"cache_hit": True, "fingerprint": fingerprint},
+    with _lock_for_fingerprint(fingerprint):
+        cached_schema_path = (
+            None if force else lookup_cached_schema(scenario, fingerprint, root_dir)
+        )
+        if cached_schema_path is not None:
+            return WindowSchemaResult(
+                schema_path=cached_schema_path,
+                mining_run_dir=None,
+                mining_stats={"cache_hit": True, "fingerprint": fingerprint},
+                win_start=win_start,
+                win_end=win_end,
+                win_train_end=win_train_end,
+                cache_hit=True,
+            )
+
+        window_train_path = _resolve_window_train_alert_groups_path(
+            alert_groups,
+            alert_groups_path,
+            gran=gran,
+            win_idx=win_idx,
             win_start=win_start,
-            win_end=win_end,
             win_train_end=win_train_end,
-            cache_hit=True,
+            train_frac=train_frac,
         )
 
-    window_train_path = _resolve_window_train_alert_groups_path(
-        alert_groups,
-        alert_groups_path,
-        gran=gran,
-        win_idx=win_idx,
-        win_start=win_start,
-        win_train_end=win_train_end,
-        train_frac=train_frac,
-    )
-
-    run_name = f"screening_{scenario}_gran{gran:g}_win{win_idx}"
-    schema_path, mining_run_dir, mining_stats = _mine_and_discard_slice(
-        scenario=scenario,
-        slice_path=window_train_path,
-        run_name=run_name,
-        attribute_mining_config=attribute_mining_config,
-        root_dir=root_dir,
-        force=force,
-        fingerprint=fingerprint,
-        exclude_fields=exclude_fields,
-    )
+        run_name = f"screening_{scenario}_gran{gran:g}_win{win_idx}"
+        schema_path, mining_run_dir, mining_stats = _mine_and_discard_slice(
+            scenario=scenario,
+            slice_path=window_train_path,
+            run_name=run_name,
+            attribute_mining_config=attribute_mining_config,
+            root_dir=root_dir,
+            force=force,
+            fingerprint=fingerprint,
+            exclude_fields=exclude_fields,
+        )
 
     return WindowSchemaResult(
         schema_path=schema_path,
@@ -310,41 +342,42 @@ def get_or_mine_slice_attribute_schema(
         identity, attribute_mining_config, exclude_fields
     )
 
-    cached_schema_path = (
-        None if force else lookup_cached_schema(scenario, fingerprint, root_dir)
-    )
-    if cached_schema_path is not None:
-        return WindowSchemaResult(
-            schema_path=cached_schema_path,
-            mining_run_dir=None,
-            mining_stats={"cache_hit": True, "fingerprint": fingerprint},
-            win_start=slice_start,
-            win_end=slice_end,
-            win_train_end=slice_end,
-            cache_hit=True,
+    with _lock_for_fingerprint(fingerprint):
+        cached_schema_path = (
+            None if force else lookup_cached_schema(scenario, fingerprint, root_dir)
+        )
+        if cached_schema_path is not None:
+            return WindowSchemaResult(
+                schema_path=cached_schema_path,
+                mining_run_dir=None,
+                mining_stats={"cache_hit": True, "fingerprint": fingerprint},
+                win_start=slice_start,
+                win_end=slice_end,
+                win_train_end=slice_end,
+                cache_hit=True,
+            )
+
+        slice_path = _resolve_window_slice_alert_groups_path(
+            alert_groups,
+            alert_groups_path,
+            gran=-1.0,
+            win_idx=-1,
+            slice_start=slice_start,
+            slice_end=slice_end,
+            tag=slice_tag,
         )
 
-    slice_path = _resolve_window_slice_alert_groups_path(
-        alert_groups,
-        alert_groups_path,
-        gran=-1.0,
-        win_idx=-1,
-        slice_start=slice_start,
-        slice_end=slice_end,
-        tag=slice_tag,
-    )
-
-    run_name = f"temporal_decay_{scenario}_{slice_tag}"
-    schema_path, mining_run_dir, mining_stats = _mine_and_discard_slice(
-        scenario=scenario,
-        slice_path=slice_path,
-        run_name=run_name,
-        attribute_mining_config=attribute_mining_config,
-        root_dir=root_dir,
-        force=force,
-        fingerprint=fingerprint,
-        exclude_fields=exclude_fields,
-    )
+        run_name = f"temporal_decay_{scenario}_{slice_tag}"
+        schema_path, mining_run_dir, mining_stats = _mine_and_discard_slice(
+            scenario=scenario,
+            slice_path=slice_path,
+            run_name=run_name,
+            attribute_mining_config=attribute_mining_config,
+            root_dir=root_dir,
+            force=force,
+            fingerprint=fingerprint,
+            exclude_fields=exclude_fields,
+        )
 
     return WindowSchemaResult(
         schema_path=schema_path,
@@ -395,41 +428,42 @@ def get_or_mine_full_window_attribute_schema(
         identity, attribute_mining_config, exclude_fields
     )
 
-    cached_schema_path = (
-        None if force else lookup_cached_schema(scenario, fingerprint, root_dir)
-    )
-    if cached_schema_path is not None:
-        return WindowSchemaResult(
-            schema_path=cached_schema_path,
-            mining_run_dir=None,
-            mining_stats={"cache_hit": True, "fingerprint": fingerprint},
-            win_start=win_start,
-            win_end=win_end,
-            win_train_end=win_end,
-            cache_hit=True,
+    with _lock_for_fingerprint(fingerprint):
+        cached_schema_path = (
+            None if force else lookup_cached_schema(scenario, fingerprint, root_dir)
+        )
+        if cached_schema_path is not None:
+            return WindowSchemaResult(
+                schema_path=cached_schema_path,
+                mining_run_dir=None,
+                mining_stats={"cache_hit": True, "fingerprint": fingerprint},
+                win_start=win_start,
+                win_end=win_end,
+                win_train_end=win_end,
+                cache_hit=True,
+            )
+
+        window_full_path = _resolve_window_slice_alert_groups_path(
+            alert_groups,
+            alert_groups_path,
+            gran=gran,
+            win_idx=win_idx,
+            slice_start=win_start,
+            slice_end=win_end,
+            tag="full",
         )
 
-    window_full_path = _resolve_window_slice_alert_groups_path(
-        alert_groups,
-        alert_groups_path,
-        gran=gran,
-        win_idx=win_idx,
-        slice_start=win_start,
-        slice_end=win_end,
-        tag="full",
-    )
-
-    run_name = f"temporal_decay_{scenario}_gran{gran:g}_win{win_idx}_full"
-    schema_path, mining_run_dir, mining_stats = _mine_and_discard_slice(
-        scenario=scenario,
-        slice_path=window_full_path,
-        run_name=run_name,
-        attribute_mining_config=attribute_mining_config,
-        root_dir=root_dir,
-        force=force,
-        fingerprint=fingerprint,
-        exclude_fields=exclude_fields,
-    )
+        run_name = f"temporal_decay_{scenario}_gran{gran:g}_win{win_idx}_full"
+        schema_path, mining_run_dir, mining_stats = _mine_and_discard_slice(
+            scenario=scenario,
+            slice_path=window_full_path,
+            run_name=run_name,
+            attribute_mining_config=attribute_mining_config,
+            root_dir=root_dir,
+            force=force,
+            fingerprint=fingerprint,
+            exclude_fields=exclude_fields,
+        )
 
     return WindowSchemaResult(
         schema_path=schema_path,

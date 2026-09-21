@@ -10,15 +10,16 @@ contamination = 0.05).
 \textbf{Features} is \texttt{Base (5)} (the reduced tabular schema),
 \texttt{Base (5) + mined} (the same schema plus attribute-mined symbolic
 features), or \texttt{tokens as text} for the text/LLM baselines.
-The \textbf{Training} column reports the training-pool condition:
-\texttt{random} = random undersampling of the majority (irrelevant) class down
-to the minority (important) count, \texttt{class-weighted} = the full
-natural-ratio training pool with balanced class weights
-(\texttt{scale\_pos\_weight} for XGBoost), \texttt{benign-only} = the anomaly
-detectors, fit on benign rows only, no attack examples used in training,
-\texttt{none} = zero-shot, no training step -- no \texttt{guided} condition,
-CSCAS-only (AIT-ADS has no SCAS-equivalent outlier signal to guide sampling
-with). \textbf{Grouping} is one of \texttt{fixed\_window} / \texttt{time\_delta}
+The \textbf{Training} column reports the training-pool condition. The
+\texttt{random}-undersampling condition (majority class downsampled to the
+minority count) is omitted from this table -- only \texttt{class-weighted}
+(the full natural-ratio training pool with balanced class weights,
+\texttt{scale\_pos\_weight} for XGBoost) is shown for the trainable
+classifiers; see the per-scenario tables above for the \texttt{random}
+condition's results. \texttt{benign-only} = the anomaly detectors, fit on
+benign rows only, no attack examples used in training; \texttt{none} =
+zero-shot, no training step -- no \texttt{guided} condition, CSCAS-only
+(AIT-ADS has no SCAS-equivalent outlier signal to guide sampling with). \textbf{Grouping} is one of \texttt{fixed\_window} / \texttt{time\_delta}
 / \texttt{cscas\_grouping} (every scenario) or \texttt{alertbert} /
 \texttt{deepcase} (\texttt{fox} / \texttt{russellmitchell} only -- the
 scenarios held out of the learned groupers' training). Covers 6 of AIT-ADS's 8
@@ -29,7 +30,14 @@ in its raw timeline falls in the last 30\% regardless of grouping, so train is
 100\% benign; the four anomaly methods and zero-shot are exempt (see the intro
 cell). All rows are scored on that scenario's full test split -- no `Full
 test' vs `Subsample' split axis: unlike CSCAS, no frozen eval subsample is
-used.}
+used. RF, XGBoost and their mining variants each produced a handful of
+(scenario, grouping) blocks where every training condition scored exactly
+F1=0 on \texttt{shaw}/\texttt{wardbeck}/\texttt{wheeler} under
+\texttt{fixed\_window}/\texttt{time\_delta} -- these carry no information
+beyond ``the model never flagged an attack'' and are omitted here; the exact
+list is in Table~\ref{tab:ait-ads-grid-exclusions}. LogReg and its mining
+variant are unaffected -- both always score above zero somewhere in that
+slice.}
 \label{tab:ait-ads-baseline-results-full} \\
 \toprule
 \textbf{Baseline} & \textbf{Model} & \textbf{Features} & \textbf{Scenario} & \textbf{Grouping} & \textbf{Training} & \textbf{Precision} & \textbf{Recall} & \textbf{F1} & \textbf{AUC} \\
@@ -44,437 +52,185 @@ used.}
 \endfoot
 \bottomrule
 \endlastfoot
-Internal system & LogReg & Base (5) & fox & fixed\_window & random & $0.807_{\pm 0.094}$ & $0.665_{\pm 0.004}$ & $0.727_{\pm 0.035}$ & -- \\
- &  &  &  &  & class-weighted & $0.858_{\pm 0.000}$ & $0.668_{\pm 0.000}$ & $0.751_{\pm 0.000}$ & -- \\
+Internal system & LogReg & Base (5) & fox & fixed\_window & class-weighted & $0.858_{\pm 0.000}$ & $0.668_{\pm 0.000}$ & $0.751_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal system & LogReg & Base (5) & fox & time\_delta & random & $0.015_{\pm 0.001}$ & $0.270_{\pm 0.021}$ & $0.028_{\pm 0.002}$ & -- \\
- &  &  &  &  & class-weighted & $0.014_{\pm 0.000}$ & $0.250_{\pm 0.000}$ & $0.026_{\pm 0.000}$ & -- \\
+Internal system & LogReg & Base (5) & fox & time\_delta & class-weighted & $0.014_{\pm 0.000}$ & $0.250_{\pm 0.000}$ & $0.026_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal system & LogReg & Base (5) & fox & cscas\_grouping & random & $0.078_{\pm 0.018}$ & $0.522_{\pm 0.014}$ & $0.135_{\pm 0.026}$ & -- \\
- &  &  &  &  & class-weighted & $0.070_{\pm 0.000}$ & $0.522_{\pm 0.000}$ & $0.124_{\pm 0.000}$ & -- \\
+Internal system & LogReg & Base (5) & fox & cscas\_grouping & class-weighted & $0.070_{\pm 0.000}$ & $0.522_{\pm 0.000}$ & $0.124_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal system & LogReg & Base (5) & fox & alertbert & random & $0.763_{\pm 0.010}$ & $0.544_{\pm 0.004}$ & $0.635_{\pm 0.002}$ & -- \\
- &  &  &  &  & class-weighted & $0.755_{\pm 0.000}$ & $0.547_{\pm 0.000}$ & $0.634_{\pm 0.000}$ & -- \\
+Internal system & LogReg & Base (5) & fox & alertbert & class-weighted & $0.755_{\pm 0.000}$ & $0.547_{\pm 0.000}$ & $0.634_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal system & LogReg & Base (5) & fox & deepcase & random & $0.896_{\pm 0.009}$ & $0.521_{\pm 0.009}$ & $0.659_{\pm 0.005}$ & -- \\
- &  &  &  &  & class-weighted & $0.892_{\pm 0.000}$ & $0.525_{\pm 0.000}$ & $0.661_{\pm 0.000}$ & -- \\
+Internal system & LogReg & Base (5) & fox & deepcase & class-weighted & $0.892_{\pm 0.000}$ & $0.525_{\pm 0.000}$ & $0.661_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal system & LogReg & Base (5) & russellmitchell & deepcase & random & $0.968_{\pm 0.014}$ & $0.872_{\pm 0.101}$ & $0.915_{\pm 0.057}$ & -- \\
- &  &  &  &  & class-weighted & $0.992_{\pm 0.000}$ & $0.762_{\pm 0.000}$ & $0.862_{\pm 0.000}$ & -- \\
+Internal system & LogReg & Base (5) & russellmitchell & deepcase & class-weighted & $0.992_{\pm 0.000}$ & $0.762_{\pm 0.000}$ & $0.862_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal system & LogReg & Base (5) & shaw & fixed\_window & random & $0.007_{\pm 0.006}$ & $0.026_{\pm 0.023}$ & $0.011_{\pm 0.010}$ & -- \\
- &  &  &  &  & class-weighted & $0.036_{\pm 0.000}$ & $0.058_{\pm 0.000}$ & $0.045_{\pm 0.000}$ & -- \\
+Internal system & LogReg & Base (5) & shaw & fixed\_window & class-weighted & $0.036_{\pm 0.000}$ & $0.058_{\pm 0.000}$ & $0.045_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal system & LogReg & Base (5) & shaw & time\_delta & random & $0.009_{\pm 0.007}$ & $0.051_{\pm 0.042}$ & $0.015_{\pm 0.011}$ & -- \\
- &  &  &  &  & class-weighted & $0.011_{\pm 0.000}$ & $0.022_{\pm 0.000}$ & $0.015_{\pm 0.000}$ & -- \\
+Internal system & LogReg & Base (5) & shaw & time\_delta & class-weighted & $0.011_{\pm 0.000}$ & $0.022_{\pm 0.000}$ & $0.015_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal system & LogReg & Base (5) & shaw & cscas\_grouping & random & $0.039_{\pm 0.003}$ & $0.488_{\pm 0.144}$ & $0.072_{\pm 0.007}$ & -- \\
- &  &  &  &  & class-weighted & $0.043_{\pm 0.000}$ & $0.649_{\pm 0.000}$ & $0.080_{\pm 0.000}$ & -- \\
+Internal system & LogReg & Base (5) & shaw & cscas\_grouping & class-weighted & $0.043_{\pm 0.000}$ & $0.649_{\pm 0.000}$ & $0.080_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal system & LogReg & Base (5) & wardbeck & fixed\_window & random & $0.002_{\pm 0.005}$ & $0.007_{\pm 0.015}$ & $0.004_{\pm 0.008}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
+Internal system & LogReg & Base (5) & wardbeck & cscas\_grouping & class-weighted & $0.073_{\pm 0.000}$ & $0.531_{\pm 0.000}$ & $0.128_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal system & LogReg & Base (5) & wardbeck & time\_delta & random & $0.004_{\pm 0.004}$ & $0.012_{\pm 0.011}$ & $0.006_{\pm 0.005}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
+Internal system & LogReg & Base (5) & wheeler & fixed\_window & class-weighted & $0.581_{\pm 0.000}$ & $0.942_{\pm 0.000}$ & $0.719_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal system & LogReg & Base (5) & wardbeck & cscas\_grouping & random & $0.070_{\pm 0.002}$ & $0.581_{\pm 0.047}$ & $0.125_{\pm 0.003}$ & -- \\
- &  &  &  &  & class-weighted & $0.073_{\pm 0.000}$ & $0.531_{\pm 0.000}$ & $0.128_{\pm 0.000}$ & -- \\
+Internal system & LogReg & Base (5) & wheeler & time\_delta & class-weighted & $0.032_{\pm 0.000}$ & $0.333_{\pm 0.000}$ & $0.059_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal system & LogReg & Base (5) & wheeler & fixed\_window & random & $0.529_{\pm 0.035}$ & $0.949_{\pm 0.028}$ & $0.679_{\pm 0.033}$ & -- \\
- &  &  &  &  & class-weighted & $0.581_{\pm 0.000}$ & $0.942_{\pm 0.000}$ & $0.719_{\pm 0.000}$ & -- \\
+Internal system & LogReg & Base (5) & wheeler & cscas\_grouping & class-weighted & $0.031_{\pm 0.000}$ & $0.665_{\pm 0.000}$ & $0.060_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal system & LogReg & Base (5) & wheeler & time\_delta & random & $0.038_{\pm 0.002}$ & $0.521_{\pm 0.058}$ & $0.071_{\pm 0.003}$ & -- \\
- &  &  &  &  & class-weighted & $0.032_{\pm 0.000}$ & $0.333_{\pm 0.000}$ & $0.059_{\pm 0.000}$ & -- \\
+Internal system & LogReg & Base (5) & wilson & fixed\_window & class-weighted & $0.028_{\pm 0.000}$ & $0.111_{\pm 0.000}$ & $0.044_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal system & LogReg & Base (5) & wheeler & cscas\_grouping & random & $0.035_{\pm 0.006}$ & $0.548_{\pm 0.145}$ & $0.066_{\pm 0.009}$ & -- \\
- &  &  &  &  & class-weighted & $0.031_{\pm 0.000}$ & $0.665_{\pm 0.000}$ & $0.060_{\pm 0.000}$ & -- \\
+Internal system & LogReg & Base (5) & wilson & time\_delta & class-weighted & $0.026_{\pm 0.000}$ & $0.506_{\pm 0.000}$ & $0.049_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal system & LogReg & Base (5) & wilson & fixed\_window & random & $0.027_{\pm 0.002}$ & $0.110_{\pm 0.008}$ & $0.043_{\pm 0.004}$ & -- \\
- &  &  &  &  & class-weighted & $0.028_{\pm 0.000}$ & $0.111_{\pm 0.000}$ & $0.044_{\pm 0.000}$ & -- \\
+Internal system & LogReg & Base (5) & wilson & cscas\_grouping & class-weighted & $0.074_{\pm 0.000}$ & $0.307_{\pm 0.000}$ & $0.120_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal system & LogReg & Base (5) & wilson & time\_delta & random & $0.026_{\pm 0.001}$ & $0.506_{\pm 0.016}$ & $0.049_{\pm 0.002}$ & -- \\
- &  &  &  &  & class-weighted & $0.026_{\pm 0.000}$ & $0.506_{\pm 0.000}$ & $0.049_{\pm 0.000}$ & -- \\
+Internal system & RF & Base (5) & fox & fixed\_window & class-weighted & $0.424_{\pm 0.003}$ & $0.694_{\pm 0.004}$ & $0.526_{\pm 0.003}$ & -- \\
 \addlinespace
-Internal system & LogReg & Base (5) & wilson & cscas\_grouping & random & $0.072_{\pm 0.002}$ & $0.314_{\pm 0.007}$ & $0.117_{\pm 0.003}$ & -- \\
- &  &  &  &  & class-weighted & $0.074_{\pm 0.000}$ & $0.307_{\pm 0.000}$ & $0.120_{\pm 0.000}$ & -- \\
+Internal system & RF & Base (5) & fox & time\_delta & class-weighted & $0.081_{\pm 0.002}$ & $0.540_{\pm 0.014}$ & $0.141_{\pm 0.003}$ & -- \\
 \addlinespace
-Internal system & RF & Base (5) & fox & fixed\_window & random & $0.404_{\pm 0.005}$ & $0.740_{\pm 0.014}$ & $0.522_{\pm 0.006}$ & -- \\
- &  &  &  &  & class-weighted & $0.424_{\pm 0.003}$ & $0.694_{\pm 0.004}$ & $0.526_{\pm 0.003}$ & -- \\
+Internal system & RF & Base (5) & fox & cscas\_grouping & class-weighted & $0.069_{\pm 0.001}$ & $0.443_{\pm 0.021}$ & $0.119_{\pm 0.002}$ & -- \\
 \addlinespace
-Internal system & RF & Base (5) & fox & time\_delta & random & $0.084_{\pm 0.004}$ & $0.695_{\pm 0.037}$ & $0.150_{\pm 0.008}$ & -- \\
- &  &  &  &  & class-weighted & $0.081_{\pm 0.002}$ & $0.540_{\pm 0.014}$ & $0.141_{\pm 0.003}$ & -- \\
+Internal system & RF & Base (5) & fox & alertbert & class-weighted & $0.848_{\pm 0.001}$ & $0.884_{\pm 0.000}$ & $0.865_{\pm 0.001}$ & -- \\
 \addlinespace
-Internal system & RF & Base (5) & fox & cscas\_grouping & random & $0.079_{\pm 0.018}$ & $0.466_{\pm 0.135}$ & $0.132_{\pm 0.024}$ & -- \\
- &  &  &  &  & class-weighted & $0.069_{\pm 0.001}$ & $0.443_{\pm 0.021}$ & $0.119_{\pm 0.002}$ & -- \\
+Internal system & RF & Base (5) & fox & deepcase & class-weighted & $0.970_{\pm 0.000}$ & $0.983_{\pm 0.001}$ & $0.976_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal system & RF & Base (5) & fox & alertbert & random & $0.849_{\pm 0.023}$ & $0.881_{\pm 0.008}$ & $0.864_{\pm 0.010}$ & -- \\
- &  &  &  &  & class-weighted & $0.848_{\pm 0.001}$ & $0.884_{\pm 0.000}$ & $0.865_{\pm 0.001}$ & -- \\
+Internal system & RF & Base (5) & russellmitchell & deepcase & class-weighted & $1.000_{\pm 0.000}$ & $0.788_{\pm 0.003}$ & $0.881_{\pm 0.002}$ & -- \\
 \addlinespace
-Internal system & RF & Base (5) & fox & deepcase & random & $0.970_{\pm 0.000}$ & $0.983_{\pm 0.000}$ & $0.976_{\pm 0.000}$ & -- \\
- &  &  &  &  & class-weighted & $0.970_{\pm 0.000}$ & $0.983_{\pm 0.001}$ & $0.976_{\pm 0.000}$ & -- \\
+Internal system & RF & Base (5) & shaw & cscas\_grouping & class-weighted & $0.036_{\pm 0.001}$ & $0.408_{\pm 0.037}$ & $0.067_{\pm 0.002}$ & -- \\
 \addlinespace
-Internal system & RF & Base (5) & russellmitchell & deepcase & random & $0.992_{\pm 0.006}$ & $0.889_{\pm 0.077}$ & $0.936_{\pm 0.043}$ & -- \\
- &  &  &  &  & class-weighted & $1.000_{\pm 0.000}$ & $0.788_{\pm 0.003}$ & $0.881_{\pm 0.002}$ & -- \\
+Internal system & RF & Base (5) & wardbeck & cscas\_grouping & class-weighted & $0.080_{\pm 0.000}$ & $0.415_{\pm 0.000}$ & $0.134_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal system & RF & Base (5) & shaw & fixed\_window & random & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
+Internal system & RF & Base (5) & wheeler & cscas\_grouping & class-weighted & $0.034_{\pm 0.001}$ & $0.465_{\pm 0.068}$ & $0.064_{\pm 0.001}$ & -- \\
 \addlinespace
-Internal system & RF & Base (5) & shaw & time\_delta & random & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
+Internal system & RF & Base (5) & wilson & fixed\_window & class-weighted & $0.142_{\pm 0.001}$ & $0.216_{\pm 0.002}$ & $0.171_{\pm 0.002}$ & -- \\
 \addlinespace
-Internal system & RF & Base (5) & shaw & cscas\_grouping & random & $0.036_{\pm 0.003}$ & $0.556_{\pm 0.088}$ & $0.068_{\pm 0.005}$ & -- \\
- &  &  &  &  & class-weighted & $0.036_{\pm 0.001}$ & $0.408_{\pm 0.037}$ & $0.067_{\pm 0.002}$ & -- \\
+Internal system & RF & Base (5) & wilson & time\_delta & class-weighted & $0.137_{\pm 0.003}$ & $0.765_{\pm 0.007}$ & $0.232_{\pm 0.004}$ & -- \\
 \addlinespace
-Internal system & RF & Base (5) & wardbeck & fixed\_window & random & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
+Internal system & RF & Base (5) & wilson & cscas\_grouping & class-weighted & $0.068_{\pm 0.001}$ & $0.516_{\pm 0.058}$ & $0.120_{\pm 0.002}$ & -- \\
 \addlinespace
-Internal system & RF & Base (5) & wardbeck & time\_delta & random & $0.009_{\pm 0.010}$ & $0.024_{\pm 0.031}$ & $0.012_{\pm 0.014}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
+Internal system & XGBoost & Base (5) & fox & fixed\_window & class-weighted & $0.385_{\pm 0.000}$ & $0.695_{\pm 0.000}$ & $0.495_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal system & RF & Base (5) & wardbeck & cscas\_grouping & random & $0.078_{\pm 0.003}$ & $0.465_{\pm 0.077}$ & $0.133_{\pm 0.003}$ & -- \\
- &  &  &  &  & class-weighted & $0.080_{\pm 0.000}$ & $0.415_{\pm 0.000}$ & $0.134_{\pm 0.000}$ & -- \\
+Internal system & XGBoost & Base (5) & fox & time\_delta & class-weighted & $0.085_{\pm 0.000}$ & $0.600_{\pm 0.000}$ & $0.149_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal system & RF & Base (5) & wheeler & fixed\_window & random & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
+Internal system & XGBoost & Base (5) & fox & cscas\_grouping & class-weighted & $0.070_{\pm 0.000}$ & $0.471_{\pm 0.000}$ & $0.122_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal system & RF & Base (5) & wheeler & time\_delta & random & $0.004_{\pm 0.007}$ & $0.036_{\pm 0.054}$ & $0.008_{\pm 0.012}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
+Internal system & XGBoost & Base (5) & fox & alertbert & class-weighted & $0.848_{\pm 0.000}$ & $0.881_{\pm 0.000}$ & $0.864_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal system & RF & Base (5) & wheeler & cscas\_grouping & random & $0.035_{\pm 0.006}$ & $0.554_{\pm 0.133}$ & $0.066_{\pm 0.011}$ & -- \\
- &  &  &  &  & class-weighted & $0.034_{\pm 0.001}$ & $0.465_{\pm 0.068}$ & $0.064_{\pm 0.001}$ & -- \\
+Internal system & XGBoost & Base (5) & fox & deepcase & class-weighted & $0.970_{\pm 0.000}$ & $0.984_{\pm 0.000}$ & $0.977_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal system & RF & Base (5) & wilson & fixed\_window & random & $0.328_{\pm 0.078}$ & $0.682_{\pm 0.214}$ & $0.442_{\pm 0.116}$ & -- \\
- &  &  &  &  & class-weighted & $0.142_{\pm 0.001}$ & $0.216_{\pm 0.002}$ & $0.171_{\pm 0.002}$ & -- \\
+Internal system & XGBoost & Base (5) & russellmitchell & deepcase & class-weighted & $1.000_{\pm 0.000}$ & $0.805_{\pm 0.000}$ & $0.892_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal system & RF & Base (5) & wilson & time\_delta & random & $0.145_{\pm 0.003}$ & $0.964_{\pm 0.017}$ & $0.252_{\pm 0.003}$ & -- \\
- &  &  &  &  & class-weighted & $0.137_{\pm 0.003}$ & $0.765_{\pm 0.007}$ & $0.232_{\pm 0.004}$ & -- \\
+Internal system & XGBoost & Base (5) & shaw & cscas\_grouping & class-weighted & $0.036_{\pm 0.000}$ & $0.468_{\pm 0.000}$ & $0.066_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal system & RF & Base (5) & wilson & cscas\_grouping & random & $0.075_{\pm 0.007}$ & $0.549_{\pm 0.078}$ & $0.132_{\pm 0.012}$ & -- \\
- &  &  &  &  & class-weighted & $0.068_{\pm 0.001}$ & $0.516_{\pm 0.058}$ & $0.120_{\pm 0.002}$ & -- \\
+Internal system & XGBoost & Base (5) & wardbeck & cscas\_grouping & class-weighted & $0.080_{\pm 0.000}$ & $0.415_{\pm 0.000}$ & $0.134_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal system & XGBoost & Base (5) & fox & fixed\_window & random & $0.408_{\pm 0.008}$ & $0.745_{\pm 0.020}$ & $0.527_{\pm 0.011}$ & -- \\
- &  &  &  &  & class-weighted & $0.385_{\pm 0.000}$ & $0.695_{\pm 0.000}$ & $0.495_{\pm 0.000}$ & -- \\
+Internal system & XGBoost & Base (5) & wheeler & cscas\_grouping & class-weighted & $0.033_{\pm 0.000}$ & $0.571_{\pm 0.000}$ & $0.063_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal system & XGBoost & Base (5) & fox & time\_delta & random & $0.096_{\pm 0.006}$ & $0.740_{\pm 0.060}$ & $0.169_{\pm 0.011}$ & -- \\
- &  &  &  &  & class-weighted & $0.085_{\pm 0.000}$ & $0.600_{\pm 0.000}$ & $0.149_{\pm 0.000}$ & -- \\
+Internal system & XGBoost & Base (5) & wilson & fixed\_window & class-weighted & $0.148_{\pm 0.000}$ & $0.231_{\pm 0.000}$ & $0.181_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal system & XGBoost & Base (5) & fox & cscas\_grouping & random & $0.081_{\pm 0.015}$ & $0.541_{\pm 0.165}$ & $0.140_{\pm 0.029}$ & -- \\
- &  &  &  &  & class-weighted & $0.070_{\pm 0.000}$ & $0.471_{\pm 0.000}$ & $0.122_{\pm 0.000}$ & -- \\
+Internal system & XGBoost & Base (5) & wilson & time\_delta & class-weighted & $0.139_{\pm 0.000}$ & $0.831_{\pm 0.000}$ & $0.238_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal system & XGBoost & Base (5) & fox & alertbert & random & $0.842_{\pm 0.023}$ & $0.882_{\pm 0.007}$ & $0.862_{\pm 0.011}$ & -- \\
- &  &  &  &  & class-weighted & $0.848_{\pm 0.000}$ & $0.881_{\pm 0.000}$ & $0.864_{\pm 0.000}$ & -- \\
-\addlinespace
-Internal system & XGBoost & Base (5) & fox & deepcase & random & $0.970_{\pm 0.000}$ & $0.983_{\pm 0.001}$ & $0.976_{\pm 0.000}$ & -- \\
- &  &  &  &  & class-weighted & $0.970_{\pm 0.000}$ & $0.984_{\pm 0.000}$ & $0.977_{\pm 0.000}$ & -- \\
-\addlinespace
-Internal system & XGBoost & Base (5) & russellmitchell & deepcase & random & $0.990_{\pm 0.006}$ & $0.860_{\pm 0.078}$ & $0.919_{\pm 0.043}$ & -- \\
- &  &  &  &  & class-weighted & $1.000_{\pm 0.000}$ & $0.805_{\pm 0.000}$ & $0.892_{\pm 0.000}$ & -- \\
-\addlinespace
-Internal system & XGBoost & Base (5) & shaw & fixed\_window & random & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
-\addlinespace
-Internal system & XGBoost & Base (5) & shaw & time\_delta & random & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
-\addlinespace
-Internal system & XGBoost & Base (5) & shaw & cscas\_grouping & random & $0.041_{\pm 0.003}$ & $0.626_{\pm 0.021}$ & $0.076_{\pm 0.005}$ & -- \\
- &  &  &  &  & class-weighted & $0.036_{\pm 0.000}$ & $0.468_{\pm 0.000}$ & $0.066_{\pm 0.000}$ & -- \\
-\addlinespace
-Internal system & XGBoost & Base (5) & wardbeck & fixed\_window & random & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
-\addlinespace
-Internal system & XGBoost & Base (5) & wardbeck & time\_delta & random & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
-\addlinespace
-Internal system & XGBoost & Base (5) & wardbeck & cscas\_grouping & random & $0.079_{\pm 0.003}$ & $0.401_{\pm 0.098}$ & $0.131_{\pm 0.005}$ & -- \\
- &  &  &  &  & class-weighted & $0.080_{\pm 0.000}$ & $0.415_{\pm 0.000}$ & $0.134_{\pm 0.000}$ & -- \\
-\addlinespace
-Internal system & XGBoost & Base (5) & wheeler & fixed\_window & random & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
-\addlinespace
-Internal system & XGBoost & Base (5) & wheeler & time\_delta & random & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
-\addlinespace
-Internal system & XGBoost & Base (5) & wheeler & cscas\_grouping & random & $0.035_{\pm 0.005}$ & $0.548_{\pm 0.147}$ & $0.066_{\pm 0.010}$ & -- \\
- &  &  &  &  & class-weighted & $0.033_{\pm 0.000}$ & $0.571_{\pm 0.000}$ & $0.063_{\pm 0.000}$ & -- \\
-\addlinespace
-Internal system & XGBoost & Base (5) & wilson & fixed\_window & random & $0.338_{\pm 0.089}$ & $0.716_{\pm 0.263}$ & $0.458_{\pm 0.138}$ & -- \\
- &  &  &  &  & class-weighted & $0.148_{\pm 0.000}$ & $0.231_{\pm 0.000}$ & $0.181_{\pm 0.000}$ & -- \\
-\addlinespace
-Internal system & XGBoost & Base (5) & wilson & time\_delta & random & $0.155_{\pm 0.014}$ & $0.960_{\pm 0.028}$ & $0.267_{\pm 0.022}$ & -- \\
- &  &  &  &  & class-weighted & $0.139_{\pm 0.000}$ & $0.831_{\pm 0.000}$ & $0.238_{\pm 0.000}$ & -- \\
-\addlinespace
-Internal system & XGBoost & Base (5) & wilson & cscas\_grouping & random & $0.078_{\pm 0.008}$ & $0.539_{\pm 0.066}$ & $0.136_{\pm 0.014}$ & -- \\
- &  &  &  &  & class-weighted & $0.066_{\pm 0.000}$ & $0.582_{\pm 0.000}$ & $0.119_{\pm 0.000}$ & -- \\
+Internal system & XGBoost & Base (5) & wilson & cscas\_grouping & class-weighted & $0.066_{\pm 0.000}$ & $0.582_{\pm 0.000}$ & $0.119_{\pm 0.000}$ & -- \\
 \midrule
-Internal + mining & RF & Base (5) + mined & fox & fixed\_window & random & $0.400_{\pm 0.012}$ & $0.717_{\pm 0.013}$ & $0.513_{\pm 0.011}$ & -- \\
- &  &  &  &  & class-weighted & $0.427_{\pm 0.009}$ & $0.689_{\pm 0.002}$ & $0.527_{\pm 0.007}$ & -- \\
+Internal + mining & RF & Base (5) + mined & fox & fixed\_window & class-weighted & $0.427_{\pm 0.009}$ & $0.689_{\pm 0.002}$ & $0.527_{\pm 0.007}$ & -- \\
 \addlinespace
-Internal + mining & RF & Base (5) + mined & fox & time\_delta & random & $0.087_{\pm 0.003}$ & $0.770_{\pm 0.062}$ & $0.157_{\pm 0.007}$ & -- \\
- &  &  &  &  & class-weighted & $0.076_{\pm 0.002}$ & $0.495_{\pm 0.011}$ & $0.132_{\pm 0.003}$ & -- \\
+Internal + mining & RF & Base (5) + mined & fox & time\_delta & class-weighted & $0.076_{\pm 0.002}$ & $0.495_{\pm 0.011}$ & $0.132_{\pm 0.003}$ & -- \\
 \addlinespace
-Internal + mining & RF & Base (5) + mined & fox & cscas\_grouping & random & $0.081_{\pm 0.016}$ & $0.448_{\pm 0.152}$ & $0.135_{\pm 0.026}$ & -- \\
- &  &  &  &  & class-weighted & $0.078_{\pm 0.014}$ & $0.167_{\pm 0.078}$ & $0.099_{\pm 0.008}$ & -- \\
+Internal + mining & RF & Base (5) + mined & fox & cscas\_grouping & class-weighted & $0.078_{\pm 0.014}$ & $0.167_{\pm 0.078}$ & $0.099_{\pm 0.008}$ & -- \\
 \addlinespace
-Internal + mining & RF & Base (5) + mined & fox & alertbert & random & $0.760_{\pm 0.059}$ & $0.875_{\pm 0.005}$ & $0.812_{\pm 0.033}$ & -- \\
- &  &  &  &  & class-weighted & $0.717_{\pm 0.001}$ & $0.877_{\pm 0.001}$ & $0.789_{\pm 0.001}$ & -- \\
+Internal + mining & RF & Base (5) + mined & fox & alertbert & class-weighted & $0.717_{\pm 0.001}$ & $0.877_{\pm 0.001}$ & $0.789_{\pm 0.001}$ & -- \\
 \addlinespace
-Internal + mining & RF & Base (5) + mined & fox & deepcase & random & $0.992_{\pm 0.007}$ & $0.977_{\pm 0.003}$ & $0.984_{\pm 0.003}$ & -- \\
- &  &  &  &  & class-weighted & $0.980_{\pm 0.000}$ & $0.983_{\pm 0.002}$ & $0.981_{\pm 0.001}$ & -- \\
+Internal + mining & RF & Base (5) + mined & fox & deepcase & class-weighted & $0.980_{\pm 0.000}$ & $0.983_{\pm 0.002}$ & $0.981_{\pm 0.001}$ & -- \\
 \addlinespace
-Internal + mining & RF & Base (5) + mined & russellmitchell & deepcase & random & $0.981_{\pm 0.008}$ & $0.902_{\pm 0.048}$ & $0.940_{\pm 0.030}$ & -- \\
- &  &  &  &  & class-weighted & $1.000_{\pm 0.000}$ & $0.798_{\pm 0.008}$ & $0.887_{\pm 0.005}$ & -- \\
+Internal + mining & RF & Base (5) + mined & russellmitchell & deepcase & class-weighted & $1.000_{\pm 0.000}$ & $0.798_{\pm 0.008}$ & $0.887_{\pm 0.005}$ & -- \\
 \addlinespace
-Internal + mining & RF & Base (5) + mined & shaw & fixed\_window & random & $0.008_{\pm 0.017}$ & $0.013_{\pm 0.030}$ & $0.010_{\pm 0.022}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
+Internal + mining & RF & Base (5) + mined & shaw & cscas\_grouping & class-weighted & $0.012_{\pm 0.001}$ & $0.052_{\pm 0.000}$ & $0.019_{\pm 0.001}$ & -- \\
 \addlinespace
-Internal + mining & RF & Base (5) + mined & shaw & time\_delta & random & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
+Internal + mining & RF & Base (5) + mined & wardbeck & cscas\_grouping & class-weighted & $0.068_{\pm 0.003}$ & $0.241_{\pm 0.006}$ & $0.106_{\pm 0.003}$ & -- \\
 \addlinespace
-Internal + mining & RF & Base (5) + mined & shaw & cscas\_grouping & random & $0.015_{\pm 0.004}$ & $0.096_{\pm 0.034}$ & $0.026_{\pm 0.008}$ & -- \\
- &  &  &  &  & class-weighted & $0.012_{\pm 0.001}$ & $0.052_{\pm 0.000}$ & $0.019_{\pm 0.001}$ & -- \\
+Internal + mining & RF & Base (5) + mined & wheeler & cscas\_grouping & class-weighted & $0.038_{\pm 0.001}$ & $0.456_{\pm 0.007}$ & $0.069_{\pm 0.001}$ & -- \\
 \addlinespace
-Internal + mining & RF & Base (5) + mined & wardbeck & fixed\_window & random & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
+Internal + mining & RF & Base (5) + mined & wilson & fixed\_window & class-weighted & $0.146_{\pm 0.000}$ & $0.215_{\pm 0.001}$ & $0.174_{\pm 0.001}$ & -- \\
 \addlinespace
-Internal + mining & RF & Base (5) + mined & wardbeck & time\_delta & random & $0.016_{\pm 0.019}$ & $0.058_{\pm 0.078}$ & $0.025_{\pm 0.030}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
+Internal + mining & RF & Base (5) + mined & wilson & time\_delta & class-weighted & $0.138_{\pm 0.002}$ & $0.760_{\pm 0.000}$ & $0.234_{\pm 0.002}$ & -- \\
 \addlinespace
-Internal + mining & RF & Base (5) + mined & wardbeck & cscas\_grouping & random & $0.066_{\pm 0.004}$ & $0.260_{\pm 0.027}$ & $0.105_{\pm 0.007}$ & -- \\
- &  &  &  &  & class-weighted & $0.068_{\pm 0.003}$ & $0.241_{\pm 0.006}$ & $0.106_{\pm 0.003}$ & -- \\
+Internal + mining & RF & Base (5) + mined & wilson & cscas\_grouping & class-weighted & $0.074_{\pm 0.001}$ & $0.523_{\pm 0.018}$ & $0.130_{\pm 0.001}$ & -- \\
 \addlinespace
-Internal + mining & RF & Base (5) + mined & wheeler & fixed\_window & random & $0.333_{\pm 0.300}$ & $0.533_{\pm 0.484}$ & $0.410_{\pm 0.371}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
+Internal + mining & LogReg & Base (5) + mined & fox & fixed\_window & class-weighted & $0.899_{\pm 0.000}$ & $0.668_{\pm 0.000}$ & $0.766_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal + mining & RF & Base (5) + mined & wheeler & time\_delta & random & $0.013_{\pm 0.006}$ & $0.133_{\pm 0.073}$ & $0.024_{\pm 0.010}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
+Internal + mining & LogReg & Base (5) + mined & fox & time\_delta & class-weighted & $0.011_{\pm 0.000}$ & $0.200_{\pm 0.000}$ & $0.021_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal + mining & RF & Base (5) + mined & wheeler & cscas\_grouping & random & $0.035_{\pm 0.006}$ & $0.520_{\pm 0.064}$ & $0.066_{\pm 0.010}$ & -- \\
- &  &  &  &  & class-weighted & $0.038_{\pm 0.001}$ & $0.456_{\pm 0.007}$ & $0.069_{\pm 0.001}$ & -- \\
+Internal + mining & LogReg & Base (5) + mined & fox & cscas\_grouping & class-weighted & $0.114_{\pm 0.000}$ & $0.064_{\pm 0.000}$ & $0.082_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal + mining & RF & Base (5) + mined & wilson & fixed\_window & random & $0.411_{\pm 0.042}$ & $0.923_{\pm 0.124}$ & $0.568_{\pm 0.063}$ & -- \\
- &  &  &  &  & class-weighted & $0.146_{\pm 0.000}$ & $0.215_{\pm 0.001}$ & $0.174_{\pm 0.001}$ & -- \\
+Internal + mining & LogReg & Base (5) + mined & fox & alertbert & class-weighted & $0.972_{\pm 0.000}$ & $0.841_{\pm 0.000}$ & $0.902_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal + mining & RF & Base (5) + mined & wilson & time\_delta & random & $0.144_{\pm 0.004}$ & $0.947_{\pm 0.011}$ & $0.250_{\pm 0.006}$ & -- \\
- &  &  &  &  & class-weighted & $0.138_{\pm 0.002}$ & $0.760_{\pm 0.000}$ & $0.234_{\pm 0.002}$ & -- \\
+Internal + mining & LogReg & Base (5) + mined & fox & deepcase & class-weighted & $0.991_{\pm 0.000}$ & $0.981_{\pm 0.000}$ & $0.986_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal + mining & RF & Base (5) + mined & wilson & cscas\_grouping & random & $0.084_{\pm 0.004}$ & $0.634_{\pm 0.080}$ & $0.149_{\pm 0.007}$ & -- \\
- &  &  &  &  & class-weighted & $0.074_{\pm 0.001}$ & $0.523_{\pm 0.018}$ & $0.130_{\pm 0.001}$ & -- \\
+Internal + mining & LogReg & Base (5) + mined & russellmitchell & deepcase & class-weighted & $0.976_{\pm 0.000}$ & $0.500_{\pm 0.000}$ & $0.661_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal + mining & LogReg & Base (5) + mined & fox & fixed\_window & random & $0.879_{\pm 0.020}$ & $0.668_{\pm 0.000}$ & $0.759_{\pm 0.007}$ & -- \\
- &  &  &  &  & class-weighted & $0.899_{\pm 0.000}$ & $0.668_{\pm 0.000}$ & $0.766_{\pm 0.000}$ & -- \\
+Internal + mining & LogReg & Base (5) + mined & shaw & time\_delta & class-weighted & $0.012_{\pm 0.000}$ & $0.011_{\pm 0.000}$ & $0.011_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal + mining & LogReg & Base (5) + mined & fox & time\_delta & random & $0.015_{\pm 0.004}$ & $0.270_{\pm 0.069}$ & $0.028_{\pm 0.007}$ & -- \\
- &  &  &  &  & class-weighted & $0.011_{\pm 0.000}$ & $0.200_{\pm 0.000}$ & $0.021_{\pm 0.000}$ & -- \\
+Internal + mining & LogReg & Base (5) + mined & shaw & cscas\_grouping & class-weighted & $0.019_{\pm 0.000}$ & $0.117_{\pm 0.000}$ & $0.033_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal + mining & LogReg & Base (5) + mined & fox & cscas\_grouping & random & $0.107_{\pm 0.026}$ & $0.186_{\pm 0.163}$ & $0.112_{\pm 0.044}$ & -- \\
- &  &  &  &  & class-weighted & $0.114_{\pm 0.000}$ & $0.064_{\pm 0.000}$ & $0.082_{\pm 0.000}$ & -- \\
+Internal + mining & LogReg & Base (5) + mined & wardbeck & cscas\_grouping & class-weighted & $0.066_{\pm 0.000}$ & $0.265_{\pm 0.000}$ & $0.105_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal + mining & LogReg & Base (5) + mined & fox & alertbert & random & $0.970_{\pm 0.001}$ & $0.841_{\pm 0.001}$ & $0.901_{\pm 0.001}$ & -- \\
- &  &  &  &  & class-weighted & $0.972_{\pm 0.000}$ & $0.841_{\pm 0.000}$ & $0.902_{\pm 0.000}$ & -- \\
+Internal + mining & LogReg & Base (5) + mined & wheeler & fixed\_window & class-weighted & $0.620_{\pm 0.000}$ & $0.907_{\pm 0.000}$ & $0.737_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal + mining & LogReg & Base (5) + mined & fox & deepcase & random & $0.990_{\pm 0.001}$ & $0.981_{\pm 0.000}$ & $0.986_{\pm 0.001}$ & -- \\
- &  &  &  &  & class-weighted & $0.991_{\pm 0.000}$ & $0.981_{\pm 0.000}$ & $0.986_{\pm 0.000}$ & -- \\
+Internal + mining & LogReg & Base (5) + mined & wheeler & time\_delta & class-weighted & $0.033_{\pm 0.000}$ & $0.303_{\pm 0.000}$ & $0.060_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal + mining & LogReg & Base (5) + mined & russellmitchell & deepcase & random & $0.959_{\pm 0.023}$ & $0.693_{\pm 0.084}$ & $0.802_{\pm 0.060}$ & -- \\
- &  &  &  &  & class-weighted & $0.976_{\pm 0.000}$ & $0.500_{\pm 0.000}$ & $0.661_{\pm 0.000}$ & -- \\
+Internal + mining & LogReg & Base (5) + mined & wheeler & cscas\_grouping & class-weighted & $0.030_{\pm 0.000}$ & $0.588_{\pm 0.000}$ & $0.057_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal + mining & LogReg & Base (5) + mined & shaw & fixed\_window & random & $0.029_{\pm 0.025}$ & $0.083_{\pm 0.071}$ & $0.043_{\pm 0.036}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
+Internal + mining & LogReg & Base (5) + mined & wilson & fixed\_window & class-weighted & $0.050_{\pm 0.000}$ & $0.210_{\pm 0.000}$ & $0.081_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal + mining & LogReg & Base (5) + mined & shaw & time\_delta & random & $0.027_{\pm 0.021}$ & $0.073_{\pm 0.057}$ & $0.039_{\pm 0.030}$ & -- \\
- &  &  &  &  & class-weighted & $0.012_{\pm 0.000}$ & $0.011_{\pm 0.000}$ & $0.011_{\pm 0.000}$ & -- \\
+Internal + mining & LogReg & Base (5) + mined & wilson & time\_delta & class-weighted & $0.025_{\pm 0.000}$ & $0.494_{\pm 0.000}$ & $0.048_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal + mining & LogReg & Base (5) + mined & shaw & cscas\_grouping & random & $0.021_{\pm 0.010}$ & $0.145_{\pm 0.094}$ & $0.036_{\pm 0.018}$ & -- \\
- &  &  &  &  & class-weighted & $0.019_{\pm 0.000}$ & $0.117_{\pm 0.000}$ & $0.033_{\pm 0.000}$ & -- \\
+Internal + mining & LogReg & Base (5) + mined & wilson & cscas\_grouping & class-weighted & $0.071_{\pm 0.000}$ & $0.636_{\pm 0.000}$ & $0.127_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal + mining & LogReg & Base (5) + mined & wardbeck & fixed\_window & random & $0.028_{\pm 0.015}$ & $0.059_{\pm 0.035}$ & $0.038_{\pm 0.021}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
+Internal + mining & XGBoost & Base (5) + mined & fox & fixed\_window & class-weighted & $0.409_{\pm 0.000}$ & $0.712_{\pm 0.000}$ & $0.519_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal + mining & LogReg & Base (5) + mined & wardbeck & time\_delta & random & $0.025_{\pm 0.022}$ & $0.068_{\pm 0.058}$ & $0.037_{\pm 0.031}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
+Internal + mining & XGBoost & Base (5) + mined & fox & time\_delta & class-weighted & $0.086_{\pm 0.000}$ & $0.600_{\pm 0.000}$ & $0.150_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal + mining & LogReg & Base (5) + mined & wardbeck & cscas\_grouping & random & $0.065_{\pm 0.004}$ & $0.246_{\pm 0.007}$ & $0.103_{\pm 0.004}$ & -- \\
- &  &  &  &  & class-weighted & $0.066_{\pm 0.000}$ & $0.265_{\pm 0.000}$ & $0.105_{\pm 0.000}$ & -- \\
+Internal + mining & XGBoost & Base (5) + mined & fox & cscas\_grouping & class-weighted & $0.060_{\pm 0.000}$ & $0.236_{\pm 0.000}$ & $0.095_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal + mining & LogReg & Base (5) + mined & wheeler & fixed\_window & random & $0.440_{\pm 0.230}$ & $0.761_{\pm 0.409}$ & $0.557_{\pm 0.295}$ & -- \\
- &  &  &  &  & class-weighted & $0.620_{\pm 0.000}$ & $0.907_{\pm 0.000}$ & $0.737_{\pm 0.000}$ & -- \\
+Internal + mining & XGBoost & Base (5) + mined & fox & alertbert & class-weighted & $0.720_{\pm 0.000}$ & $0.869_{\pm 0.000}$ & $0.788_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal + mining & LogReg & Base (5) + mined & wheeler & time\_delta & random & $0.031_{\pm 0.009}$ & $0.418_{\pm 0.127}$ & $0.058_{\pm 0.018}$ & -- \\
- &  &  &  &  & class-weighted & $0.033_{\pm 0.000}$ & $0.303_{\pm 0.000}$ & $0.060_{\pm 0.000}$ & -- \\
+Internal + mining & XGBoost & Base (5) + mined & fox & deepcase & class-weighted & $0.983_{\pm 0.000}$ & $0.978_{\pm 0.000}$ & $0.981_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal + mining & LogReg & Base (5) + mined & wheeler & cscas\_grouping & random & $0.026_{\pm 0.008}$ & $0.437_{\pm 0.245}$ & $0.048_{\pm 0.018}$ & -- \\
- &  &  &  &  & class-weighted & $0.030_{\pm 0.000}$ & $0.588_{\pm 0.000}$ & $0.057_{\pm 0.000}$ & -- \\
+Internal + mining & XGBoost & Base (5) + mined & russellmitchell & deepcase & class-weighted & $1.000_{\pm 0.000}$ & $0.805_{\pm 0.000}$ & $0.892_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal + mining & LogReg & Base (5) + mined & wilson & fixed\_window & random & $0.099_{\pm 0.077}$ & $0.461_{\pm 0.393}$ & $0.163_{\pm 0.128}$ & -- \\
- &  &  &  &  & class-weighted & $0.050_{\pm 0.000}$ & $0.210_{\pm 0.000}$ & $0.081_{\pm 0.000}$ & -- \\
+Internal + mining & XGBoost & Base (5) + mined & shaw & cscas\_grouping & class-weighted & $0.014_{\pm 0.000}$ & $0.078_{\pm 0.000}$ & $0.024_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal + mining & LogReg & Base (5) + mined & wilson & time\_delta & random & $0.025_{\pm 0.001}$ & $0.482_{\pm 0.037}$ & $0.047_{\pm 0.002}$ & -- \\
- &  &  &  &  & class-weighted & $0.025_{\pm 0.000}$ & $0.494_{\pm 0.000}$ & $0.048_{\pm 0.000}$ & -- \\
+Internal + mining & XGBoost & Base (5) + mined & wardbeck & cscas\_grouping & class-weighted & $0.063_{\pm 0.000}$ & $0.252_{\pm 0.000}$ & $0.100_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal + mining & LogReg & Base (5) + mined & wilson & cscas\_grouping & random & $0.071_{\pm 0.001}$ & $0.661_{\pm 0.019}$ & $0.129_{\pm 0.002}$ & -- \\
- &  &  &  &  & class-weighted & $0.071_{\pm 0.000}$ & $0.636_{\pm 0.000}$ & $0.127_{\pm 0.000}$ & -- \\
+Internal + mining & XGBoost & Base (5) + mined & wheeler & cscas\_grouping & class-weighted & $0.036_{\pm 0.000}$ & $0.473_{\pm 0.000}$ & $0.068_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal + mining & XGBoost & Base (5) + mined & fox & fixed\_window & random & $0.408_{\pm 0.016}$ & $0.743_{\pm 0.019}$ & $0.527_{\pm 0.014}$ & -- \\
- &  &  &  &  & class-weighted & $0.409_{\pm 0.000}$ & $0.712_{\pm 0.000}$ & $0.519_{\pm 0.000}$ & -- \\
+Internal + mining & XGBoost & Base (5) + mined & wilson & fixed\_window & class-weighted & $0.152_{\pm 0.000}$ & $0.229_{\pm 0.000}$ & $0.182_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal + mining & XGBoost & Base (5) + mined & fox & time\_delta & random & $0.095_{\pm 0.007}$ & $0.735_{\pm 0.068}$ & $0.168_{\pm 0.013}$ & -- \\
- &  &  &  &  & class-weighted & $0.086_{\pm 0.000}$ & $0.600_{\pm 0.000}$ & $0.150_{\pm 0.000}$ & -- \\
+Internal + mining & XGBoost & Base (5) + mined & wilson & time\_delta & class-weighted & $0.140_{\pm 0.000}$ & $0.818_{\pm 0.000}$ & $0.239_{\pm 0.000}$ & -- \\
 \addlinespace
-Internal + mining & XGBoost & Base (5) + mined & fox & cscas\_grouping & random & $0.102_{\pm 0.016}$ & $0.503_{\pm 0.214}$ & $0.166_{\pm 0.027}$ & -- \\
- &  &  &  &  & class-weighted & $0.060_{\pm 0.000}$ & $0.236_{\pm 0.000}$ & $0.095_{\pm 0.000}$ & -- \\
-\addlinespace
-Internal + mining & XGBoost & Base (5) + mined & fox & alertbert & random & $0.754_{\pm 0.053}$ & $0.880_{\pm 0.008}$ & $0.811_{\pm 0.030}$ & -- \\
- &  &  &  &  & class-weighted & $0.720_{\pm 0.000}$ & $0.869_{\pm 0.000}$ & $0.788_{\pm 0.000}$ & -- \\
-\addlinespace
-Internal + mining & XGBoost & Base (5) + mined & fox & deepcase & random & $0.996_{\pm 0.007}$ & $0.971_{\pm 0.004}$ & $0.983_{\pm 0.002}$ & -- \\
- &  &  &  &  & class-weighted & $0.983_{\pm 0.000}$ & $0.978_{\pm 0.000}$ & $0.981_{\pm 0.000}$ & -- \\
-\addlinespace
-Internal + mining & XGBoost & Base (5) + mined & russellmitchell & deepcase & random & $0.989_{\pm 0.003}$ & $0.867_{\pm 0.072}$ & $0.923_{\pm 0.040}$ & -- \\
- &  &  &  &  & class-weighted & $1.000_{\pm 0.000}$ & $0.805_{\pm 0.000}$ & $0.892_{\pm 0.000}$ & -- \\
-\addlinespace
-Internal + mining & XGBoost & Base (5) + mined & shaw & fixed\_window & random & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
-\addlinespace
-Internal + mining & XGBoost & Base (5) + mined & shaw & time\_delta & random & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
-\addlinespace
-Internal + mining & XGBoost & Base (5) + mined & shaw & cscas\_grouping & random & $0.016_{\pm 0.005}$ & $0.109_{\pm 0.047}$ & $0.028_{\pm 0.009}$ & -- \\
- &  &  &  &  & class-weighted & $0.014_{\pm 0.000}$ & $0.078_{\pm 0.000}$ & $0.024_{\pm 0.000}$ & -- \\
-\addlinespace
-Internal + mining & XGBoost & Base (5) + mined & wardbeck & fixed\_window & random & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
-\addlinespace
-Internal + mining & XGBoost & Base (5) + mined & wardbeck & time\_delta & random & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
-\addlinespace
-Internal + mining & XGBoost & Base (5) + mined & wardbeck & cscas\_grouping & random & $0.072_{\pm 0.003}$ & $0.295_{\pm 0.093}$ & $0.114_{\pm 0.008}$ & -- \\
- &  &  &  &  & class-weighted & $0.063_{\pm 0.000}$ & $0.252_{\pm 0.000}$ & $0.100_{\pm 0.000}$ & -- \\
-\addlinespace
-Internal + mining & XGBoost & Base (5) + mined & wheeler & fixed\_window & random & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
-\addlinespace
-Internal + mining & XGBoost & Base (5) + mined & wheeler & time\_delta & random & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
-\addlinespace
-Internal + mining & XGBoost & Base (5) + mined & wheeler & cscas\_grouping & random & $0.040_{\pm 0.006}$ & $0.554_{\pm 0.146}$ & $0.075_{\pm 0.012}$ & -- \\
- &  &  &  &  & class-weighted & $0.036_{\pm 0.000}$ & $0.473_{\pm 0.000}$ & $0.068_{\pm 0.000}$ & -- \\
-\addlinespace
-Internal + mining & XGBoost & Base (5) + mined & wilson & fixed\_window & random & $0.392_{\pm 0.048}$ & $0.876_{\pm 0.148}$ & $0.541_{\pm 0.074}$ & -- \\
- &  &  &  &  & class-weighted & $0.152_{\pm 0.000}$ & $0.229_{\pm 0.000}$ & $0.182_{\pm 0.000}$ & -- \\
-\addlinespace
-Internal + mining & XGBoost & Base (5) + mined & wilson & time\_delta & random & $0.154_{\pm 0.014}$ & $0.952_{\pm 0.040}$ & $0.265_{\pm 0.022}$ & -- \\
- &  &  &  &  & class-weighted & $0.140_{\pm 0.000}$ & $0.818_{\pm 0.000}$ & $0.239_{\pm 0.000}$ & -- \\
-\addlinespace
-Internal + mining & XGBoost & Base (5) + mined & wilson & cscas\_grouping & random & $0.085_{\pm 0.004}$ & $0.619_{\pm 0.072}$ & $0.149_{\pm 0.006}$ & -- \\
- &  &  &  &  & class-weighted & $0.073_{\pm 0.000}$ & $0.539_{\pm 0.000}$ & $0.129_{\pm 0.000}$ & -- \\
+Internal + mining & XGBoost & Base (5) + mined & wilson & cscas\_grouping & class-weighted & $0.073_{\pm 0.000}$ & $0.539_{\pm 0.000}$ & $0.129_{\pm 0.000}$ & -- \\
 \midrule
-LLM (general) & DistilBERT & tokens as text & fox & fixed\_window & random & $0.387_{\pm 0.008}$ & $0.808_{\pm 0.098}$ & $0.522_{\pm 0.023}$ & -- \\
- &  &  &  &  & class-weighted & $1.000_{\pm 0.000}$ & $0.658_{\pm 0.004}$ & $0.793_{\pm 0.003}$ & -- \\
+LLM (general) & DistilBERT & tokens as text & fox & fixed\_window & class-weighted & $1.000_{\pm 0.000}$ & $0.658_{\pm 0.004}$ & $0.793_{\pm 0.003}$ & -- \\
 \addlinespace
-LLM (general) & DistilBERT & tokens as text & fox & time\_delta & random & $0.051_{\pm 0.025}$ & $0.500_{\pm 0.047}$ & $0.091_{\pm 0.042}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
+LLM (general) & DistilBERT & tokens as text & fox & cscas\_grouping & class-weighted & $0.272_{\pm 0.373}$ & $0.060_{\pm 0.083}$ & $0.098_{\pm 0.135}$ & -- \\
 \addlinespace
-LLM (general) & DistilBERT & tokens as text & fox & cscas\_grouping & random & $0.185_{\pm 0.116}$ & $0.678_{\pm 0.393}$ & $0.288_{\pm 0.173}$ & -- \\
- &  &  &  &  & class-weighted & $0.272_{\pm 0.373}$ & $0.060_{\pm 0.083}$ & $0.098_{\pm 0.135}$ & -- \\
+LLM (general) & DistilBERT & tokens as text & fox & alertbert & class-weighted & $1.000_{\pm 0.000}$ & $0.831_{\pm 0.003}$ & $0.908_{\pm 0.002}$ & -- \\
 \addlinespace
-LLM (general) & DistilBERT & tokens as text & fox & alertbert & random & $0.780_{\pm 0.043}$ & $0.880_{\pm 0.021}$ & $0.826_{\pm 0.018}$ & -- \\
- &  &  &  &  & class-weighted & $1.000_{\pm 0.000}$ & $0.831_{\pm 0.003}$ & $0.908_{\pm 0.002}$ & -- \\
+LLM (general) & DistilBERT & tokens as text & fox & deepcase & class-weighted & $0.990_{\pm 0.005}$ & $0.976_{\pm 0.004}$ & $0.983_{\pm 0.001}$ & -- \\
 \addlinespace
-LLM (general) & DistilBERT & tokens as text & fox & deepcase & random & $0.996_{\pm 0.003}$ & $0.973_{\pm 0.003}$ & $0.985_{\pm 0.001}$ & -- \\
- &  &  &  &  & class-weighted & $0.990_{\pm 0.005}$ & $0.976_{\pm 0.004}$ & $0.983_{\pm 0.001}$ & -- \\
+LLM (general) & DistilBERT & tokens as text & russellmitchell & deepcase & class-weighted & $0.998_{\pm 0.003}$ & $0.805_{\pm 0.000}$ & $0.891_{\pm 0.001}$ & -- \\
 \addlinespace
-LLM (general) & DistilBERT & tokens as text & russellmitchell & deepcase & random & $0.994_{\pm 0.006}$ & $0.550_{\pm 0.392}$ & $0.629_{\pm 0.386}$ & -- \\
- &  &  &  &  & class-weighted & $0.998_{\pm 0.003}$ & $0.805_{\pm 0.000}$ & $0.891_{\pm 0.001}$ & -- \\
+LLM (domain-specific) & SecureBERT 2.0 & tokens as text & fox & fixed\_window & class-weighted & $1.000_{\pm 0.000}$ & $0.659_{\pm 0.000}$ & $0.795_{\pm 0.000}$ & -- \\
 \addlinespace
-LLM (general) & DistilBERT & tokens as text & shaw & fixed\_window & random & $0.008_{\pm 0.017}$ & $0.174_{\pm 0.379}$ & $0.016_{\pm 0.033}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
+LLM (domain-specific) & SecureBERT 2.0 & tokens as text & fox & cscas\_grouping & class-weighted & $0.508_{\pm 0.473}$ & $0.112_{\pm 0.151}$ & $0.166_{\pm 0.221}$ & -- \\
 \addlinespace
-LLM (general) & DistilBERT & tokens as text & shaw & time\_delta & random & $0.026_{\pm 0.015}$ & $0.560_{\pm 0.485}$ & $0.048_{\pm 0.030}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
+LLM (domain-specific) & SecureBERT 2.0 & tokens as text & fox & alertbert & class-weighted & $0.995_{\pm 0.006}$ & $0.832_{\pm 0.002}$ & $0.906_{\pm 0.002}$ & -- \\
 \addlinespace
-LLM (general) & DistilBERT & tokens as text & shaw & cscas\_grouping & random & $0.025_{\pm 0.024}$ & $0.405_{\pm 0.450}$ & $0.047_{\pm 0.045}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
+LLM (domain-specific) & SecureBERT 2.0 & tokens as text & fox & deepcase & class-weighted & $0.990_{\pm 0.007}$ & $0.976_{\pm 0.003}$ & $0.983_{\pm 0.003}$ & -- \\
 \addlinespace
-LLM (general) & DistilBERT & tokens as text & wardbeck & fixed\_window & random & $0.033_{\pm 0.034}$ & $0.230_{\pm 0.231}$ & $0.055_{\pm 0.054}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
+LLM (domain-specific) & SecureBERT 2.0 & tokens as text & russellmitchell & deepcase & class-weighted & $1.000_{\pm 0.000}$ & $0.766_{\pm 0.081}$ & $0.865_{\pm 0.055}$ & -- \\
 \addlinespace
-LLM (general) & DistilBERT & tokens as text & wardbeck & time\_delta & random & $0.026_{\pm 0.024}$ & $0.178_{\pm 0.197}$ & $0.044_{\pm 0.041}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
-\addlinespace
-LLM (general) & DistilBERT & tokens as text & wardbeck & cscas\_grouping & random & $0.029_{\pm 0.030}$ & $0.412_{\pm 0.517}$ & $0.054_{\pm 0.057}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
-\addlinespace
-LLM (general) & DistilBERT & tokens as text & wheeler & fixed\_window & random & $0.040_{\pm 0.072}$ & $0.055_{\pm 0.107}$ & $0.046_{\pm 0.086}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
-\addlinespace
-LLM (general) & DistilBERT & tokens as text & wheeler & time\_delta & random & $0.007_{\pm 0.012}$ & $0.079_{\pm 0.128}$ & $0.012_{\pm 0.021}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
-\addlinespace
-LLM (general) & DistilBERT & tokens as text & wheeler & cscas\_grouping & random & $0.072_{\pm 0.086}$ & $0.358_{\pm 0.418}$ & $0.105_{\pm 0.122}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
-\addlinespace
-LLM (general) & DistilBERT & tokens as text & wilson & fixed\_window & random & $0.410_{\pm 0.010}$ & $0.999_{\pm 0.002}$ & $0.581_{\pm 0.009}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
-\addlinespace
-LLM (general) & DistilBERT & tokens as text & wilson & time\_delta & random & $0.143_{\pm 0.001}$ & $0.995_{\pm 0.003}$ & $0.250_{\pm 0.002}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
-\addlinespace
-LLM (general) & DistilBERT & tokens as text & wilson & cscas\_grouping & random & $0.335_{\pm 0.023}$ & $0.979_{\pm 0.046}$ & $0.498_{\pm 0.018}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
-\addlinespace
-LLM (domain-specific) & SecureBERT 2.0 & tokens as text & fox & fixed\_window & random & $0.471_{\pm 0.108}$ & $0.747_{\pm 0.053}$ & $0.569_{\pm 0.069}$ & -- \\
- &  &  &  &  & class-weighted & $1.000_{\pm 0.000}$ & $0.659_{\pm 0.000}$ & $0.795_{\pm 0.000}$ & -- \\
-\addlinespace
-LLM (domain-specific) & SecureBERT 2.0 & tokens as text & fox & time\_delta & random & $0.048_{\pm 0.025}$ & $0.595_{\pm 0.206}$ & $0.087_{\pm 0.045}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
-\addlinespace
-LLM (domain-specific) & SecureBERT 2.0 & tokens as text & fox & cscas\_grouping & random & $0.129_{\pm 0.051}$ & $0.638_{\pm 0.149}$ & $0.207_{\pm 0.056}$ & -- \\
- &  &  &  &  & class-weighted & $0.508_{\pm 0.473}$ & $0.112_{\pm 0.151}$ & $0.166_{\pm 0.221}$ & -- \\
-\addlinespace
-LLM (domain-specific) & SecureBERT 2.0 & tokens as text & fox & alertbert & random & $0.800_{\pm 0.076}$ & $0.887_{\pm 0.025}$ & $0.839_{\pm 0.035}$ & -- \\
- &  &  &  &  & class-weighted & $0.995_{\pm 0.006}$ & $0.832_{\pm 0.002}$ & $0.906_{\pm 0.002}$ & -- \\
-\addlinespace
-LLM (domain-specific) & SecureBERT 2.0 & tokens as text & fox & deepcase & random & $0.991_{\pm 0.007}$ & $0.974_{\pm 0.003}$ & $0.982_{\pm 0.002}$ & -- \\
- &  &  &  &  & class-weighted & $0.990_{\pm 0.007}$ & $0.976_{\pm 0.003}$ & $0.983_{\pm 0.003}$ & -- \\
-\addlinespace
-LLM (domain-specific) & SecureBERT 2.0 & tokens as text & russellmitchell & deepcase & random & $0.709_{\pm 0.083}$ & $0.746_{\pm 0.130}$ & $0.723_{\pm 0.086}$ & -- \\
- &  &  &  &  & class-weighted & $1.000_{\pm 0.000}$ & $0.766_{\pm 0.081}$ & $0.865_{\pm 0.055}$ & -- \\
-\addlinespace
-LLM (domain-specific) & SecureBERT 2.0 & tokens as text & shaw & fixed\_window & random & $0.010_{\pm 0.009}$ & $0.031_{\pm 0.031}$ & $0.013_{\pm 0.009}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
-\addlinespace
-LLM (domain-specific) & SecureBERT 2.0 & tokens as text & shaw & time\_delta & random & $0.023_{\pm 0.011}$ & $0.136_{\pm 0.094}$ & $0.033_{\pm 0.011}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
-\addlinespace
-LLM (domain-specific) & SecureBERT 2.0 & tokens as text & shaw & cscas\_grouping & random & $0.029_{\pm 0.023}$ & $0.200_{\pm 0.183}$ & $0.050_{\pm 0.040}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
-\addlinespace
-LLM (domain-specific) & SecureBERT 2.0 & tokens as text & wardbeck & fixed\_window & random & $0.056_{\pm 0.023}$ & $0.301_{\pm 0.214}$ & $0.090_{\pm 0.038}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
-\addlinespace
-LLM (domain-specific) & SecureBERT 2.0 & tokens as text & wardbeck & time\_delta & random & $0.038_{\pm 0.009}$ & $0.351_{\pm 0.372}$ & $0.065_{\pm 0.017}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
-\addlinespace
-LLM (domain-specific) & SecureBERT 2.0 & tokens as text & wardbeck & cscas\_grouping & random & $0.063_{\pm 0.026}$ & $0.494_{\pm 0.296}$ & $0.108_{\pm 0.050}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
-\addlinespace
-LLM (domain-specific) & SecureBERT 2.0 & tokens as text & wheeler & fixed\_window & random & $0.152_{\pm 0.123}$ & $0.649_{\pm 0.393}$ & $0.236_{\pm 0.171}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
-\addlinespace
-LLM (domain-specific) & SecureBERT 2.0 & tokens as text & wheeler & time\_delta & random & $0.004_{\pm 0.004}$ & $0.164_{\pm 0.160}$ & $0.009_{\pm 0.008}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
-\addlinespace
-LLM (domain-specific) & SecureBERT 2.0 & tokens as text & wheeler & cscas\_grouping & random & $0.050_{\pm 0.014}$ & $0.765_{\pm 0.205}$ & $0.093_{\pm 0.023}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
-\addlinespace
-LLM (domain-specific) & SecureBERT 2.0 & tokens as text & wilson & fixed\_window & random & $0.416_{\pm 0.015}$ & $0.991_{\pm 0.010}$ & $0.586_{\pm 0.013}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
-\addlinespace
-LLM (domain-specific) & SecureBERT 2.0 & tokens as text & wilson & time\_delta & random & $0.143_{\pm 0.002}$ & $0.992_{\pm 0.011}$ & $0.250_{\pm 0.003}$ & -- \\
- &  &  &  &  & class-weighted & $0.069_{\pm 0.154}$ & $0.049_{\pm 0.110}$ & $0.058_{\pm 0.129}$ & -- \\
-\addlinespace
-LLM (domain-specific) & SecureBERT 2.0 & tokens as text & wilson & cscas\_grouping & random & $0.327_{\pm 0.008}$ & $0.938_{\pm 0.096}$ & $0.484_{\pm 0.019}$ & -- \\
- &  &  &  &  & class-weighted & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & $0.000_{\pm 0.000}$ & -- \\
+LLM (domain-specific) & SecureBERT 2.0 & tokens as text & wilson & time\_delta & class-weighted & $0.069_{\pm 0.154}$ & $0.049_{\pm 0.110}$ & $0.058_{\pm 0.129}$ & -- \\
 \addlinespace
 LLM (zero-shot) & Llama-3.1-8B & tokens as text & fox & fixed\_window & none & 0.316 & 0.677 & 0.431 & -- \\
 \addlinespace

@@ -129,6 +129,7 @@ def test_run_one_config_walks_every_step_and_skips_gracefully(monkeypatch):
         base_schema=object(),
         mining_settings_by_name={},
         mining_settings_path=Path("unused.yaml"),
+        scheme=rwf.WindowScheme("window0", 100),
     )
     assert explain_rows == []
     assert fidelity_rows == []
@@ -256,6 +257,7 @@ def test_fit_window_cscas_full_skips_mining_and_drops_scas_nowhere(
         mining_settings_path=Path("x.yaml"),
         threshold_mode="fixed",
         calibrated_recall_target=0.9,
+        scheme=rwf.WindowScheme("window0", len(rows)),
     )
     assert fit is not None
     assert _symbolic_stub["mine"] == 0  # cscas_full never mines
@@ -284,6 +286,7 @@ def test_fit_window_cscas_full_symbolic_mines_and_merges_bases(_symbolic_stub):
         mining_settings_path=Path("x.yaml"),
         threshold_mode="fixed",
         calibrated_recall_target=0.9,
+        scheme=rwf.WindowScheme("window0", len(rows)),
     )
     assert fit is not None
     assert _symbolic_stub["mine"] == 1  # mined once, on the full window
@@ -331,6 +334,7 @@ def test_fit_window_uses_fit_scored_model_for_class_weighting(monkeypatch):
         mining_settings_path=Path("x.yaml"),
         threshold_mode="fixed",
         calibrated_recall_target=0.9,
+        scheme=rwf.WindowScheme("window0", len(rows)),
     )
     assert fit is not None
     assert seen["model_name"] == "xgboost"
@@ -480,6 +484,7 @@ def test_run_one_config_explanations_use_wi_background_and_wi1_sample(monkeypatc
         base_schema=object(),
         mining_settings_by_name={},
         mining_settings_path=Path("unused.yaml"),
+        scheme=rwf.WindowScheme("window0", 100),
     )
 
     assert seen["background"]["f1"].tolist() == [0.9, 0.9]  # sampled from Wi (X_fit)
@@ -522,5 +527,6 @@ def test_run_one_config_flags_skip_shap_for_oneclass_models(monkeypatch):
         base_schema=object(),
         mining_settings_by_name={},
         mining_settings_path=Path("unused.yaml"),
+        scheme=rwf.WindowScheme("window0", 100),
     )
     assert fitted_model._skip_shap is True

@@ -367,6 +367,76 @@ class MonitorDriftConfig:
 
 
 @dataclass
+class MonitorAttachedConfig:
+    """Monitor Attached (thesis Sec. "Monitor Attached"): the reactive
+    counterpart to MonitorDriftConfig's observe-only walk. For each
+    shortlisted symbolic config (feature_set in {"symbolic",
+    "cscas_full_symbolic"} -- a baseline/cscas_full config has no mined
+    predicates for a DynamicSchema to evaluate, so it is skipped, same as
+    monitor_drift.py's implicit behavior), mine+fit once on W_src's train
+    split exactly like MonitorDriftConfig (same WindowScheme, so horizons
+    line up 1:1 with a monitor_drift.py / temporal_decay.py run using the
+    same source_split_mode). Unlike that experiment, every horizon's monitor
+    decision is actually acted on: a RETRAIN_ONLY streak refits the current
+    model (schema/Vk unchanged) on that horizon's own labeled rows; a
+    REMINE_AND_RETRAIN streak mines a brand-new schema+Vk (version bumped)
+    from that same horizon's rows and refits against it, and gets a fresh
+    MonitorState. A RETRAIN_ONLY action instead resets the existing state's
+    consecutive-elevation counters (deliberately, so the model isn't
+    retrained again every single subsequent horizon just because the same
+    still-drifted population keeps Signal 1 elevated) -- see
+    system_eval/monitor_attached.py's module docstring for the full
+    "what data does an on-trigger update train on" design decision.
+
+    psi_threshold/cal_threshold are NOT the signals module's placeholder
+    defaults here -- pass in the values selected by Drift Signal EDA's
+    threshold sweep (Analysis 3 in 03_monitor_signal_drift.ipynb)."""
+
+    scenario: str
+    shortlist_path: Path
+    train_frac_within_window: float = 0.7
+    source_split_mode: Literal["window0", "baseline_split"] = "window0"
+    source_split_time: str | None = None
+    mining_settings_path: Path = field(
+        default_factory=lambda: Path(
+            "src/thesis/configs/screening_mining_settings.yaml"
+        )
+    )
+    threshold_mode: Literal["fixed", "calibrated_recall"] = "fixed"
+    calibrated_recall_target: float = 0.90
+    cache_dir: Path = field(default_factory=lambda: CACHE_DIR)
+    grouping: GroupingConfig = field(default_factory=GroupingConfig)
+    alerts_json_path: Path | None = None
+    results_dir: Path | None = None
+    random_seed: int = 42
+    n_jobs: int = 4
+    # Monitor sensitivity -- passed straight through to run_monitor_window
+    # at every horizon. The threshold pair defaults to the signals module's
+    # own untuned starting values (PSI>0.1, drift>0.10); a real run should
+    # override both with the values Drift Signal EDA's sweep selected.
+    monitor_consecutive_windows: int = 3
+    monitor_min_samples_signal_2: int = 30
+    psi_threshold: float = 0.1
+    cal_threshold: float = 0.10
+    # System-operationality instrumentation. Per-horizon fast-route timing
+    # is a single batched encode+predict call over that horizon's incoming
+    # groups (cheap, always on) -- it gives a *mean* per-group cost, not a
+    # real per-instance distribution (a batched sklearn call is not N
+    # single-alert calls). For a genuine per-alert-group latency
+    # distribution (mean/p50/p95/p99), a fixed-size sample of individual
+    # single-row encode+predict calls is additionally timed once per
+    # config, written to latency_sample.csv. 0 disables it.
+    latency_sample_n: int = 200
+
+    def __post_init__(self) -> None:
+        if self.source_split_mode == "baseline_split" and not self.source_split_time:
+            raise ValueError(
+                "source_split_mode='baseline_split' requires source_split_time "
+                "(ISO8601, e.g. the CSCAS baseline's '2022-01-26 06:23:21+02:00')"
+            )
+
+
+@dataclass
 class ExperimentResult:
     scenario: str
     model_name: str

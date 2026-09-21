@@ -104,6 +104,108 @@ _EXPERIMENTS_DIR = _ROOT / "artifacts" / "experiments" / "monitor_drift"
 
 
 @dataclass(slots=True)
+class MinedSymbolicAndDynamicSchema:
+    schema: FeatureSchema
+    dynamic_schema: DynamicSchema
+
+
+def mine_symbolic_and_dynamic_schema(
+    train_rows_labeled: list[AlertGroup],
+    spec,
+    base_schema: FeatureSchema,
+    version: int,
+    schema_version_tag: str,
+) -> MinedSymbolicAndDynamicSchema:
+    """Mine a symbolic FeatureSchema + a deployment-scoped DynamicSchema (Vk)
+    from one set of labeled AlertGroup rows, via the direct two-stage
+    contrast-set + decision-tree mining building blocks (not the cached
+    get_or_mine_*_attribute_schema wrapper -- its return chain only keeps
+    the post-concatenation mined_df, losing the attack/benign split
+    build_dynamic_schema needs). Shared by the observe-only frozen-schema
+    fit below (fit_source_window_and_dynamic_schema, always version=1) and
+    monitor_attached.py's on-trigger remines (version bumped each time a
+    REMINE_AND_RETRAIN actually fires). Caller must ensure
+    train_rows_labeled is non-empty and two-class first -- this function
+    does not re-check."""
+    attribute_mining_config = spec.to_attribute_mining_config()
+    X_cat, X_num, y, column_predicate_map = build_categorical_predicate_matrix(
+        train_rows_labeled
+    )
+    contrast_stats_df = compute_predicate_contrast_stats(X_cat, y, column_predicate_map)
+    survivors_df = filter_contrast_survivors(
+        contrast_stats_df,
+        min_attack_coverage=attribute_mining_config.contrast.min_attack_coverage,
+        min_benign_coverage=attribute_mining_config.contrast.min_benign_coverage,
+        min_growth_rate=attribute_mining_config.contrast.min_growth_rate,
+        max_p_value=attribute_mining_config.contrast.max_p_value,
+    )
+    surviving_cols = surviving_single_columns(survivors_df)
+    X_train_mat, kept_predicate_map = build_training_matrix(
+        X_cat, X_num, column_predicate_map, surviving_cols
+    )
+    tree = fit_rule_tree(
+        X_train_mat,
+        y,
+        max_depth=attribute_mining_config.tree.max_depth,
+        min_samples_leaf=attribute_mining_config.tree.min_samples_leaf,
+        class_weight=attribute_mining_config.tree.class_weight,
+        random_state=attribute_mining_config.tree.random_state,
+        min_impurity_decrease=attribute_mining_config.tree.min_impurity_decrease,
+    )
+    leaf_rules_df, predicate_alphabet = extract_leaf_rules(
+        tree, X_train_mat, y, kept_predicate_map
+    )
+
+    mined_at = datetime.now(timezone.utc)
+    mining_window_start = datetime.fromtimestamp(
+        train_rows_labeled[0].start_ts, tz=timezone.utc
+    )
+    mining_window_end = datetime.fromtimestamp(
+        train_rows_labeled[-1].end_ts or train_rows_labeled[-1].start_ts,
+        tz=timezone.utc,
+    )
+
+    # Build the DynamicSchema first, from the untagged survivors/leaf
+    # frames -- build_dynamic_schema doesn't read source_label, but
+    # keeping this ordering explicit avoids any future coupling surprise.
+    dynamic_schema = build_dynamic_schema(
+        contrast_stats_df=survivors_df,
+        leaf_rules_df=leaf_rules_df,
+        predicate_alphabet=predicate_alphabet,
+        column_predicate_map=column_predicate_map,
+        X_num=X_num,
+        y=y,
+        version=version,
+        mining_window_start=mining_window_start,
+        mining_window_end=mining_window_end,
+        mined_at=mined_at,
+    )
+
+    for df in (survivors_df, leaf_rules_df):
+        if not df.empty:
+            df["source_label"] = np.where(
+                df["confidence_attack"] > df["confidence_benign"],
+                "attack",
+                "benign",
+            )
+    mined_df = pd.concat([survivors_df, leaf_rules_df], ignore_index=True, sort=False)
+    symbolic = build_symbolic_feature_schema(
+        df=mined_df,
+        source_label="attack",
+        schema_name="symbolic",
+        schema_version=schema_version_tag,
+        predicates=predicate_alphabet,
+    )
+    schema = FeatureSchema(
+        schema_name="base+symbolic",
+        schema_version=symbolic.schema_version,
+        base=base_schema.base,
+        symbolic=symbolic,
+    )
+    return MinedSymbolicAndDynamicSchema(schema=schema, dynamic_schema=dynamic_schema)
+
+
+@dataclass(slots=True)
 class MonitorSourceWindowFit:
     """Everything frozen once window 0's train split is mined+fit, plus the
     deployment-scoped DynamicSchema (Vk) the monitor evaluates against --
@@ -198,89 +300,21 @@ def fit_source_window_and_dynamic_schema(
             )
             return None
 
-        attribute_mining_config = spec.to_attribute_mining_config()
-        X_cat, X_num, y, column_predicate_map = build_categorical_predicate_matrix(
-            train_rows_labeled
-        )
-        contrast_stats_df = compute_predicate_contrast_stats(
-            X_cat, y, column_predicate_map
-        )
-        survivors_df = filter_contrast_survivors(
-            contrast_stats_df,
-            min_attack_coverage=attribute_mining_config.contrast.min_attack_coverage,
-            min_benign_coverage=attribute_mining_config.contrast.min_benign_coverage,
-            min_growth_rate=attribute_mining_config.contrast.min_growth_rate,
-            max_p_value=attribute_mining_config.contrast.max_p_value,
-        )
-        surviving_cols = surviving_single_columns(survivors_df)
-        X_train_mat, kept_predicate_map = build_training_matrix(
-            X_cat, X_num, column_predicate_map, surviving_cols
-        )
-        tree = fit_rule_tree(
-            X_train_mat,
-            y,
-            max_depth=attribute_mining_config.tree.max_depth,
-            min_samples_leaf=attribute_mining_config.tree.min_samples_leaf,
-            class_weight=attribute_mining_config.tree.class_weight,
-            random_state=attribute_mining_config.tree.random_state,
-            min_impurity_decrease=attribute_mining_config.tree.min_impurity_decrease,
-        )
-        leaf_rules_df, predicate_alphabet = extract_leaf_rules(
-            tree, X_train_mat, y, kept_predicate_map
-        )
-
-        mined_at = datetime.now(timezone.utc)
-        mining_window_start = datetime.fromtimestamp(
-            train_rows_labeled[0].start_ts, tz=timezone.utc
-        )
-        mining_window_end = datetime.fromtimestamp(
-            train_rows_labeled[-1].end_ts or train_rows_labeled[-1].start_ts,
-            tz=timezone.utc,
-        )
-
-        # Build the DynamicSchema first, from the untagged survivors/leaf
-        # frames -- build_dynamic_schema doesn't read source_label, but
-        # keeping this ordering explicit avoids any future coupling surprise.
-        dynamic_schema = build_dynamic_schema(
-            contrast_stats_df=survivors_df,
-            leaf_rules_df=leaf_rules_df,
-            predicate_alphabet=predicate_alphabet,
-            column_predicate_map=column_predicate_map,
-            X_num=X_num,
-            y=y,
+        mined_at_tag = datetime.now(timezone.utc)
+        mined = mine_symbolic_and_dynamic_schema(
+            train_rows_labeled=train_rows_labeled,
+            spec=spec,
+            base_schema=base_schema,
             version=1,
-            mining_window_start=mining_window_start,
-            mining_window_end=mining_window_end,
-            mined_at=mined_at,
+            schema_version_tag=f"monitor_drift-{mined_at_tag:%Y%m%dT%H%M%S}",
         )
-
-        for df in (survivors_df, leaf_rules_df):
-            if not df.empty:
-                df["source_label"] = np.where(
-                    df["confidence_attack"] > df["confidence_benign"],
-                    "attack",
-                    "benign",
-                )
-        mined_df = pd.concat(
-            [survivors_df, leaf_rules_df], ignore_index=True, sort=False
-        )
-        symbolic = build_symbolic_feature_schema(
-            df=mined_df,
-            source_label="attack",
-            schema_name="symbolic",
-            schema_version=f"monitor_drift-{mined_at:%Y%m%dT%H%M%S}",
-            predicates=predicate_alphabet,
-        )
-        schema = FeatureSchema(
-            schema_name="base+symbolic",
-            schema_version=symbolic.schema_version,
-            base=base_schema.base,
-            symbolic=symbolic,
-        )
+        schema = mined.schema
+        dynamic_schema = mined.dynamic_schema
         cache_hit = False
         print(
-            f"    [{cfg.mining_setting}] mined fresh ({len(symbolic.features)} "
-            f"features, {len(dynamic_schema.single_predicates)} single predicates, "
+            f"    [{cfg.mining_setting}] mined fresh "
+            f"({len(schema.symbolic.features)} features, "
+            f"{len(dynamic_schema.single_predicates)} single predicates, "
             f"{len(dynamic_schema.compound_rules)} compound rules)"
         )
 
@@ -457,6 +491,15 @@ def _run_one_monitor_config(
         "threshold_mode": config.threshold_mode,
         "threshold": fit.threshold,
         "mining_cache_hit": fit.cache_hit,
+        # pi: the frozen base_attack_rate baked into every predicate's
+        # mined_value (p_expected) at mining time. Logged directly rather
+        # than left to be back-solved from attack_support/benign_support,
+        # which is ill-conditioned whenever the two supports are close.
+        "base_attack_rate": (
+            fit.dynamic_schema.base_attack_rate
+            if fit.dynamic_schema is not None
+            else None
+        ),
     }
 
     horizon_rows: list[dict] = []
@@ -534,6 +577,7 @@ def _run_one_monitor_config(
                     "target_single_class": True,
                     "n_alert_groups": n_alert_groups_h,
                     "n_attack": 0,
+                    "attack_rate_h": None,
                     **nan_metrics(),
                     **monitor_cols,
                 }
@@ -543,6 +587,7 @@ def _run_one_monitor_config(
         target_single_class = len(np.unique(y_h)) < 2
         proba_h = fit.model.predict_proba(X_h)[:, 1]
         metrics = metrics_at_threshold(y_h, proba_h, fit.threshold)
+        n_attack_h = int(np.nansum(y_h))
         horizon_rows.append(
             {
                 **base_row,
@@ -551,7 +596,12 @@ def _run_one_monitor_config(
                 "is_source_window": horizon_window_index == 0,
                 "target_single_class": target_single_class,
                 "n_alert_groups": n_alert_groups_h,
-                "n_attack": int(np.nansum(y_h)),
+                "n_attack": n_attack_h,
+                # pi_h: true attack rate among this horizon's *labeled*
+                # groups (len(y_h)), not n_alert_groups_h -- the latter
+                # includes unlabeled incoming groups Signal 1 sees but
+                # Signal 2 / this decay metric never does.
+                "attack_rate_h": n_attack_h / len(y_h) if len(y_h) else None,
                 **metrics,
                 **monitor_cols,
             }

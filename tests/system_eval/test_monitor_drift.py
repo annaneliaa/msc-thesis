@@ -9,6 +9,7 @@ from thesis.system_eval.monitor_drift import (
     _run_one_monitor_config,
     fit_source_window_and_dynamic_schema,
 )
+from thesis.system_eval.temporal_decay import WindowScheme
 from thesis.metrics.shortlist import ShortlistedConfig
 from thesis.schemas.experiments import MonitorDriftConfig
 from thesis.schemas.features import BaseFeatureSchema, FeatureSchema
@@ -150,6 +151,7 @@ def test_baseline_config_has_no_dynamic_schema_and_monitor_never_runs():
         train_frac_within_window=0.7,
         threshold_mode="fixed",
         calibrated_recall_target=0.9,
+        scheme=WindowScheme("window0", len(alert_groups)),
     )
     assert fit is not None
     assert fit.dynamic_schema is None
@@ -163,6 +165,7 @@ def test_baseline_config_has_no_dynamic_schema_and_monitor_never_runs():
         base_schema=_base_schema(),
         mining_settings_by_name={},
         mining_settings_path=Path("unused.yaml"),
+        scheme=WindowScheme("window0", len(alert_groups)),
     )
     assert len(horizon_rows) > 0
     assert signal_rows == []
@@ -193,6 +196,7 @@ def test_symbolic_config_mines_dynamic_schema_from_train_slice():
         train_frac_within_window=0.7,
         threshold_mode="fixed",
         calibrated_recall_target=0.9,
+        scheme=WindowScheme("window0", n_total),
     )
     assert fit is not None
     assert fit.dynamic_schema is not None
@@ -249,6 +253,7 @@ def test_unlabeled_rows_in_train_slice_do_not_affect_base_attack_rate():
         train_frac_within_window=0.7,
         threshold_mode="fixed",
         calibrated_recall_target=0.9,
+        scheme=WindowScheme("window0", n_total),
     )
     assert fit is not None
     assert fit.dynamic_schema is not None
@@ -279,6 +284,7 @@ def test_monitor_receives_raw_unmasked_groups_not_label_masked():
         base_schema=_base_schema(),
         mining_settings_by_name=_mining_settings(),
         mining_settings_path=Path("unused.yaml"),
+        scheme=WindowScheme("window0", n_total),
     )
     by_h = {r["horizon_window_index"]: r for r in horizon_rows}
     unlabeled_horizon = by_h[1]
@@ -313,6 +319,7 @@ def test_monitor_state_accumulates_and_action_escalates_to_retrain_only():
         base_schema=_base_schema(),
         mining_settings_by_name=_mining_settings(),
         mining_settings_path=Path("unused.yaml"),
+        scheme=WindowScheme("window0", n_total),
     )
     by_h = {r["horizon_window_index"]: r for r in horizon_rows}
     assert set(by_h) == {0, 1, 2, 3, 4}
@@ -358,6 +365,7 @@ def test_monitor_alarms_is_exactly_the_elevated_subset_of_signals():
         base_schema=_base_schema(),
         mining_settings_by_name=_mining_settings(),
         mining_settings_path=Path("unused.yaml"),
+        scheme=WindowScheme("window0", n_total),
     )
     signals_df = pd.DataFrame(signal_rows)
     alarms_df = signals_df[signals_df["elevated"] == True]  # noqa: E712
@@ -387,6 +395,7 @@ def test_monitor_state_resets_between_configs():
         base_schema=_base_schema(),
         mining_settings_by_name=_mining_settings(),
         mining_settings_path=Path("unused.yaml"),
+        scheme=WindowScheme("window0", n_total),
     )
     # A fresh call (as if a second shortlisted config ran) must start with
     # fresh consecutive counters -- state is a local variable per call, but
@@ -400,6 +409,7 @@ def test_monitor_state_resets_between_configs():
         base_schema=_base_schema(),
         mining_settings_by_name=_mining_settings(),
         mining_settings_path=Path("unused.yaml"),
+        scheme=WindowScheme("window0", n_total),
     )
     by_h = {r["horizon_window_index"]: r for r in horizon_rows_2}
     assert by_h[1]["consecutive_signal_1_elevated"] == 1

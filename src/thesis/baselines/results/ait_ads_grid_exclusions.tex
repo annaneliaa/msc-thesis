@@ -1,9 +1,11 @@
 \begin{table}[htbp]
 \centering
 \small
-\caption{Combinations deliberately excluded from the AIT-ADS baseline grid, among
-the 6 in-scope scenarios (\texttt{harrison}/\texttt{santos} are excluded outright --
-see the intro cell -- not listed here).}
+\caption{Combinations deliberately excluded from the AIT-ADS baseline grid, plus
+zero-result coverage collapsed out of the full results table
+(Table~\ref{tab:ait-ads-baseline-results-full}), among the 6 in-scope scenarios
+(\texttt{harrison}/\texttt{santos} are excluded outright -- see the intro cell --
+not listed here).}
 \label{tab:ait-ads-grid-exclusions}
 \begin{tabular}{p{0.32\textwidth}p{0.58\textwidth}}
 \toprule
@@ -31,7 +33,36 @@ exempt everywhere. \\[4pt]
 \texttt{guided} training condition &
 CSCAS-only: AIT-ADS has no SCAS-equivalent precomputed outlier verdict to
 guide undersampling with (see \texttt{baselines/\_sampling.py}'s own
-docstring). Only \texttt{random} and \texttt{class-weighted} apply here. \\
+docstring). Only \texttt{random} and \texttt{class-weighted} apply here. \\[4pt]
+Trainable classifiers (LogReg/RF/XGBoost + mining variants,
+DistilBERT/SecureBERT) $\times$ scenario $\times$ grouping, at
+\texttt{class-weighted} (54 of 266 blocks) &
+Zero-result coverage, not an exclusion -- these combinations were fit and
+evaluated, but scored F1$=0$ (precision and recall both exactly 0) under
+\texttt{class-weighted} training, the only condition
+Table~\ref{tab:ait-ads-baseline-results-full} shows (see below), so the row
+carries no information there and is collapsed rather than listed; the
+\texttt{random} condition, shown only in the per-scenario tables above, is
+often nonzero for the same cell. Rate of zero blocks out of 18 possible
+(scenario, grouping) combinations per model: \texttt{XGBoost} and
+\texttt{Mining-XGBoost} 6/18 each (\texttt{shaw}/\texttt{wardbeck}/
+\texttt{wheeler} $\times$ \texttt{fixed\_window}/\texttt{time\_delta}, every
+cell); \texttt{RF} and \texttt{Mining-RF} 6/18 each (same cells);
+\texttt{Mining-LogReg} 3/18, \texttt{LogReg} 2/18 (both \texttt{wardbeck}
+only); \texttt{DistilBERT} 13/18 and \texttt{SecureBERT 2.0} 12/18 -- this is
+the table's most consequential zero-coverage gap. Both fine-tuned
+transformers score exactly 0 under \texttt{class-weighted} on every one of
+\texttt{shaw}/\texttt{wardbeck}/\texttt{wheeler}/\texttt{wilson}'s cells
+(all 3 standard groupings) plus \texttt{fox}/\texttt{time\_delta}, yet stay
+strong (F1 $0.79$--$0.98$) on \texttt{fox}/\texttt{fixed\_window},
+\texttt{fox}/\texttt{alertbert}, \texttt{fox}/\texttt{deepcase}, and
+\texttt{russellmitchell}/\texttt{deepcase} (\texttt{fox}/\texttt{cscas\_grouping}
+is weak but nonzero: F1 $0.10$--$0.17$). So it is specifically
+\texttt{shaw}/\texttt{wardbeck}/\texttt{wheeler}/\texttt{wilson} under
+\texttt{class-weighted} where these two models collapse, not
+\texttt{class-weighted} training in general -- whatever signal they have on
+those 4 scenarios shows up only under \texttt{random} undersampling instead
+(see the per-scenario tables). \\
 \bottomrule
 \end{tabular}
 \end{table}
