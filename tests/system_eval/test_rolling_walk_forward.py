@@ -328,7 +328,7 @@ def test_fit_window_uses_fit_scored_model_for_class_weighting(monkeypatch):
     rows = _rows(8, 4)
     seen = {}
 
-    def spy_fit_scored_model(model_name, X, y):
+    def spy_fit_scored_model(model_name, X, y, seed=None):
         seen["model_name"] = model_name
         seen["n_rows"] = len(X)
         from thesis.experiments._shared import fit_scored_model as real

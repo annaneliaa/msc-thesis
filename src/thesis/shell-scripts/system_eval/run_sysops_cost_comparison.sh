@@ -31,6 +31,15 @@
 # directly -- edit its GRANULARITIES/MODELS arrays to (0.05) / (rf) for a
 # matching single-config run, same as this script does inline below.)
 #
+# Each step's own experiment module mirrors its output to results/sys-eval/
+# already (temporal_decay.py/rolling_walk_forward.py do this unconditionally
+# whenever --output-dir isn't passed; monitor_drift.py never mirrors at all
+# -- see each module's own docstring). That general mirror is unchanged by
+# this script. On top of it, this script ALSO copies all three of THIS run's
+# outputs into results/sys-ops/<step>/cscas/<ts>/ -- one dedicated,
+# uncluttered location for the operationality chapter to cite, separate from
+# results/sys-eval's history of full-grid runs.
+#
 # Usage:
 #   src/thesis/shell-scripts/system_eval/run_sysops_cost_comparison.sh
 
@@ -54,6 +63,7 @@ MONITOR_CONSECUTIVE_WINDOWS="3"
 MONITOR_MIN_SAMPLES_SIGNAL_2="30"
 
 LOG_DIR="$REPO_ROOT/artifacts/logs/sysops_cost_comparison"
+SYSOPS_RESULTS_DIR="$REPO_ROOT/results/sys-ops"
 mkdir -p "$LOG_DIR"
 RUN_TS="$(date -u +%Y%m%d_%H%M%S)"
 
@@ -72,9 +82,24 @@ run_step() {
   if [[ $? -ne 0 ]]; then
     echo "    FAILED — see $log_file"
     failed+=("$name")
-  else
-    echo "    OK — see $log_file"
+    return
   fi
+  echo "    OK — see $log_file"
+
+  # Every experiment script prints its own "[<scenario>] <Name> results →
+  # <out_dir>" line right before exiting -- pull that path out rather than
+  # re-deriving it (glob-guessing the newest artifacts/ subdir could grab a
+  # concurrent, unrelated run).
+  local out_dir
+  out_dir="$(grep -o "results → .*" "$log_file" | tail -n 1 | sed 's/^results → //')"
+  if [[ -z "$out_dir" || ! -d "$out_dir" ]]; then
+    echo "    [warn] couldn't find this step's output dir in the log -- skipping results/sys-ops copy"
+    return
+  fi
+  local dest="$SYSOPS_RESULTS_DIR/$name/$SCENARIO/$(basename "$out_dir")"
+  mkdir -p "$(dirname "$dest")"
+  cp -r "$out_dir" "$dest"
+  echo "    Copied → $dest"
 }
 
 run_step temporal_decay \

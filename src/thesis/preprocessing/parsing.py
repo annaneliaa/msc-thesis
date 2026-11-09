@@ -65,6 +65,18 @@ def make_alert_id(
     return hashlib.sha1(key.encode("utf-8")).hexdigest()
 
 
+def cscas_group_id(
+    signature_id: int, ext_ip: str, int_ip: str | None, timestamp: str
+) -> str:
+    """Stable CSCAS alert-group id: SHA-1 of signature|ext_ip|int_ip|timestamp
+    (int_ip None -> "-1"). The one definition of this key, shared by
+    parse_suricata_group_row and anything that needs to map a group back to
+    its CSV row (e.g. system_eval.signature_leakage's SignatureID lookup --
+    AlertGroup itself doesn't carry the SignatureID)."""
+    key = "|".join([str(signature_id), ext_ip, int_ip or "-1", timestamp])
+    return hashlib.sha1(key.encode("utf-8")).hexdigest()
+
+
 def parse_suricata_group_row(row: IncomingSuricataGroup) -> ParsedSuricataGroup:
     """
     Parse one pre-grouped Suricata row into a normalized internal representation.
@@ -77,15 +89,7 @@ def parse_suricata_group_row(row: IncomingSuricataGroup) -> ParsedSuricataGroup:
         raise ValueError(f"Invalid timestamp: {row.timestamp!r}")
     ts = int(ts_pd.timestamp())
 
-    key = "|".join(
-        [
-            str(row.signature_id),
-            row.ext_ip,
-            row.int_ip or "-1",
-            row.timestamp,
-        ]
-    )
-    group_id = hashlib.sha1(key.encode("utf-8")).hexdigest()
+    group_id = cscas_group_id(row.signature_id, row.ext_ip, row.int_ip, row.timestamp)
 
     sig = tokenize_signature(row.signature_id, row.signature_text)
 

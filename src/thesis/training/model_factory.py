@@ -51,7 +51,7 @@ def _build_xgboost(**extra) -> XGBClassifier:
     device = _xgb_device()
     model = XGBClassifier(
         n_estimators=100,
-        random_state=42,
+        random_state=extra.get("random_state", 42),
         n_jobs=-1,
         tree_method="hist",
         device=device,
@@ -105,10 +105,10 @@ MODEL_FACTORIES = {
             ),
         ]
     ),
-    "rf": lambda **_: RandomForestClassifier(
+    "rf": lambda **extra: RandomForestClassifier(
         n_estimators=200,
         class_weight="balanced",
-        random_state=42,
+        random_state=extra.get("random_state", 42),
         n_jobs=-1,
     ),
     "mlp": _build_mlp,

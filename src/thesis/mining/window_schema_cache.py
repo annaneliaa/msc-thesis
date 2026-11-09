@@ -310,6 +310,7 @@ def get_or_mine_slice_attribute_schema(
     attribute_mining_config: AttributeMiningConfig,
     root_dir: Path = FEATURE_DIR,
     force: bool = False,
+    extra_exclude_fields: set[str] | frozenset[str] | None = None,
 ) -> WindowSchemaResult:
     """Mine (or reuse a cached) attribute schema from an explicit
     chronological slice ``alert_groups[slice_start:slice_end]``, identified
@@ -328,8 +329,14 @@ def get_or_mine_slice_attribute_schema(
     Candidate fields excluded from mining default to
     attribute_features.default_leaky_attribute_fields(scenario) -- see
     get_or_mine_window_attribute_schema's docstring.
+    `extra_exclude_fields` are excluded on top of that default (e.g. the
+    paper's Check 3 arm (c), attribute_features.CSCAS_SIGNATURE_DERIVED_FIELDS).
+    They're part of the fingerprint, so they get their own cache entries and
+    never shadow the default-exclusion schemas.
     """
-    exclude_fields = default_leaky_attribute_fields(scenario)
+    exclude_fields = default_leaky_attribute_fields(scenario) | set(
+        extra_exclude_fields or ()
+    )
     identity = _window_slice_identity(
         alert_groups_path,
         gran=-1.0,
@@ -399,6 +406,7 @@ def get_or_mine_full_window_attribute_schema(
     attribute_mining_config: AttributeMiningConfig,
     root_dir: Path = FEATURE_DIR,
     force: bool = False,
+    extra_exclude_fields: set[str] | frozenset[str] | None = None,
 ) -> WindowSchemaResult:
     """Mine (or reuse a cached) attribute schema using the *entire* window
     `win_idx` at granularity `gran` -- no train/test split within the window.
@@ -412,9 +420,15 @@ def get_or_mine_full_window_attribute_schema(
     Candidate fields excluded from mining default to
     attribute_features.default_leaky_attribute_fields(scenario) -- see
     get_or_mine_window_attribute_schema's docstring.
+    `extra_exclude_fields` are excluded on top of that default (e.g. the
+    paper's Check 3 arm (c), attribute_features.CSCAS_SIGNATURE_DERIVED_FIELDS).
+    They're part of the fingerprint, so they get their own cache entries and
+    never shadow the default-exclusion schemas.
     """
+    exclude_fields = default_leaky_attribute_fields(scenario) | set(
+        extra_exclude_fields or ()
+    )
     win_start, win_end, _ = compute_window_bounds(len(alert_groups), gran, win_idx)
-    exclude_fields = default_leaky_attribute_fields(scenario)
 
     identity = _window_slice_identity(
         alert_groups_path,

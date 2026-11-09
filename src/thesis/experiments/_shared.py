@@ -253,7 +253,12 @@ class _PlattScaledOneClass:
         return self._platt.predict_proba(self._raw(X).reshape(-1, 1))
 
 
-def fit_scored_model(model_name: str, X_train: pd.DataFrame, y_train: np.ndarray):
+def fit_scored_model(
+    model_name: str,
+    X_train: pd.DataFrame,
+    y_train: np.ndarray,
+    seed: int | None = None,
+):
     """Fit `model_name` on W_src's train split; return an object exposing
     `predict_proba(X)[:, 1]` as attack likelihood.
 
@@ -272,13 +277,19 @@ def fit_scored_model(model_name: str, X_train: pd.DataFrame, y_train: np.ndarray
     Returns None (never raises) when the split can't support a fit -- a
     supervised model needs both classes present, a one-class model needs
     enough benign rows to fit and at least one attack row to calibrate.
+
+    `seed`, if given, is passed to the factory as `random_state` (supported
+    by "rf" and "xgboost"; other factories ignore it). None keeps the factory default.
     """
     y_train = np.asarray(y_train)
 
     if model_name not in ONE_CLASS_MODELS:
         if len(np.unique(y_train)) < 2:
             return None
-        est = get_model_factory(model_name, **class_weighted_extra_kwargs(y_train))()
+        extra = class_weighted_extra_kwargs(y_train)
+        if seed is not None:
+            extra["random_state"] = seed
+        est = get_model_factory(model_name, **extra)()
         est.fit(X_train, y_train)
         return est
 

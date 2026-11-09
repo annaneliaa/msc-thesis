@@ -154,6 +154,13 @@ class WindowFit:
     fit_cpu_s: float = 0.0
 
 
+def _exclude_tag(fields) -> str:
+    """Short stable hash of an exclude-field set, for slice tags."""
+    import hashlib
+
+    return hashlib.sha1("|".join(sorted(fields)).encode()).hexdigest()[:8]
+
+
 def _step_bounds(scheme: WindowScheme, gran: float, step_idx: int) -> tuple[int, int]:
     """Row bounds of walk step `step_idx`'s training window Wi. step_idx=0 is
     W_src (scheme.source_bounds -- window 0 under "window0", or the CSCAS
@@ -181,6 +188,8 @@ def fit_window(
     calibrated_recall_target: float,
     scheme: WindowScheme,
     force_remine: bool = False,
+    extra_exclude_fields: frozenset[str] | None = None,
+    model_seed: int | None = None,
 ) -> WindowFit | None:
     """Mine (for `cfg.feature_set` in {"symbolic", "cscas_full_symbolic"}) on
     the *full* step window `win_idx` (see _step_bounds), fit `cfg.model` on
@@ -188,7 +197,13 @@ def fit_window(
     None (with a warning printed, never raises) if the mining setting can't
     be resolved or the window turns out to be single-class -- both
     non-fatal, "this step can't run" conditions the caller is expected to
-    skip past."""
+    skip past.
+
+    `extra_exclude_fields` drops further candidate fields from mining on top
+    of the scenario's default leaky set (paper Check 3, arm (c)); the slice
+    tag gets a suffix so its temp slice/run name never collides with the
+    default arm's. `model_seed` overrides the model's random_state (None =
+    the factory default)."""
     gran = cfg.granularity
     win_start, win_end = _step_bounds(scheme, gran, win_idx)
     window_rows = alert_groups[win_start:win_end]
@@ -240,6 +255,8 @@ def fit_window(
                 if win_idx == 0
                 else f"rwf_baseline_split_gran{gran:g}_step{win_idx}"
             )
+            if extra_exclude_fields:
+                slice_tag += "_excl" + _exclude_tag(extra_exclude_fields)
             schema_result = get_or_mine_slice_attribute_schema(
                 scenario=scenario,
                 alert_groups=alert_groups,
@@ -249,6 +266,7 @@ def fit_window(
                 slice_tag=slice_tag,
                 attribute_mining_config=spec.to_attribute_mining_config(),
                 force=force_remine,
+                extra_exclude_fields=extra_exclude_fields,
             )
         else:
             schema_result = get_or_mine_full_window_attribute_schema(
@@ -259,6 +277,7 @@ def fit_window(
                 win_idx=win_idx,
                 attribute_mining_config=spec.to_attribute_mining_config(),
                 force=force_remine,
+                extra_exclude_fields=extra_exclude_fields,
             )
         symbolic = load_symbolic_feature_schema(schema_result.schema_path)
         cache_hit = schema_result.cache_hit
@@ -299,7 +318,7 @@ def fit_window(
     # this is a no-op for them but the only correct path for xgboost.
     _t0_fit = time.perf_counter()
     _tc0_fit = time.process_time()
-    model = fit_scored_model(cfg.model, X, y)
+    model = fit_scored_model(cfg.model, X, y, seed=model_seed)
     if model is None:
         print(f"    [warn] window {win_idx}: {cfg.model} could not be fit -- skipping")
         return None

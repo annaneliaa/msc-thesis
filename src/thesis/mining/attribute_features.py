@@ -134,6 +134,27 @@ CSCAS_ORACLE_FIELDS: frozenset[str] = frozenset(
 )
 
 
+# CSCAS candidate fields derived from the Suricata *signature* (its rule
+# metadata / text) rather than from the traffic itself. Deployable (unlike
+# CSCAS_ORACLE_FIELDS -- a fresh alert carries its rule metadata), but every
+# CSCAS signature is class-pure, so a near-pure value of one of these can act
+# as a SignatureID stand-in. Excluded wholesale for the paper's
+# "mining without signature-derived items" ablation (Check 3, arm (c)), which
+# leaves only proto, multi_target, multi_ext_port, multi_int_port and the
+# counts (alert_count, signature_matches_per_day). proto_mismatch is in here
+# too: it's computed from category (see _proto_mismatch).
+CSCAS_SIGNATURE_DERIVED_FIELDS: frozenset[str] = frozenset(
+    {
+        "category",
+        "ruleset",
+        "cve_present",
+        "cve_age_years",
+        "proto_mismatch",
+        *(f"qualifier_{w}" for w in QUALIFIER_WORDS),
+    }
+)
+
+
 def default_leaky_attribute_fields(scenario: str) -> set[str]:
     """Attribute-mining candidate fields to exclude by default for
     `scenario`, because they're derived from a non-deployable offline
