@@ -226,3 +226,109 @@ Report what came over (files and size from `--stats`, plus which folders are new
 | `src/thesis/baselines/grouping/results/` | `baselines/grouping/run_grouping.sh` | `grouping/grouping_baseline.ipynb` |
 
 `run_decay_and_walkforward.sh` chains Exp 2 then Exp 3, so after it finishes sync both `results/sys-eval/` subfolders and point to notebooks 01 and 02. If a synced folder isn't in this table, find its reader with `grep -l "<folder name>" -r src/thesis/notebooks --include=*.ipynb` and say the table needs updating.
+
+## 6. "Give me the command for …" (cheat sheet)
+
+When the user asks for **the command** to do something on the DGX ("what's the command to…", "give me the command for…", "how do I…"), **answer with the command; don't run it**. Only run it if they say "do it" / "run it" / "check it for me".
+
+How to answer:
+- Put each command in its own ```` ```bash ```` block (the app adds a Run button to single-line blocks), with one short sentence above it saying what it does.
+- Default to the **from-the-Mac one-liner** (`ssh dgx-spark '…'`). If the user says they're already on the DGX or inside the container, drop the `ssh dgx-spark` / `docker exec` wrapper accordingly.
+- Fill in real values (script names, log folders, experiment names) from this skill instead of leaving placeholders, when the request makes them clear. Check the actual name on the DGX first if unsure (a read-only `ls` is fine).
+- For destructive commands (kill, stop, rm, reset), give the command but add a one-line warning about what it ends or deletes.
+- If the request isn't covered below, compose it from the same building blocks and say so.
+
+Three layers to keep straight: the **Mac**, the **DGX host** (`~/Desktop/msc-thesis`), and the **`thesis-run` container** (`/workspace`, same files). Python processes and the GPU env live in the container.
+
+### Connecting
+```bash
+# shell on the DGX host
+ssh dgx-spark
+# straight into a shell inside the container
+ssh -t dgx-spark 'docker exec -it thesis-run bash'
+# list / attach tmux sessions on the host (detach again with Ctrl-b d)
+ssh -t dgx-spark 'tmux ls'
+ssh -t dgx-spark 'tmux attach -t <name>'
+```
+
+### Container
+```bash
+# is it running?
+ssh dgx-spark 'docker ps -a --filter name=thesis-run --format "{{.Names}}  {{.Status}}"'
+# start it (after a reboot or `docker stop`)
+ssh dgx-spark 'docker start thesis-run'
+# CPU / memory use of the container right now
+ssh dgx-spark 'docker stats --no-stream thesis-run'
+# stop it — WARNING: kills every run inside it
+ssh dgx-spark 'docker stop thesis-run'
+# re-run the dependency setup (after pyproject.toml changes; idempotent)
+ssh dgx-spark 'docker exec thesis-run bash src/thesis/shell-scripts/baselines/grouping/setup_container.sh'
+# check torch sees the GPU inside the container
+ssh dgx-spark 'docker exec thesis-run python -c "import torch; print(torch.__version__, torch.cuda.is_available())"'
+```
+
+### Processes inside the container
+```bash
+# which experiment scripts are running
+ssh dgx-spark 'docker exec thesis-run pgrep -af "run_.*\.(sh|py)" || echo NOT_RUNNING'
+# with elapsed time, CPU and memory
+ssh dgx-spark 'docker exec thesis-run ps -eo pid,etime,%cpu,%mem,cmd --sort=-%cpu | head -15'
+# live view (q to quit)
+ssh -t dgx-spark 'docker exec -it thesis-run top'
+# stop one run — WARNING: the run is lost, partial outputs may be half-written
+ssh dgx-spark 'docker exec thesis-run pkill -f run_signature_leakage.py'
+```
+
+### GPU and machine
+```bash
+ssh dgx-spark 'nvidia-smi'
+# refresh every 2 s (Ctrl-c to quit)
+ssh -t dgx-spark 'watch -n 2 nvidia-smi'
+# memory, disk, load, who else is on the machine
+ssh dgx-spark 'free -h; df -h ~; uptime; who'
+# what's taking space in the repo
+ssh dgx-spark 'cd ~/Desktop/msc-thesis && du -sh artifacts/* results src/thesis/baselines/*/results 2>/dev/null | sort -h'
+```
+
+### Logs
+```bash
+# newest logs across all experiments
+ssh dgx-spark 'cd ~/Desktop/msc-thesis && ls -lt artifacts/logs/*/*.log | head -10'
+# follow the newest log of one experiment live (Ctrl-c to stop; the run keeps going)
+ssh -t dgx-spark 'cd ~/Desktop/msc-thesis && tail -f $(ls -t artifacts/logs/signature_leakage/*.log | head -1)'
+# last 50 lines
+ssh dgx-spark 'cd ~/Desktop/msc-thesis && tail -n 50 $(ls -t artifacts/logs/signature_leakage/*.log | head -1)'
+# any errors in it
+ssh dgx-spark 'cd ~/Desktop/msc-thesis && grep -nE "Traceback|Error|FATAL|FAILED|Killed|out of memory" $(ls -t artifacts/logs/signature_leakage/*.log | head -1)'
+```
+
+### Git on the DGX
+```bash
+# where is the DGX's checkout, and is it clean
+ssh dgx-spark 'cd ~/Desktop/msc-thesis && git status -sb && git log --oneline -3'
+# update to the latest pushed main
+ssh dgx-spark 'cd ~/Desktop/msc-thesis && git pull --ff-only'
+# same, from inside the container (if the host pull hits root-owned files)
+ssh dgx-spark 'docker exec thesis-run bash -lc "cd /workspace && git pull --ff-only"'
+```
+
+### Launching a run
+```bash
+# detached inside the container, launcher output logged (survives closing SSH)
+ssh dgx-spark 'docker exec -d thesis-run bash -lc "cd /workspace && mkdir -p artifacts/logs/launcher && src/thesis/shell-scripts/paper/run_signature_leakage.sh > artifacts/logs/launcher/signature_leakage_\$(date -u +%Y%m%d_%H%M%S).log 2>&1"'
+# smoke-test variant: put env overrides before the script, e.g.
+#   MAX_STEPS=1 SEEDS=0 src/thesis/shell-scripts/paper/run_signature_leakage.sh
+```
+Interactive alternative the user also uses: tmux exists on the DGX **host only** (not in the container). So `ssh -t dgx-spark 'tmux new -s <name>'`, then inside that tmux session `docker exec -it thesis-run bash` and run the script; detach with Ctrl-b d, re-attach later with `tmux attach -t <name>`. Or, inside a container shell, `nohup <script> > <log> 2>&1 &`.
+
+### Results
+```bash
+# newest output folders of one experiment
+ssh dgx-spark 'ls -lt ~/Desktop/msc-thesis/artifacts/experiments/signature_leakage | head -5'
+# preview what rsync would copy (dry run), then the real copy — run from the local repo root
+rsync -azhn --itemize-changes dgx-spark:Desktop/msc-thesis/artifacts/experiments/signature_leakage/ artifacts/experiments/signature_leakage/
+rsync -azh --partial --info=progress2 dgx-spark:Desktop/msc-thesis/artifacts/experiments/signature_leakage/ artifacts/experiments/signature_leakage/
+# a single file
+scp dgx-spark:Desktop/msc-thesis/<path> <local path>
+```
+(For which folders to sync and what to exclude, see section 4.)
