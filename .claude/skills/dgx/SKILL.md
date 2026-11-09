@@ -1,6 +1,6 @@
 ---
 name: dgx
-description: Work with the DGX Spark remote machine — git pull the thesis repo there, check on running experiments, and rsync results/artifacts back to this Mac for analysis in the notebooks. Use when the user mentions the DGX, Spark, "remote", pulling results, or syncing artifacts.
+description: Work with the DGX Spark remote machine — git pull the thesis repo there, launch requested runs, watch or catch up on running/earlier experiments (status, crashes, whether a run finished), and rsync results/artifacts back to this Mac for analysis in the notebooks. Use when the user mentions the DGX, Spark, "remote", a run or experiment's status, pulling results, or syncing artifacts.
 ---
 
 # DGX Spark workflow
@@ -156,6 +156,25 @@ ssh dgx-spark 'nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total -
 ```
 
 Logs: system-eval experiments write to `artifacts/logs/<experiment>/`. Grouping writes to `src/thesis/baselines/grouping/logs/`.
+
+## 3c. Catching up on an earlier run
+
+A run keeps going on the DGX when the Mac sleeps or the Claude session closes; only the monitoring stops. When the user asks "how's the run going", "did it finish" or "check on X" for a run started earlier (possibly in another session), don't assume anything from memory. Reconstruct the state from the DGX:
+
+1. **Which run:** if the user didn't say, list recent logs across experiments and the launcher logs, newest first, and pick the most recent one (say which you picked):
+   ```bash
+   ssh dgx-spark 'cd ~/Desktop/msc-thesis && ls -lt --time-style=+%m-%d_%H:%M artifacts/logs/*/*.log src/thesis/baselines/grouping/logs/*.log 2>/dev/null | head -10'
+   ```
+2. **Still running?** `pgrep -af` the process from the known-scripts table inside the container. Also check the container is up at all (`docker ps -a --filter name=thesis-run`). If the container exited, the run died with it; report the exit time from `docker ps -a`.
+3. **What the log says:** last modification time (a log silent for much longer than its usual step time while the process is alive may be hung), `tail -n 30`, and `grep -nE 'Traceback|Error|FATAL|FAILED|Killed|out of memory'`. Look for the script's success marker too (e.g. `Saved →`).
+4. **Outputs:** list the newest output folder for that experiment (e.g. `ls -lt artifacts/experiments/signature_leakage | head -3`) and whether it already exists locally.
+
+Then report one of:
+- **Still running**: how far it is (last progress line, elapsed time from the log's start), and offer to resume watching with the Monitor loop from section 3.
+- **Finished OK**: the output folder, whether it's already synced, and an offer to rsync it (section 4) plus the notebook to re-run (section 5).
+- **Crashed or killed**: the traceback or the OOM evidence and roughly when it stopped. Don't restart it; ask the user.
+
+Read-only throughout, so no permission needed for any of these checks.
 
 ## 4. Pull results back to the Mac
 
