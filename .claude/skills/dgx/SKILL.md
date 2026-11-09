@@ -111,6 +111,7 @@ Never kill, restart or re-launch a run without being asked, even if it looks stu
 | Script | Python process to look for | Log | Success marker | Smoke test |
 |---|---|---|---|---|
 | `src/thesis/shell-scripts/paper/run_signature_leakage.sh` | `run_signature_leakage.py` | `artifacts/logs/signature_leakage/<UTC ts>.log` | `Saved →` / `Mirrored →` lines; output in `artifacts/experiments/signature_leakage/<ts>/` | `MAX_STEPS=1 SEEDS="0"` |
+| `src/thesis/shell-scripts/paper/run_mining_setting_selection.sh` | `run_mining_setting_selection.py` | `artifacts/logs/mining_setting_selection/<UTC ts>.log` | `Saved →` / `Mirrored →` lines; output in `artifacts/experiments/mining_setting_selection/<ts>/` (`stage2_grid.csv` is rewritten after every grid point, so its row count shows progress out of 54) | `SMOKE=1 SEEDS="0"` |
 
 (The script tries `conda activate thesis`. That env doesn't exist in the container, so a `[warn] 'conda activate thesis' failed` line is expected and harmless: it falls back to the image's Python. A `FATAL: … can't import the core deps` line is a real failure.)
 
@@ -218,6 +219,7 @@ Report what came over (files and size from `--stats`, plus which folders are new
 | `results/sys-eval/rolling-walk-forward/<scenario>/` (+ temporal-decay) | `system_eval/run_rolling_walk_forward.sh` (Exp 3) | `experiments/02_rolling_walk_forward.ipynb` (→ `img/exp2/`) |
 | `artifacts/experiments/monitor_drift/`, `monitor_attached/`, `rolling_walk_forward/` | `system_eval/run_monitor_drift.sh`, `run_monitor_attached.sh` (Exp 4) | `experiments/03_monitor_signal_drift.ipynb` (→ `img/exp3/`) |
 | `artifacts/experiments/signature_leakage/` (or `results/paper/signature-leakage/`) | signature-leakage run | `paper/03_signature_leakage.ipynb` |
+| `artifacts/experiments/mining_setting_selection/` (or `results/paper/mining-setting-selection/`) | `paper/run_mining_setting_selection.sh` (Check 1) | `paper/01_mining_setting_selection.ipynb` |
 | `artifacts/experiments/attribute_mining_parameter_grid/`, `artifacts/mining/` | attribute-mining sweep | `mining/01_mining_param_eda.ipynb` |
 | `artifacts/experiments/run_eda/<cscas\|ait-ads>/` | EDA runs | `eda/01_cscas_eda.ipynb`, `eda/02_ait-ads_eda.ipynb` (also reads `run_eda_host/`, `alert_groups/raw/`) |
 | `src/thesis/baselines/results/cscas_*.json` | `baselines/run_zeroshot.sh` etc. | `baselines/01_cscas_baseline.ipynb` |
