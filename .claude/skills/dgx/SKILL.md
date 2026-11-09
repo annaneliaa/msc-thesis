@@ -90,9 +90,63 @@ docker exec -it thesis-run bash src/thesis/shell-scripts/baselines/grouping/setu
 
 Re-run `setup_container.sh` (it's idempotent) after a pull that changed `pyproject.toml` dependencies. Never `pip install torch` or `numpy` in the container's base env, because that would replace the GPU-matched build. Starting, rebuilding or re-running setup needs the user's OK; `docker start` of a stopped container is fine to suggest, but ask first.
 
-## 3. Check on experiments
+## 3. Launching and watching a run (only when the user asks)
 
-**Don't start, restart or stop experiment runs, and never `docker stop`/`docker rm` the container.** Read-only checks are fine:
+By default the user launches runs themselves. Only launch one when the user explicitly asks for that specific script in this conversation. Before launching:
+
+1. Make sure the DGX is on the latest pushed code (section 1) and the container is up (`docker start thesis-run` if it's stopped).
+2. Check nothing else of the user's is already running (`pgrep` below). If something is, ask before starting a second run.
+3. Confirm the exact command (script and any env overrides like `MAX_STEPS`, `SEEDS`, `FORCE`) back to the user in one line, then launch. Offer a smoke test first when the script has one.
+
+Launch detached inside the container, with the launcher's own stdout in a timestamped log so it survives the SSH session closing:
+
+```bash
+ssh dgx-spark 'docker exec -d thesis-run bash -lc "cd /workspace && mkdir -p artifacts/logs/launcher && <ENV=val …> <script> > artifacts/logs/launcher/<name>_$(date -u +%Y%m%d_%H%M%S).log 2>&1"'
+```
+
+Never kill, restart or re-launch a run without being asked, even if it looks stuck or crashed. Report it and let the user decide. Never `docker stop`/`docker rm` the container.
+
+### Known scripts
+
+| Script | Python process to look for | Log | Success marker | Smoke test |
+|---|---|---|---|---|
+| `src/thesis/shell-scripts/paper/run_signature_leakage.sh` | `run_signature_leakage.py` | `artifacts/logs/signature_leakage/<UTC ts>.log` | `Saved →` / `Mirrored →` lines; output in `artifacts/experiments/signature_leakage/<ts>/` | `MAX_STEPS=1 SEEDS="0"` |
+
+(The script tries `conda activate thesis`. That env doesn't exist in the container, so a `[warn] 'conda activate thesis' failed` line is expected and harmless: it falls back to the image's Python. A `FATAL: … can't import the core deps` line is a real failure.)
+
+### Watching for crashes
+
+When asked to keep an eye on a run, use the **Monitor** tool (load it via ToolSearch) with a polling loop over SSH, not repeated manual checks. Poll every ~5 minutes; print a line only when something changes, so each line is worth a notification:
+
+```bash
+LOGDIR=artifacts/logs/signature_leakage   # from the table
+PROC=run_signature_leakage.py
+while true; do
+  out=$(ssh -o ConnectTimeout=15 dgx-spark "cd ~/Desktop/msc-thesis; L=\$(ls -t $LOGDIR/*.log | head -1); \
+    docker exec thesis-run pgrep -f $PROC >/dev/null && echo ALIVE || echo GONE; \
+    echo \$L; grep -cE 'Traceback|Error|FATAL|FAILED|Killed|out of memory' \$L; grep -c 'Saved →' \$L; tail -n 1 \$L" 2>&1) \
+    || { echo "SSH_FAIL $(date +%H:%M)"; sleep 300; continue; }
+  state=$(echo "$out" | sed -n 1p); errs=$(echo "$out" | sed -n 3p); saved=$(echo "$out" | sed -n 4p)
+  [[ "$errs" != "0" ]] && echo "ERROR_IN_LOG: $(echo "$out" | sed -n 2p)"
+  if [[ "$state" == GONE ]]; then
+    [[ "$saved" != "0" ]] && echo "FINISHED_OK" || echo "PROCESS_GONE_WITHOUT_SAVE (crash or OOM kill)"
+    break
+  fi
+  sleep 300
+done
+```
+
+How to interpret it:
+- `ERROR_IN_LOG`: show the user the traceback (`grep -n -B5 -A20 Traceback <log>`), say what failed, and don't fix or restart without their OK. Some scripts log handled warnings that match `Error`, so read the context before calling it a crash.
+- `PROCESS_GONE_WITHOUT_SAVE` with no traceback is usually an OOM kill. Check with `ssh dgx-spark 'free -h; dmesg 2>/dev/null | tail -5'` (dmesg may need root; if denied, say so).
+- `FINISHED_OK`: offer to rsync the outputs (section 4) and name the notebook (section 5).
+- Repeated `SSH_FAIL`: Tailscale or the Mac's network dropped. The run on the DGX is unaffected.
+
+Monitoring only lasts as long as this Claude session is open and the Mac is awake. For an overnight run, tell the user that, and suggest they keep the Mac awake or just check back later with a one-off status check.
+
+## 3b. Read-only status checks
+
+These are always fine:
 
 ```bash
 ssh dgx-spark 'docker exec thesis-run bash -lc "pgrep -af \"run_.*\\.(sh|py)\" || echo NOT_RUNNING"'
