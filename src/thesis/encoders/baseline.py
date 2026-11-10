@@ -35,7 +35,7 @@ def compute_cscas_baseline_features(tx: AlertGroup) -> dict[str, Any]:
     """
     Baseline features for CSCAS: the paper's own per-row columns, taken as-is
     off the CSV -- no bucketing, no derived multi_* flags. Those derived
-    features live in mining/attribute_features.py as mining candidates instead.
+    features live in mining/common/attribute_features.py as mining candidates instead.
 
     Deliberately excludes, same reduced-feature-set reasoning as
     baselines/cscas_base.py's module docstring (none of these are things a

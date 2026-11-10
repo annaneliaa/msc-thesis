@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from thesis.mining.attribute_features import (
+from thesis.mining.common.attribute_features import (
     compute_candidate_attribute_features,
     cve_age_years,
 )

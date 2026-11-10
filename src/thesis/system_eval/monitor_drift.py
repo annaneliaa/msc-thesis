@@ -78,7 +78,7 @@ from thesis.system_eval.temporal_decay import (
 from thesis.features.dynamic_schema_builder import build_dynamic_schema
 from thesis.features.schema_builder import build_symbolic_feature_schema
 from thesis.metrics.shortlist import ShortlistedConfig, load_shortlist
-from thesis.mining.attribute_contrast_mining import (
+from thesis.mining.atemporal.contrast_tree.attribute_contrast_mining import (
     build_categorical_predicate_matrix,
     compute_predicate_contrast_stats,
     contrast_survivor_predicates,
@@ -86,7 +86,7 @@ from thesis.mining.attribute_contrast_mining import (
     merge_predicate_alphabets,
     surviving_single_columns,
 )
-from thesis.mining.decision_tree_rule_mining import (
+from thesis.mining.atemporal.contrast_tree.decision_tree_rule_mining import (
     build_training_matrix,
     extract_leaf_rules,
     fit_rule_tree,

@@ -205,7 +205,7 @@ def load_ait_ads_baseline_split_with_groups(
     AlertGroup lists aligned 1:1 by position with (train, test) -- for
     ait_ads_mining.py, which needs the actual AlertGroup objects (not just
     the encoded base-schema columns) to run
-    thesis.mining.attribute_mining_job.run_alert_group_attribute_mining_job
+    thesis.mining.atemporal.contrast_tree.attribute_mining_job.run_alert_group_attribute_mining_job
     on the train split, the same way cscas_mining.py does for CSCAS.
     """
     df, alert_groups = _load_encoded_ait_ads(scenario, grouping_method, cache_dir)

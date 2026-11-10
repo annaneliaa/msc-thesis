@@ -1,6 +1,6 @@
 """Per-window, train-split-only attribute mining cache.
 
-Sibling to mining/attribute_schema_cache.py, which fingerprints and caches a
+Sibling to mining/atemporal/contrast_tree/attribute_schema_cache.py, which fingerprints and caches a
 schema mined from an arbitrary alert_groups file. This module adds the
 windowing layer on top: given a full (chronologically sorted) alert_groups
 list, a granularity, and a window index, it resolves that window's train
@@ -50,8 +50,8 @@ from thesis.pipeline.pipeline import (
     compute_window_bounds,
     compute_window_train_end,
 )
-from thesis.mining.attribute_features import default_leaky_attribute_fields
-from thesis.mining.attribute_schema_cache import (
+from thesis.mining.common.attribute_features import default_leaky_attribute_fields
+from thesis.mining.atemporal.contrast_tree.attribute_schema_cache import (
     compute_fingerprint_from_identity,
     lookup as lookup_cached_schema,
     mine_or_reuse_attribute_schema,

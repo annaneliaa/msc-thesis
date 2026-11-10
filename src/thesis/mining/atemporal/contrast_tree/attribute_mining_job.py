@@ -21,7 +21,7 @@ from thesis.utils.mlflow_utils import (
 )
 from thesis.utils.runs import create_run_dir, save_dataframe_artifact, write_manifest
 
-from thesis.mining.attribute_contrast_mining import (
+from thesis.mining.atemporal.contrast_tree.attribute_contrast_mining import (
     build_categorical_predicate_matrix,
     compute_predicate_contrast_stats,
     filter_contrast_survivors,
@@ -29,7 +29,7 @@ from thesis.mining.attribute_contrast_mining import (
     merge_predicate_alphabets,
     surviving_single_columns,
 )
-from thesis.mining.decision_tree_rule_mining import (
+from thesis.mining.atemporal.contrast_tree.decision_tree_rule_mining import (
     build_training_matrix,
     fit_and_extract_rules,
 )

@@ -522,7 +522,7 @@ def resolve_window_alert_groups_path(
 ) -> Path:
     """Serialize the chronological window `win_idx` (see compute_window_bounds) of
     `alert_groups` at granularity `gran` to its own file, so it gets its own
-    attribute-mining cache fingerprint (thesis.mining.attribute_schema_cache hashes
+    attribute-mining cache fingerprint (thesis.mining.atemporal.contrast_tree.attribute_schema_cache hashes
     alert_groups_path + config). Sibling to resolve_mining_alert_groups_path, which
     always slices the first mine_frac fraction instead of an arbitrary window -- use
     this one to mine every window across the full timeline instead of just the first.
@@ -806,7 +806,7 @@ def combine_mining_results(
     Returns (combined_df, n_itemsets, n_sequences) where the counts reflect
     the post-filter sizes before merging.
     """
-    from thesis.mining.util import filter_mined_itemsets, filter_mined_sequences
+    from thesis.mining.common.util import filter_mined_itemsets, filter_mined_sequences
 
     eclat_df = eclat_mined_df.copy()
     item_seq_df = item_seq_mined_df.copy()

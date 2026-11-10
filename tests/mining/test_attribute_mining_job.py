@@ -1,7 +1,9 @@
 import json
 from pathlib import Path
 
-from thesis.mining.attribute_mining_job import run_alert_group_attribute_mining_job
+from thesis.mining.atemporal.contrast_tree.attribute_mining_job import (
+    run_alert_group_attribute_mining_job,
+)
 from thesis.pipeline.pipeline import alert_group_to_dict
 from thesis.schemas.groups import AlertGroup
 from thesis.schemas.mining import AttributeMiningConfig, DecisionTreeRuleConfig

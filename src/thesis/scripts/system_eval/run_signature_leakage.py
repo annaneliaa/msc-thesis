@@ -57,6 +57,11 @@ def main() -> None:
     )
     p.add_argument("--force", action="store_true", help="ignore cached mined schemas")
     p.add_argument("--output-dir", type=Path, default=None)
+    p.add_argument(
+        "--experiment",
+        default="signature_leakage",
+        help="output folder name under artifacts/experiments/ (and results/paper/)",
+    )
     a = p.parse_args()
 
     out = run_signature_ablation(
@@ -71,6 +76,7 @@ def main() -> None:
             max_steps=a.max_steps,
             force_remine=a.force,
             out_dir=a.output_dir,
+            experiment=a.experiment,
         )
     )
     print(f"Saved → {out}")

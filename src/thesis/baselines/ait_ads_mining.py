@@ -2,7 +2,7 @@
 AIT-ADS counterpart to baselines/cscas_mining.py, and the mining sibling of
 baselines/ait_ads_rf.py: the same 5-column AIT-ADS base schema, extended
 with symbolic features mined by the attribute-mining pipeline (contrast-set
-+ decision-tree rules, see thesis.mining.attribute_mining_job) on the SAME
++ decision-tree rules, see thesis.mining.atemporal.contrast_tree.attribute_mining_job) on the SAME
 train split, evaluated per (grouping_method, scenario).
 
 Uses _ait_ads_data.load_ait_ads_baseline_split_with_groups -- the
@@ -91,7 +91,9 @@ from thesis.baselines._sampling import class_weighted_pool, random_undersample_p
 from thesis.configs import load_scenarios
 from thesis.encoders.symbolic import SymbolicFeatureEncoder
 from thesis.features.schema_builder import build_symbolic_feature_schema
-from thesis.mining.attribute_mining_job import run_alert_group_attribute_mining_job
+from thesis.mining.atemporal.contrast_tree.attribute_mining_job import (
+    run_alert_group_attribute_mining_job,
+)
 from thesis.paths import CACHE_DIR
 from thesis.pipeline.pipeline import save_alert_groups_json
 

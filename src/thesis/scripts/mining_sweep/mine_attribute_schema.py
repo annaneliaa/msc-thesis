@@ -7,7 +7,7 @@ scenario and reuses it for every model in the comparison (logreg/rf/mlp) --
 but that in-memory reuse only lasts for a single invocation of the script.
 This script isolates just the mining step (ingest -> attribute mining ->
 schema registration) behind the same persistent, on-disk cache
-(thesis.mining.attribute_schema_cache) that run_symbolic_experiment now
+(thesis.mining.atemporal.contrast_tree.attribute_schema_cache) that run_symbolic_experiment now
 checks automatically, so:
 
   - Re-running run_model_comparison_attribute.py (e.g. after a crash, or
@@ -32,7 +32,7 @@ Usage:
 (--min-attack-coverage etc.) behave exactly as in
 run_model_comparison_attribute.py, and must match between this script and a
 later comparison run for the cache to be reused (they're part of the cache
-key -- see thesis.mining.attribute_schema_cache.compute_fingerprint). --windowed
+key -- see thesis.mining.atemporal.contrast_tree.attribute_schema_cache.compute_fingerprint). --windowed
 is specific to this script (run_model_comparison_attribute.py has no equivalent);
 it changes what --mine-frac means here, so don't pass it if you want the mined
 schema to double as an experiment's mine/train split.
@@ -48,7 +48,9 @@ from pathlib import Path
 from thesis.config import GroupingConfig
 from thesis.configs import dataset_for_scenario
 from thesis.grouping.group_alerts import CSCAS_PREGROUPED_METHOD
-from thesis.mining.attribute_schema_cache import mine_or_reuse_attribute_schema
+from thesis.mining.atemporal.contrast_tree.attribute_schema_cache import (
+    mine_or_reuse_attribute_schema,
+)
 from thesis.paths import CACHE_DIR
 from thesis.pipeline.pipeline import (
     compute_window_bounds,

@@ -11,7 +11,7 @@ class SymbolicExperimentConfig:
     scenario: str
     # mining strategy: "cooccurrence" (default, existing Eclat/PrefixSpan
     # cross-signature/cross-alert basket mining) or "attribute" (per-alert-group
-    # contrast-set + decision-tree rule mining -- see mining/attribute_mining_job.py)
+    # contrast-set + decision-tree rule mining -- see mining/atemporal/contrast_tree/attribute_mining_job.py)
     mining_strategy: str = "cooccurrence"
     attribute_mining_config: AttributeMiningConfig = field(
         default_factory=AttributeMiningConfig

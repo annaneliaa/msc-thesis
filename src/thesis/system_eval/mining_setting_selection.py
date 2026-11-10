@@ -67,13 +67,15 @@ from thesis.experiments._shared import (
 )
 from thesis.features.persistence import load_symbolic_feature_schema
 from thesis.grouping.group_alerts import CSCAS_PREGROUPED_METHOD
-from thesis.mining.attribute_contrast_mining import (
+from thesis.mining.atemporal.contrast_tree.attribute_contrast_mining import (
     build_categorical_predicate_matrix,
     compute_predicate_contrast_stats,
     filter_contrast_survivors,
 )
-from thesis.mining.attribute_features import default_leaky_attribute_fields
-from thesis.mining.window_schema_cache import get_or_mine_slice_attribute_schema
+from thesis.mining.common.attribute_features import default_leaky_attribute_fields
+from thesis.mining.atemporal.contrast_tree.window_schema_cache import (
+    get_or_mine_slice_attribute_schema,
+)
 from thesis.paths import RESULTS_DIR, ROOT
 from thesis.pipeline.pipeline import compute_window_train_end
 from thesis.schemas.features import FeatureSchema
@@ -392,6 +394,17 @@ def _simplest(df: pd.DataFrame, axes) -> pd.Series:
     return df.loc[order[0]]
 
 
+def _tolerance(grid: pd.DataFrame, best: pd.Series, std: str) -> float:
+    """Tie tolerance around the best setting: its own std, but never less than
+    the typical (median) std of that measure across the whole grid. Without
+    the floor, a best setting whose seeds happen to agree exactly (std 0.0000
+    in the first F1 run) makes nothing a tie, and the simplest-within-noise
+    rule silently degrades to a plain argmax."""
+    own = best[std] if np.isfinite(best[std]) else 0.0
+    typical = grid[std].median() if std in grid and grid[std].notna().any() else 0.0
+    return float(max(own, typical if np.isfinite(typical) else 0.0))
+
+
 def select_thesis_rule(
     grid: pd.DataFrame, anchor: dict = THESIS_SETTING, max_passes: int = 3
 ) -> dict:
@@ -429,7 +442,7 @@ def select_thesis_rule(
                 continue
             metric, std = rules[axis]
             best = sl.loc[sl[metric].idxmax()]
-            tol = best[std] if np.isfinite(best[std]) else 0.0
+            tol = _tolerance(grid, best, std)
             ok = sl[sl[metric] >= best[metric] - tol]
             pick = _simplest(ok, [axis])[axis]
             trace.append(
@@ -458,7 +471,7 @@ def select_by_metric(grid: pd.DataFrame, metric: str = "val_f1") -> dict:
     axes = list(STAGE2_GRID)
     mean, std = f"{metric}_mean", f"{metric}_std"
     best = grid.loc[grid[mean].idxmax()]
-    tol = best[std] if np.isfinite(best[std]) else 0.0
+    tol = _tolerance(grid, best, std)
     ok = grid[grid[mean] >= best[mean] - tol]
     order = sorted(
         ok.index,

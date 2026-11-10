@@ -21,9 +21,9 @@ from thesis.utils.runs import (
     write_manifest,
 )
 
-from thesis.mining.eclat_mining import run_eclat
-from thesis.mining.or_mining import mine_or_disjunctions
-from thesis.mining.util import (
+from thesis.mining.atemporal.eclat.eclat_mining import run_eclat
+from thesis.mining.atemporal.eclat.or_mining import mine_or_disjunctions
+from thesis.mining.common.util import (
     add_cross_label_supports,
     add_confidence_scores,
     cleanup_run_intermediates,
@@ -31,8 +31,10 @@ from thesis.mining.util import (
     save_filtered_views,
     select_top_itemsets_per_class,
 )
-from thesis.mining.load_mining_alert_groups import load_and_prepare_mining_alert_groups
-from thesis.mining.token_abstraction import (
+from thesis.mining.common.load_mining_alert_groups import (
+    load_and_prepare_mining_alert_groups,
+)
+from thesis.mining.common.token_abstraction import (
     abstract_mail_hosts_mined_df,
     abstract_mail_hosts_or_clauses_df,
 )

@@ -104,7 +104,7 @@ from thesis.system_eval.temporal_decay import (
 )
 from thesis.features.persistence import load_symbolic_feature_schema
 from thesis.metrics.shortlist import ShortlistedConfig, load_shortlist
-from thesis.mining.window_schema_cache import (
+from thesis.mining.atemporal.contrast_tree.window_schema_cache import (
     get_or_mine_full_window_attribute_schema,
     get_or_mine_slice_attribute_schema,
 )

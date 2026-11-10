@@ -3,7 +3,7 @@
 These are dataset-level statistics, not tied to any mining run: given a raw
 field and a binary label, how strongly does that one field on its own
 separate the two classes? They complement `growth_rate`
-(`thesis.mining.attribute_contrast_mining.compute_predicate_contrast_stats`,
+(`thesis.mining.atemporal.contrast_tree.attribute_contrast_mining.compute_predicate_contrast_stats`,
 computed per *predicate value* after mining has already enumerated
 candidates) with a per-*field* view computed before any mining happens --
 "which raw fields are likely to carry useful signal" ahead of running the
@@ -94,7 +94,7 @@ def point_biserial_score(
     numeric) -- captures the strength and direction of an (approximately)
     monotonic relationship. Rows where `x == sentinel` (e.g. `-1` for a
     "not applicable" numeric field, this codebase's convention -- see
-    `thesis.mining.attribute_features._NOT_APPLICABLE`) are dropped first if
+    `thesis.mining.common.attribute_features._NOT_APPLICABLE`) are dropped first if
     `sentinel` is given, so a placeholder value doesn't get treated as real
     data. Returns `(r, p_value)`; `(nan, nan)` if fewer than 2 valid rows
     remain, or if `x` or `y` is constant among the valid rows (correlation

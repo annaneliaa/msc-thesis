@@ -4,7 +4,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from thesis.mining.load_mining_alert_groups import (
+from thesis.mining.common.load_mining_alert_groups import (
     build_tidsets,
     load_and_prepare_mining_alert_groups,
     load_mining_alert_groups_from_cache,

@@ -74,3 +74,19 @@ def test_f1_rule_prefers_simplest_within_one_std():
     assert pick["max_diverse_rounds"] == 1
     assert pick["max_depth_attack"] == 2
     assert pick["min_samples_leaf"] == 20
+
+
+def test_tolerance_floor_when_best_has_zero_seed_std():
+    # The best setting's seeds agree exactly (std 0), but its F1 edge over the
+    # simpler setting is far below the grid's typical noise -> still a tie.
+    g = _grid(
+        prec_attack=lambda p: 0.9,
+        recall_benign=lambda p: 0.99,
+        f1=lambda p: 0.90 + 0.0005 * (p["max_diverse_rounds"] == 3),
+        std=0.01,
+    )
+    best = g["val_f1_mean"].idxmax()
+    g.loc[best, "val_f1_std"] = 0.0
+    pick = select_by_metric(g, "val_f1")
+    assert pick["tolerance"] == 0.01
+    assert pick["max_diverse_rounds"] == 1

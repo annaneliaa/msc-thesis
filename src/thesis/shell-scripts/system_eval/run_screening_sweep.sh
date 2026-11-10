@@ -7,7 +7,7 @@
 # mine_frac) combination itself), run_screening_sweep.py already sweeps its
 # whole grid internally per scenario -- mined schemas are cached per
 # (scenario, granularity, window, mining_setting) on disk (see
-# thesis.mining.window_schema_cache), so rerunning this script only mines
+# thesis.mining.atemporal.contrast_tree.window_schema_cache), so rerunning this script only mines
 # whatever isn't already cached.
 #
 # Usage:

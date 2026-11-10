@@ -21,13 +21,19 @@ from thesis.utils.runs import (
     write_manifest,
 )
 
-from thesis.mining.prefixspan_mining import run_prefixspan, run_itemset_prefixspan
-from thesis.mining.repeat_encoding import encode_runs, encode_sequence_of_itemsets
-from thesis.mining.token_abstraction import (
+from thesis.mining.temporal.prefixspan.prefixspan_mining import (
+    run_prefixspan,
+    run_itemset_prefixspan,
+)
+from thesis.mining.temporal.prefixspan.repeat_encoding import (
+    encode_runs,
+    encode_sequence_of_itemsets,
+)
+from thesis.mining.common.token_abstraction import (
     abstract_mail_hosts_item_sequence_df,
     abstract_mail_hosts_itemset_sequence_df,
 )
-from thesis.mining.util import (
+from thesis.mining.common.util import (
     add_cross_label_sequence_supports,
     add_cross_label_itemset_sequence_supports,
     cleanup_run_intermediates,
@@ -36,7 +42,9 @@ from thesis.mining.util import (
     save_filtered_itemset_sequence_views,
     add_confidence_scores,
 )
-from thesis.mining.load_mining_alert_groups import load_and_prepare_mining_alert_groups
+from thesis.mining.common.load_mining_alert_groups import (
+    load_and_prepare_mining_alert_groups,
+)
 
 
 def sort_frequent_sequences(

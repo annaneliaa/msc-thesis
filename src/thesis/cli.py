@@ -13,9 +13,11 @@ from thesis.config import (
 from thesis.features.manifest import initialize_feature_manifest
 from thesis.features.schema_registry import FEATURE_SCHEMAS
 from thesis.features.service import build_persist_and_register_symbolic_schema
-from thesis.mining.attribute_features import default_leaky_attribute_fields
-from thesis.mining.itemset_mining_job import run_alert_group_eclat_job
-from thesis.mining.sequence_mining_job import run_alert_group_prefixspan_job
+from thesis.mining.common.attribute_features import default_leaky_attribute_fields
+from thesis.mining.atemporal.eclat.itemset_mining_job import run_alert_group_eclat_job
+from thesis.mining.temporal.prefixspan.sequence_mining_job import (
+    run_alert_group_prefixspan_job,
+)
 from thesis.paths import ensure_artifact_dirs
 from thesis.pipeline.pipeline import (
     build_encoded_alert_groups_df,
@@ -351,7 +353,7 @@ def mine_alert_groups(
     )
 
     if mining_strategy == "attribute":
-        from thesis.mining.attribute_mining_job import (
+        from thesis.mining.atemporal.contrast_tree.attribute_mining_job import (
             run_alert_group_attribute_mining_job,
         )
 

@@ -35,7 +35,7 @@ from thesis.schemas.groups import AlertGroup
 from thesis.schemas.preprocessing import ATTR_SIMILARITY_COLUMNS
 
 # Same sentinel the mining candidate space uses for an inapplicable
-# similarity column (mining/attribute_features.py `_NOT_APPLICABLE`).
+# similarity column (mining/common/attribute_features.py `_NOT_APPLICABLE`).
 _NOT_APPLICABLE = -1.0
 
 # The 5 deployment-realistic base columns (encoders/baseline.py) come first,

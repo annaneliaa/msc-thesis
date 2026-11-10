@@ -3,7 +3,7 @@ Same experimental setup as baselines/cscas_base.py (split, training-pool
 sampling, seeds, eval set) -- the feature matrix is cscas_base.py's 5-feature
 reduced base schema extended with symbolic features mined by the
 attribute-mining pipeline (contrast-set + decision-tree rules, see
-thesis.mining.attribute_mining_job) on the SAME train split.
+thesis.mining.atemporal.contrast_tree.attribute_mining_job) on the SAME train split.
 
 The mined matrix is then fit with all three tabular classifiers -- the
 mining counterparts of cscas_base.py / cscas_logreg.py / cscas_xgboost.py --
@@ -82,8 +82,10 @@ from thesis.baselines._sampling import (
 )
 from thesis.encoders.symbolic import SymbolicFeatureEncoder
 from thesis.features.schema_builder import build_symbolic_feature_schema
-from thesis.mining.attribute_features import default_leaky_attribute_fields
-from thesis.mining.attribute_mining_job import run_alert_group_attribute_mining_job
+from thesis.mining.common.attribute_features import default_leaky_attribute_fields
+from thesis.mining.atemporal.contrast_tree.attribute_mining_job import (
+    run_alert_group_attribute_mining_job,
+)
 from thesis.paths import CACHE_DIR
 from thesis.pipeline.pipeline import rows_to_cscas_alert_groups, save_alert_groups_json
 

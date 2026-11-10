@@ -4,7 +4,7 @@ Extracted from experiments/symbolic.py so that module only orchestrates the
 8-step symbolic experiment pipeline and doesn't also carry the ~400-line
 implementation of one of its two mining strategies. Behavior is unchanged
 from before the extraction; this is the "cooccurrence" counterpart to
-mining/attribute_schema_cache.py's per-alert-group attribute mining path.
+mining/atemporal/contrast_tree/attribute_schema_cache.py's per-alert-group attribute mining path.
 """
 
 from __future__ import annotations
@@ -16,14 +16,16 @@ import pandas as pd
 
 from thesis.config import load_mining_filter_config
 from thesis.features.service import build_persist_and_register_symbolic_schema
-from thesis.mining.itemset_mining_job import run_alert_group_eclat_job
-from thesis.mining.sequence_mining_job import run_alert_group_prefixspan_job
-from thesis.mining.token_abstraction import (
+from thesis.mining.atemporal.eclat.itemset_mining_job import run_alert_group_eclat_job
+from thesis.mining.temporal.prefixspan.sequence_mining_job import (
+    run_alert_group_prefixspan_job,
+)
+from thesis.mining.common.token_abstraction import (
     abstract_mined_df,
     abstract_or_clauses_df,
     load_abstraction_map,
 )
-from thesis.mining.util import (
+from thesis.mining.common.util import (
     filter_mined_itemsets,
     filter_mined_sequences,
     filter_or_patterns,

@@ -10,7 +10,7 @@ see the analysis functions below for details on each).
 Only the old cross-signature/cross-alert co-occurrence path (Eclat +
 PrefixSpan, via run_alert_group_eclat_job/run_alert_group_prefixspan_job) is
 wired up here. It does not use the newer per-alert-group attribute mining
-pipeline (mining/attribute_mining_job.py) added for CSCAS.
+pipeline (mining/atemporal/contrast_tree/attribute_mining_job.py) added for CSCAS.
 
 Usage:
     # AIT-ADS scenarios
@@ -50,11 +50,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
 from thesis.configs import dataset_for_scenario
-from thesis.mining.util import (
+from thesis.mining.common.util import (
     filter_mined_sequences,
     remove_prefix_subsumed,
 )
-from thesis.mining.util import filter_mined_itemsets, remove_subset_subsumed
+from thesis.mining.common.util import filter_mined_itemsets, remove_subset_subsumed
 
 import pandas as pd
 
@@ -394,8 +394,12 @@ def _run_mining_for_window(
             with tx_path.open("w") as f:
                 json.dump(_rows_to_mining_format(rows), f)
 
-        from thesis.mining.itemset_mining_job import run_alert_group_eclat_job
-        from thesis.mining.sequence_mining_job import run_alert_group_prefixspan_job
+        from thesis.mining.atemporal.eclat.itemset_mining_job import (
+            run_alert_group_eclat_job,
+        )
+        from thesis.mining.temporal.prefixspan.sequence_mining_job import (
+            run_alert_group_prefixspan_job,
+        )
 
         run_name = f"window_sweep_{key}"
         job_dir = win_cache / "mining"
@@ -455,7 +459,10 @@ def _run_mining_for_window(
                 seq_raw, fc.item_sequences, f_attack_scenario, smart_ratio_threshold
             )
         else:
-            from thesis.mining.util import filter_mined_itemsets, filter_mined_sequences
+            from thesis.mining.common.util import (
+                filter_mined_itemsets,
+                filter_mined_sequences,
+            )
 
             f = fc.itemsets
             eclat_filtered = filter_mined_itemsets(

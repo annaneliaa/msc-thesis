@@ -70,7 +70,9 @@ from thesis.baselines._results import anomaly_results_current, save_anomaly_resu
 from thesis.configs import load_scenarios
 from thesis.encoders.symbolic import SymbolicFeatureEncoder
 from thesis.features.schema_builder import build_symbolic_feature_schema
-from thesis.mining.attribute_mining_job import run_alert_group_attribute_mining_job
+from thesis.mining.atemporal.contrast_tree.attribute_mining_job import (
+    run_alert_group_attribute_mining_job,
+)
 from thesis.paths import CACHE_DIR
 from thesis.pipeline.pipeline import save_alert_groups_json
 from thesis.training.workload import (

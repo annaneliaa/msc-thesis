@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from thesis.experiments._shared import LABEL_MAP
-from thesis.mining.attribute_features import compute_candidate_attribute_features
+from thesis.mining.common.attribute_features import compute_candidate_attribute_features
 from thesis.monitor.predicate_eval import evaluate_all_conditions, evaluate_condition
 from thesis.schemas.dynamic_schema import DynamicSchema
 from thesis.schemas.groups import AlertGroup
@@ -64,7 +64,7 @@ def compute_signal_1(
 
     compute_candidate_attribute_features(tx) is called once per group (it
     does real per-group computation, not a cheap lookup -- see
-    mining/attribute_features.py), not once per predicate.
+    mining/common/attribute_features.py), not once per predicate.
 
     psi_threshold overrides the module-default PSI_ELEVATED_THRESHOLD for
     `elevated` -- the observe-only monitor_drift.py experiment leaves this

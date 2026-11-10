@@ -5,13 +5,13 @@ from pathlib import Path
 
 from thesis.features.dynamic_schema_builder import build_dynamic_schema
 from thesis.features.dynamic_schema_registry import DynamicSchemaRegistry
-from thesis.mining.attribute_contrast_mining import (
+from thesis.mining.atemporal.contrast_tree.attribute_contrast_mining import (
     build_categorical_predicate_matrix,
     compute_predicate_contrast_stats,
     filter_contrast_survivors,
     surviving_single_columns,
 )
-from thesis.mining.decision_tree_rule_mining import (
+from thesis.mining.atemporal.contrast_tree.decision_tree_rule_mining import (
     build_training_matrix,
     extract_leaf_rules,
     fit_rule_tree,

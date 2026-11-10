@@ -23,7 +23,7 @@ import threading
 from pathlib import Path
 
 from thesis.features.service import build_persist_and_register_symbolic_schema
-from thesis.mining.attribute_features import default_leaky_attribute_fields
+from thesis.mining.common.attribute_features import default_leaky_attribute_fields
 from thesis.paths import FEATURE_DIR
 from thesis.schemas.mining import AttributeMiningConfig
 
@@ -200,7 +200,9 @@ def mine_or_reuse_attribute_schema(
             )
             return cached, None, {"cache_hit": True, "fingerprint": fingerprint}
 
-    from thesis.mining.attribute_mining_job import run_alert_group_attribute_mining_job
+    from thesis.mining.atemporal.contrast_tree.attribute_mining_job import (
+        run_alert_group_attribute_mining_job,
+    )
 
     result = run_alert_group_attribute_mining_job(
         alert_groups_path=alert_groups_path,

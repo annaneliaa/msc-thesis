@@ -3,7 +3,7 @@ Test repeat encoding functions.
 """
 
 import pytest
-from thesis.mining.repeat_encoding import (
+from thesis.mining.temporal.prefixspan.repeat_encoding import (
     encode_runs,
     encode_sequence_of_itemsets,
     decode_sequence_string,

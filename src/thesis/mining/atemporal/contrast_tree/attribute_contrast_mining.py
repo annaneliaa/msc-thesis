@@ -6,7 +6,7 @@ from typing import Any, Sequence
 import numpy as np
 import pandas as pd
 
-from thesis.mining.attribute_features import (
+from thesis.mining.common.attribute_features import (
     BINARY_CATEGORICAL_FIELDS,
     MULTI_VALUED_CATEGORICAL_FIELDS,
     NUMERIC_FIELDS,

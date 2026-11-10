@@ -9,14 +9,16 @@ import numpy as np
 
 from thesis.encoders.symbolic import SymbolicFeatureEncoder
 from thesis.features.schema_builder import build_symbolic_feature_schema
-from thesis.mining.attribute_contrast_mining import (
+from thesis.mining.atemporal.contrast_tree.attribute_contrast_mining import (
     build_categorical_predicate_matrix,
     compute_predicate_contrast_stats,
     contrast_survivor_predicates,
     filter_contrast_survivors,
     merge_predicate_alphabets,
 )
-from thesis.mining.attribute_mining_job import run_alert_group_attribute_mining_job
+from thesis.mining.atemporal.contrast_tree.attribute_mining_job import (
+    run_alert_group_attribute_mining_job,
+)
 from thesis.pipeline.pipeline import save_alert_groups_json
 from thesis.schemas.features import AttributePredicate
 from thesis.schemas.groups import AlertGroup

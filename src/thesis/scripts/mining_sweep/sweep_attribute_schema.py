@@ -20,7 +20,7 @@ several of MINE_FRACS's granularities each cover the *entire* timeline
 across their windows, so that piled up ~6x the dataset's size in redundant
 JSON on disk (worst case: mine_frac=1.0's single window duplicates the
 entire ~3GB raw file by itself) and exhausted disk space mid-run. This is
-exactly the failure mode thesis.mining.window_schema_cache's docstring
+exactly the failure mode thesis.mining.atemporal.contrast_tree.window_schema_cache's docstring
 describes -- fixed the same way here: jobs are grouped by (mine_frac,
 win_idx), the group's slice file is materialized once, every config for
 that window runs through the thread pool against it, and the slice file is
@@ -62,7 +62,7 @@ means each axis's own effect is fully characterized varying it alone against
 a single anchor point in the *other* stage, without paying for a cross
 product with that stage's own axes.
 
-Step 2 fits *two* trees now, not one (thesis.mining.decision_tree_rule_mining
+Step 2 fits *two* trees now, not one (thesis.mining.atemporal.contrast_tree.decision_tree_rule_mining
 .fit_and_extract_rules, via DecisionTreeRuleConfig.max_depth /
 .max_depth_attack): a single shared max_depth couldn't simultaneously
 maximize attack-leaf precision and benign-leaf recall, since they move in
@@ -107,7 +107,7 @@ passed -- the same call the single-tree script made once its own cross-check
 was confirmed redundant.
 
 Every (alert_groups window file, AttributeMiningConfig) combination is
-cached on disk (thesis.mining.attribute_schema_cache) exactly as before, so
+cached on disk (thesis.mining.atemporal.contrast_tree.attribute_schema_cache) exactly as before, so
 this script is idempotent the same way the old one was -- rerunning it only
 mines whatever isn't already cached.
 
@@ -212,7 +212,7 @@ import pandas as pd
 import yaml
 
 from thesis.grouping.group_alerts import CSCAS_PREGROUPED_METHOD
-from thesis.mining.attribute_schema_cache import (
+from thesis.mining.atemporal.contrast_tree.attribute_schema_cache import (
     compute_fingerprint_from_identity,
     lookup,
     mine_or_reuse_attribute_schema,
@@ -417,7 +417,7 @@ def window_fingerprint(
     mine_or_reuse_attribute_schema derive its own fingerprint from that
     disposable file defeats the cache across separate script runs even
     when nothing about the mining inputs changed -- the exact failure mode
-    thesis.mining.window_schema_cache's module docstring describes, and
+    thesis.mining.atemporal.contrast_tree.window_schema_cache's module docstring describes, and
     solves the same way: same identity fields (tag="full" -- this script
     mines each window in full, no held-out split, like
     get_or_mine_full_window_attribute_schema), so cache entries even end up

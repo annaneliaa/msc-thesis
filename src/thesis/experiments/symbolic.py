@@ -75,7 +75,9 @@ from thesis.pipeline.pipeline import (
     resolve_mining_alert_groups_path,
 )
 from thesis.pipeline.pipeline import is_single_class_split as _is_single_class_split
-from thesis.mining.attribute_schema_cache import mine_or_reuse_attribute_schema
+from thesis.mining.atemporal.contrast_tree.attribute_schema_cache import (
+    mine_or_reuse_attribute_schema,
+)
 from thesis.mining.cooccurrence_schema import mine_and_register_cooccurrence_schema
 from thesis.paths import ensure_artifact_dirs
 from thesis.schemas.experiments import SymbolicExperimentConfig, ExperimentResult

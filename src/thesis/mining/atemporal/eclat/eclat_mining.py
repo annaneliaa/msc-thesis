@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from thesis.mining.load_mining_alert_groups import build_tidsets
+from thesis.mining.common.load_mining_alert_groups import build_tidsets
 
 
 def eclat_recursive(

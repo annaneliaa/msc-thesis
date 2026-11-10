@@ -7,9 +7,11 @@ from thesis.schemas.features import (
     SymbolicFeatureSchema,
     SymbolicFeature,
 )
-from thesis.mining.attribute_features import compute_candidate_attribute_features
-from thesis.mining.repeat_encoding import encode_sequence_of_itemsets
-from thesis.mining.token_abstraction import abstract_mail_hosts
+from thesis.mining.common.attribute_features import compute_candidate_attribute_features
+from thesis.mining.temporal.prefixspan.repeat_encoding import (
+    encode_sequence_of_itemsets,
+)
+from thesis.mining.common.token_abstraction import abstract_mail_hosts
 from thesis.monitor.predicate_eval import evaluate_condition
 
 

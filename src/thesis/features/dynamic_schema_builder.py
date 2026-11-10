@@ -6,8 +6,10 @@ from typing import Any
 
 import pandas as pd
 
-from thesis.mining.attribute_contrast_mining import predicate_support_stats
-from thesis.mining.attribute_features import BINARY_CATEGORICAL_FIELDS
+from thesis.mining.atemporal.contrast_tree.attribute_contrast_mining import (
+    predicate_support_stats,
+)
+from thesis.mining.common.attribute_features import BINARY_CATEGORICAL_FIELDS
 from thesis.schemas.dynamic_schema import (
     DynamicCompoundRule,
     DynamicSchema,

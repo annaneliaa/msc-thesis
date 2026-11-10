@@ -48,7 +48,7 @@ from thesis.experiments._shared import (
 )
 from thesis.grouping.group_alerts import CSCAS_PREGROUPED_METHOD
 from thesis.metrics.shortlist import ShortlistedConfig
-from thesis.mining.attribute_features import (
+from thesis.mining.common.attribute_features import (
     CSCAS_SIGNATURE_DERIVED_FIELDS,
     _proto_mismatch,
     cve_age_years,

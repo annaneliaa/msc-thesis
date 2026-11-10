@@ -56,7 +56,9 @@ from thesis.config import load_mining_settings
 from thesis.configs import dataset_for_scenario, load_base_features
 from thesis.encoders.service import encode_alert_groups_for_schema
 from thesis.features.persistence import load_symbolic_feature_schema
-from thesis.mining.window_schema_cache import get_or_mine_window_attribute_schema
+from thesis.mining.atemporal.contrast_tree.window_schema_cache import (
+    get_or_mine_window_attribute_schema,
+)
 from thesis.paths import ensure_artifact_dirs
 from thesis.pipeline.pipeline import (
     compute_window_bounds,

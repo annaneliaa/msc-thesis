@@ -71,8 +71,10 @@ from thesis.baselines._results import save_anomaly_results
 from thesis.baselines._sampling import get_cscas_eval_subsample
 from thesis.encoders.symbolic import SymbolicFeatureEncoder
 from thesis.features.schema_builder import build_symbolic_feature_schema
-from thesis.mining.attribute_features import default_leaky_attribute_fields
-from thesis.mining.attribute_mining_job import run_alert_group_attribute_mining_job
+from thesis.mining.common.attribute_features import default_leaky_attribute_fields
+from thesis.mining.atemporal.contrast_tree.attribute_mining_job import (
+    run_alert_group_attribute_mining_job,
+)
 from thesis.paths import CACHE_DIR
 from thesis.pipeline.pipeline import rows_to_cscas_alert_groups, save_alert_groups_json
 from thesis.training.workload import compute_workload_at_recall

@@ -1,0 +1,50 @@
+# Paper Check 1, step 5: walk-forward comparison of the mining setting chosen
+# on the full timeline (Table E.13) vs. the one re-selected on W0 only by the
+# shared measure (tuning-val RF F1 at the fixed 0.5 threshold, simplest within
+# the grid's typical seed noise -- see system_eval/mining_setting_selection.py).
+# Source run: artifacts/experiments/mining_setting_selection/20261110_122525.
+#   thesis:  max_depth 1, max_depth_attack 4, min_samples_leaf 10, rounds 2
+#   w0_f1:   max_depth 1, max_depth_attack 2, min_samples_leaf 20, rounds 1
+# The thesis entry has the exact config of monitor_eda_mining_setting.yaml's
+# gr3_md1_mda4_rounds2, so it reuses that cache (names don't enter the
+# fingerprint). Used by shell-scripts/paper/run_check1_step5.sh.
+
+settings:
+- name: gr3_md1_mda4_rounds2
+  contrast:
+    min_attack_coverage: 0.05
+    min_benign_coverage: 0.05
+    min_growth_rate: 3.0
+    min_growth_rate_attack: null
+    max_p_value: null
+  tree:
+    max_depth: 1
+    max_depth_attack: 4
+    min_samples_leaf: 10
+    class_weight: balanced
+    random_state: 0
+    min_impurity_decrease: 1.0e-09
+    max_diverse_rounds: 2
+    redundancy_overlap_threshold: 0.8
+    round_min_coverage: 0.05
+    round_min_growth_rate: 3.0
+    diverse_rounds_class: null
+- name: gr3_md1_mda2_msl20_rounds1
+  contrast:
+    min_attack_coverage: 0.05
+    min_benign_coverage: 0.05
+    min_growth_rate: 3.0
+    min_growth_rate_attack: null
+    max_p_value: null
+  tree:
+    max_depth: 1
+    max_depth_attack: 2
+    min_samples_leaf: 20
+    class_weight: balanced
+    random_state: 0
+    min_impurity_decrease: 1.0e-09
+    max_diverse_rounds: 1
+    redundancy_overlap_threshold: 0.8
+    round_min_coverage: 0.05
+    round_min_growth_rate: 3.0
+    diverse_rounds_class: null
