@@ -57,6 +57,11 @@ from thesis.paths import RESULTS_DIR, ROOT
 from thesis.preprocessing.parsing import cscas_group_id
 from thesis.preprocessing.suricata_tokenization import QUALIFIER_WORDS
 from thesis.system_eval.rolling_walk_forward import fit_window
+from thesis.system_eval.rule_precision_gate import (
+    GATE_GS,
+    gated_feature_names,
+    rule_table,
+)
 from thesis.system_eval.temporal_decay import (
     WindowScheme,
     _resolve_baseline_split_idx,
@@ -320,32 +325,55 @@ def run_purity_step(
     }
 
 
-# --- Steps 2-3: (a)/(b)/(c) walk-forward ablation ----------------------------
+# --- Walk-forward ablation (Check 3 steps 2-3, Check 2 step 3) ---------------
 #
-# Arms (all RF, class-weighted, Base(5) base columns):
-#   a  Base(5), no mining                      (feature_set "baseline")
-#   b  Base(5) + mining on all items           (feature_set "symbolic")
-#   c  Base(5) + mining without signature-derived items
-#      (feature_set "symbolic", extra_exclude_fields=CSCAS_SIGNATURE_DERIVED_FIELDS)
+# An arm = (mining variant, precision gate). All arms: RF, class-weighted,
+# Base(5) base columns.
+#   a        Base(5), no mining                      (feature_set "baseline")
+#   b        Base(5) + mining on all items           (feature_set "symbolic")
+#   c        Base(5) + mining without signature-derived items
+#            (extra_exclude_fields=CSCAS_SIGNATURE_DERIVED_FIELDS)
+#   b_g<g>   b with the Check 2 precision gate at g (rule_precision_gate) --
+#            same mined schema as b, failing symbolic columns dropped before
+#            the RF fit.
 #
-# Per step i (train Wi, test Wi+1), per arm: mine + encode once, then fit one
-# RF per seed on the same encoding (mining is deterministic and cached, so the
-# seeds measure classifier variance only). Seen/unseen is per attack group in
-# Wi+1: its SignatureID appeared in Wi ("seen") -- plus a stricter
-# "seen_prior" flag (appeared anywhere before Wi+1).
+# Per step i (train Wi, test Wi+1): each mining variant is mined + encoded
+# once and shared by every arm built on it; then one RF per (arm, seed)
+# (mining is deterministic and cached, so seeds measure classifier variance
+# only). Seen/unseen is per attack group in Wi+1: its SignatureID appeared in
+# Wi ("seen") -- plus a stricter "seen_prior" (anywhere before Wi+1). Each
+# symbolic variant also logs every mined rule's attack rate on Wi and Wi+1
+# (rules.csv, rule_precision_gate.rule_table).
 
-ARMS: dict[str, tuple[str, frozenset[str] | None]] = {
-    "a": ("baseline", None),
-    "b": ("symbolic", None),
-    "c": ("symbolic", CSCAS_SIGNATURE_DERIVED_FIELDS),
+
+@dataclass(frozen=True)
+class ArmSpec:
+    feature_set: str  # "baseline" | "symbolic"
+    extra_exclude: frozenset[str] | None = None
+    gate_g: float | None = None
+    label: str = ""
+
+    @property
+    def variant(self) -> tuple:
+        return (self.feature_set, self.extra_exclude)
+
+
+ARMS: dict[str, ArmSpec] = {
+    "a": ArmSpec("baseline", label="Base(5)"),
+    "b": ArmSpec("symbolic", label="Base(5) + mining (all items)"),
+    "c": ArmSpec(
+        "symbolic",
+        CSCAS_SIGNATURE_DERIVED_FIELDS,
+        label="Base(5) + mining (no signature items)",
+    ),
+    **{
+        f"b_g{g:g}": ArmSpec(
+            "symbolic", gate_g=g, label=f"Base(5) + mining, gate g={g:g}"
+        )
+        for g in GATE_GS
+    },
 }
-ARM_LABELS = {
-    "a": "Base(5)",
-    "b": "Base(5) + mining (all items)",
-    "c": "Base(5) + mining (no signature items)",
-}
-_EXPERIMENTS_DIR = ROOT / "artifacts" / "experiments" / "signature_leakage"
-_RESULTS_MIRROR_DIR = RESULTS_DIR / "paper" / "signature-leakage"
+ARM_LABELS = {k: v.label for k, v in ARMS.items()}
 
 
 @dataclass
@@ -365,6 +393,10 @@ class SignatureAblationConfig:
     max_steps: int | None = None
     force_remine: bool = False
     out_dir: Path | None = None
+    # Output folder name: artifacts/experiments/<experiment>/ and
+    # results/paper/<experiment with "-">/.
+    experiment: str = "signature_leakage"
+    log_rules: bool = True
 
 
 def _window_days(rows: list) -> float:
@@ -399,12 +431,13 @@ def _step_metric_row(
 
 
 def run_signature_ablation(config: SignatureAblationConfig) -> Path:
-    """Walk-forward (a)/(b)/(c) x seeds. Writes, under a timestamped dir:
-    per_step_results.csv (arm x seed x step), predictions.csv.gz (every
+    """Walk-forward over `config.arms` x seeds. Writes, under a timestamped
+    dir: per_step_results.csv (arm x seed x step), predictions.csv.gz (every
     attack row and every false positive of the test windows, with
-    group_id / signature_id / seen flags / proba -- the rows seen/unseen and
-    per-signature analyses need), windows.csv, config.json. per_step_results
-    is rewritten after every step, so a crashed run keeps what it finished."""
+    group_id / signature_id / seen flags / proba), rules.csv (every mined
+    rule per step, train/next attack rate + gate verdicts), windows.csv,
+    config.json, ablation_summary.csv. per_step_results and rules are
+    rewritten after every step, so a crashed run keeps what it finished."""
     for arm in config.arms:
         if arm not in ARMS:
             raise ValueError(f"unknown arm {arm!r}; expected one of {list(ARMS)}")
@@ -426,7 +459,8 @@ def run_signature_ablation(config: SignatureAblationConfig) -> Path:
     )
 
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    out_dir = (Path(config.out_dir) if config.out_dir else _EXPERIMENTS_DIR) / ts
+    base_dir = ROOT / "artifacts" / "experiments" / config.experiment
+    out_dir = (Path(config.out_dir) if config.out_dir else base_dir) / ts
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "config.json").write_text(
         json.dumps(asdict(config), indent=2, default=str)
@@ -447,8 +481,14 @@ def run_signature_ablation(config: SignatureAblationConfig) -> Path:
         f"Output → {out_dir}  ({n_steps} steps x {len(config.arms)} arms x {len(config.seeds)} seeds)"
     )
 
+    # Arms grouped by mining variant, in first-appearance order.
+    variants: dict[tuple, list[str]] = {}
+    for arm in config.arms:
+        variants.setdefault(ARMS[arm].variant, []).append(arm)
+
     step_rows: list[dict] = []
     pred_parts: list[pd.DataFrame] = []
+    rule_parts: list[pd.DataFrame] = []
 
     for i in range(n_steps):
         tr_start, tr_end = bounds[i]
@@ -460,10 +500,10 @@ def run_signature_ablation(config: SignatureAblationConfig) -> Path:
         seen = np.isin(te_sig, np.unique(sig_ids[tr_start:tr_end]))
         seen_prior = np.isin(te_sig, np.unique(sig_ids[:te_start]))
         n_days = _window_days(test_rows)
-        _, tr_mask = labels_and_mask(groups[tr_start:tr_end])
+        tr_labels, tr_mask = labels_and_mask(groups[tr_start:tr_end])
+        y_fit = tr_labels[tr_mask].astype(int)
 
-        for arm in config.arms:
-            feature_set, extra_excl = ARMS[arm]
+        for (feature_set, extra_excl), variant_arms in variants.items():
             cfg = ShortlistedConfig(
                 feature_set=feature_set,
                 mining_setting=config.mining_setting
@@ -492,70 +532,100 @@ def run_signature_ablation(config: SignatureAblationConfig) -> Path:
             )
             if fit is None:
                 print(
-                    f"  [warn] step {i} arm {arm}: fit_window returned None -- skipped"
+                    f"  [warn] step {i} {variant_arms}: fit_window returned None -- skipped"
                 )
                 continue
             prep_s = time.perf_counter() - t0
-            y_fit = labels_and_mask(groups[tr_start:tr_end])[0][tr_mask].astype(int)
             X_te, y_te, _ = encode_target_window(
                 groups, scheme, config.gran, i + 1, fit.schema
             )
-            n_symbolic = len(fit.schema.symbolic.features) if fit.schema.symbolic else 0
+            base_cols = list(fit.schema.base.features) if fit.schema.base else []
 
-            for k, seed in enumerate(config.seeds):
-                if k == 0:
-                    model, thr = fit.model, fit.threshold
-                else:
-                    model = fit_scored_model(config.model, fit.X_fit, y_fit, seed=seed)
-                    thr = decide_threshold(
-                        y_fit,
-                        model.predict_proba(fit.X_fit)[:, 1],
-                        config.threshold_mode,
-                        config.calibrated_recall_target,
-                        model=model,
-                    )
-                proba = model.predict_proba(X_te)[:, 1]
-                step_rows.append(
-                    {
-                        "arm": arm,
-                        "seed": seed,
-                        "step_i": i,
-                        "n_test": len(y_te),
-                        "n_attack": int(y_te.sum()),
-                        "n_features": X_te.shape[1],
-                        "n_symbolic": n_symbolic,
-                        "mining_cache_hit": fit.cache_hit,
-                        "threshold": thr,
-                        "prep_wall_s": prep_s,
-                        **_step_metric_row(y_te, proba, thr, seen, seen_prior, n_days),
-                    }
+            if config.log_rules and fit.schema.symbolic is not None:
+                rt = rule_table(fit.schema, fit.X_fit, y_fit, X_te, y_te)
+                rt.insert(0, "step_i", i)
+                rt.insert(
+                    0,
+                    "variant",
+                    variant_arms[0]
+                    if len(variant_arms) == 1
+                    else "+".join(variant_arms),
                 )
-                keep = (y_te == 1) | (proba >= thr)
-                pred_parts.append(
-                    pd.DataFrame(
+                rule_parts.append(rt)
+
+            for arm in variant_arms:
+                spec = ARMS[arm]
+                if spec.gate_g is None:
+                    cols = list(fit.X_fit.columns)
+                else:
+                    cols = base_cols + gated_feature_names(
+                        fit.schema, fit.X_fit, y_fit, spec.gate_g
+                    )
+                X_fit_a, X_te_a = fit.X_fit[cols], X_te[cols]
+                n_symbolic = len(cols) - len(base_cols) if fit.schema.symbolic else 0
+
+                for k, seed in enumerate(config.seeds):
+                    if k == 0 and spec.gate_g is None:
+                        model, thr = fit.model, fit.threshold
+                    else:
+                        model = fit_scored_model(
+                            config.model, X_fit_a, y_fit, seed=seed
+                        )
+                        thr = decide_threshold(
+                            y_fit,
+                            model.predict_proba(X_fit_a)[:, 1],
+                            config.threshold_mode,
+                            config.calibrated_recall_target,
+                            model=model,
+                        )
+                    proba = model.predict_proba(X_te_a)[:, 1]
+                    step_rows.append(
                         {
                             "arm": arm,
                             "seed": seed,
                             "step_i": i,
-                            "group_id": te_gid[keep],
-                            "signature_id": te_sig[keep],
-                            "y": y_te[keep],
-                            "proba": proba[keep].astype(np.float32),
-                            "pred": (proba[keep] >= thr),
-                            "seen": seen[keep],
-                            "seen_prior": seen_prior[keep],
+                            "n_test": len(y_te),
+                            "n_attack": int(y_te.sum()),
+                            "n_features": X_te_a.shape[1],
+                            "n_symbolic": n_symbolic,
+                            "mining_cache_hit": fit.cache_hit,
+                            "threshold": thr,
+                            "prep_wall_s": prep_s,
+                            **_step_metric_row(
+                                y_te, proba, thr, seen, seen_prior, n_days
+                            ),
                         }
                     )
+                    keep = (y_te == 1) | (proba >= thr)
+                    pred_parts.append(
+                        pd.DataFrame(
+                            {
+                                "arm": arm,
+                                "seed": seed,
+                                "step_i": i,
+                                "group_id": te_gid[keep],
+                                "signature_id": te_sig[keep],
+                                "y": y_te[keep],
+                                "proba": proba[keep].astype(np.float32),
+                                "pred": (proba[keep] >= thr),
+                                "seen": seen[keep],
+                                "seen_prior": seen_prior[keep],
+                            }
+                        )
+                    )
+                last = step_rows[-1]
+                print(
+                    f"  step {i:2d} arm {arm}: f1={last['f1']:.3f} pr_auc={last['pr_auc']:.3f} "
+                    f"recall seen/unseen={last['recall_seen']:.3f}/{last['recall_unseen']:.3f} "
+                    f"(n_unseen={last['n_attack_unseen']}, {n_symbolic} symbolic, "
+                    f"{'cache' if fit.cache_hit else 'mined'}, {prep_s:.0f}s)"
                 )
-            last = step_rows[-1]
-            print(
-                f"  step {i:2d} arm {arm}: f1={last['f1']:.3f} "
-                f"recall seen/unseen={last['recall_seen']:.3f}/{last['recall_unseen']:.3f} "
-                f"(n_unseen={last['n_attack_unseen']}, {n_symbolic} symbolic, "
-                f"{'cache' if fit.cache_hit else 'mined'}, {prep_s:.0f}s)"
-            )
 
         pd.DataFrame(step_rows).to_csv(out_dir / "per_step_results.csv", index=False)
+        if rule_parts:
+            pd.concat(rule_parts, ignore_index=True).to_csv(
+                out_dir / "rules.csv", index=False
+            )
 
     pd.concat(pred_parts, ignore_index=True).to_csv(
         out_dir / "predictions.csv.gz", index=False, compression="gzip"
@@ -566,7 +636,7 @@ def run_signature_ablation(config: SignatureAblationConfig) -> Path:
     print(summary.to_string(index=False))
 
     if config.out_dir is None and config.max_steps is None:
-        mirror = _RESULTS_MIRROR_DIR / ts
+        mirror = RESULTS_DIR / "paper" / config.experiment.replace("_", "-") / ts
         try:
             shutil.copytree(out_dir, mirror, dirs_exist_ok=True)
             print(f"Mirrored → {mirror}")
