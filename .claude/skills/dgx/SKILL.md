@@ -182,18 +182,20 @@ Read-only throughout, so no permission needed for any of these checks.
 
 Run from the local repo root. Always `-a` (preserve times so reruns skip unchanged files), `-z` (compress), `--partial` (resume big files), and **always dry-run first** (`-n` with `--itemize-changes`) when syncing more than one experiment folder, then show the user what will change.
 
+The Mac's `/usr/bin/rsync` is **openrsync** (rsync 2.6.9-compatible). It does **not** support `--info=progress2` or other `--info=` flags; use `--stats` (summary at the end) or `--progress` (per file, noisy for large folders). `-n`, `--partial`, `--itemize-changes`, `--exclude`, `--backup`/`--backup-dir` all work.
+
 ```bash
 cd /Users/annavisman/stack/TUDelft/thesis/msc-thesis
 
 # results/ (small, ~90 MB)
-rsync -azh --partial --info=progress2 dgx-spark:Desktop/msc-thesis/results/ results/
+rsync -azh --partial --stats dgx-spark:Desktop/msc-thesis/results/ results/
 
 # one experiment's outputs
-rsync -azh --partial --info=progress2 \
+rsync -azh --partial --stats \
   dgx-spark:Desktop/msc-thesis/artifacts/experiments/<name>/ artifacts/experiments/<name>/
 
 # everything in artifacts EXCEPT the heavy/machine-specific bits
-rsync -azh --partial --info=progress2 \
+rsync -azh --partial --stats \
   --exclude 'cache/' --exclude 'processed-data/' --exclude '*.tmp' \
   dgx-spark:Desktop/msc-thesis/artifacts/ artifacts/
 
@@ -205,10 +207,68 @@ rsync -azh --partial dgx-spark:Desktop/msc-thesis/src/thesis/baselines/grouping/
 Rules:
 - **Trailing slashes matter**: `src/ dst/` copies the contents of `src` into `dst`. Without the slash on the source you get `dst/src/`.
 - **Never `--delete`** unless the user asks: local `artifacts/` holds results that only exist on the Mac.
-- **Exclude `artifacts/cache/` by default** (~12 GB, and a truncated DGX cache has corrupted results before). Only sync a specific cache subfolder when the user asks for it.
+- **Exclude `artifacts/cache/` by default** (~12 GB, and a truncated DGX cache has corrupted results before). Only sync cached groups when the user asks for it, following section 4b.
 - Don't sync while the run that writes those files is still going (check section 3). You'd copy half-written parquet/JSON. If the user wants it anyway, warn them.
 - Pull only. Pushing data **to** the DGX (`rsync … dgx-spark:…`) needs the user's OK each time, since it can overwrite remote results.
 - Single file? `scp dgx-spark:Desktop/msc-thesis/<path> <local path>` is fine.
+
+## 4b. Syncing cached alert groups (`artifacts/cache/`)
+
+Only when the user asks ("sync the cached groups for fox", "pull the alertbert groups"). Pull only, DGX → Mac.
+
+### Layout
+
+```
+artifacts/cache/
+├── cscas/groups/<cscas_pregrouped | cscas_pregrouped_baseline_mining | cscas_pregrouped_baseline_mining_anomaly>/   (~3.8 GB on the DGX)
+├── <ait-ads scenario>/                     fox, harrison, russellmitchell, santos, shaw, wardbeck, wheeler, wilson
+│   ├── alerts/tokenized_raw.json
+│   └── groups/<method>/                    alertbert, cscas_grouping, deepcase, fixed_window, time_delta
+│       ├── alert_groups/alert_groups_raw.json, alert_groups_base.parquet   ← what the notebooks/baselines load
+│       ├── groups/<method>:<hash>.json      ← fingerprinted per-setting groupings (immutable)
+│       └── mining/, mining_anomaly/, mining_check/   (train_alert_groups.json etc.)
+└── deepcase/<scenarios>__<params>/          trained DeepCASE context builders (small)
+```
+
+Not every scenario has every method on the DGX: `alertbert` exists for fox/harrison/russellmitchell/santos, `deepcase` for fox/harrison/russellmitchell. Locally, `alertbert`/`deepcase` groups are usually missing, and the DGX copies are larger overall (e.g. fox ~1.4 GB there vs ~0.8 GB locally). Sizes per scenario are 0.2 to 2 GB. Check before syncing:
+
+```bash
+ssh dgx-spark 'cd ~/Desktop/msc-thesis/artifacts/cache && du -sh */groups/* | sort -h'
+```
+
+### Procedure
+
+Scope it to what the user asked for (one scenario, one method, or a scenario × method), never the whole cache unasked. Run from the local repo root.
+
+1. **Nothing writing to it:** check no grouping/baseline run is active on the DGX (section 3b). A cache written mid-run is exactly how a truncated `alert_groups_raw.json` happened before.
+2. **Dry run** and show the user the summary (count of new vs changed files, total size):
+   ```bash
+   rsync -azhn --itemize-changes --stats \
+     dgx-spark:Desktop/msc-thesis/artifacts/cache/<scenario>/groups/<method>/ \
+     artifacts/cache/<scenario>/groups/<method>/
+   ```
+   How to read the lines: `>f+++++++` = new file. `>f.s…` = size differs, so a real **overwrite** (look at these). `>f..t…` = same size, only the timestamp differs. That's normal when both machines built the same fingerprinted cache independently and is almost always identical content (seen e.g. for russellmitchell `cscas_grouping`: thousands of `>f..t` lines, 0 bytes to transfer). Summarise the counts for the user rather than pasting the list. Note that `--stats` under `-n` reports 0 transferred; size the transfer from the `>f+++`/`>f.s` lines instead.
+3. **If any `alert_groups/alert_groups_raw.json` would be overwritten**, compare the group counts on both sides first. A big drop on the DGX side means its cache is truncated: stop and tell the user, don't sync that file.
+   ```bash
+   F=artifacts/cache/<scenario>/groups/<method>/alert_groups/alert_groups_raw.json
+   ssh dgx-spark "cd ~/Desktop/msc-thesis && python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' $F"
+   python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' $F
+   ```
+   (Known-good counts for `cscas_grouping`: fox 6093, harrison 16024, russellmitchell 4504.)
+4. **Real sync**, keeping any overwritten local files in a timestamped backup folder so it can be undone:
+   ```bash
+   rsync -azh --partial --stats \
+     --backup --backup-dir="$PWD/artifacts/cache/_rsync_backup/$(date +%Y%m%d_%H%M%S)" \
+     dgx-spark:Desktop/msc-thesis/artifacts/cache/<scenario>/groups/<method>/ \
+     artifacts/cache/<scenario>/groups/<method>/
+   ```
+   Multiple scenarios for one method: loop over them, one rsync each, so a failure is easy to pin down. `cscas` is laid out differently (`cscas/groups/<name>/`); same commands with that path. DeepCASE builders: `artifacts/cache/deepcase/` (small, sync whole).
+5. **Report** what came over, where the backup is (if anything was overwritten), and which notebook uses it: `baselines/02_ait-ads_baseline.ipynb` for AIT-ADS groups, `baselines/01_cscas_baseline.ipynb` / `grouping/grouping_baseline.ipynb` for cscas/grouping. Tell the user they can delete `artifacts/cache/_rsync_backup/` once they're happy; don't delete it yourself.
+
+Rules specific to the cache:
+- Never `--delete`, and never `rm` anything in the local cache to "make room" or "clean up" without asking.
+- File names contain `:` (`time_delta:<hash>.json`). That's fine for rsync on macOS; don't rename them.
+- Don't sync `artifacts/cache/` to the DGX (Mac → DGX) without an explicit request; the DGX's cache feeds its runs.
 
 ## 5. After syncing: which notebook to re-run
 
@@ -331,7 +391,7 @@ Interactive alternative the user also uses: tmux exists on the DGX **host only**
 ssh dgx-spark 'ls -lt ~/Desktop/msc-thesis/artifacts/experiments/signature_leakage | head -5'
 # preview what rsync would copy (dry run), then the real copy — run from the local repo root
 rsync -azhn --itemize-changes dgx-spark:Desktop/msc-thesis/artifacts/experiments/signature_leakage/ artifacts/experiments/signature_leakage/
-rsync -azh --partial --info=progress2 dgx-spark:Desktop/msc-thesis/artifacts/experiments/signature_leakage/ artifacts/experiments/signature_leakage/
+rsync -azh --partial --stats dgx-spark:Desktop/msc-thesis/artifacts/experiments/signature_leakage/ artifacts/experiments/signature_leakage/
 # a single file
 scp dgx-spark:Desktop/msc-thesis/<path> <local path>
 ```
