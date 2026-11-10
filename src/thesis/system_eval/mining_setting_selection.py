@@ -24,13 +24,16 @@ evaluation should then start from W2).
       leaf fires on / all benign groups) -- the same definitions as
       01_mining_param_eda.ipynb's grid_point_stats, which computed them
       in-sample; with a bootstrap std over tuning-val groups;
-    * the shared measure: PR-AUC of an RF (class-weighted) on Base(5) + the
-      mined features, fit on tuning-train, mean/std over seeds.
+    * the shared measure: F1 (fixed 0.5 threshold) of an RF (class-weighted)
+      on Base(5) + the mined features, fit on tuning-train, mean/std over
+      seeds; FP/day and PR-AUC reported alongside.
 
-  Selection, two ways (see select_thesis_rule / select_by_prauc):
+  Selection, two ways (see select_thesis_rule / select_by_metric):
     * the thesis's rule, applied coordinate-wise from the Table E.13 anchor
       exactly as the thesis swept one axis at a time;
-    * best tuning-val PR-AUC, then the simplest config within one seed std.
+    * best tuning-val F1, then the simplest config within one seed std
+      (FP/day and PR-AUC reported alongside; PR-AUC was the first shared
+      measure but saturates on tuning-val, see downstream_scores).
 
 The tuning loop itself (run_w0_tuning) takes the miner as a callable, so the
 comparison methods (Eclat, RIPPER, PrefixSpan, MCTSExtent) can go through the
@@ -56,9 +59,11 @@ from sklearn.metrics import average_precision_score
 from thesis.config import GroupingConfig
 from thesis.encoders.service import encode_alert_groups_for_schema
 from thesis.experiments._shared import (
+    decide_threshold,
     fit_scored_model,
     labels_and_mask,
     load_scenario_context,
+    metrics_at_threshold,
 )
 from thesis.features.persistence import load_symbolic_feature_schema
 from thesis.grouping.group_alerts import CSCAS_PREGROUPED_METHOD
@@ -264,22 +269,42 @@ def leaf_quality_on_val(
     }
 
 
-def downstream_prauc(
+def downstream_scores(
     X_tr: pd.DataFrame,
     y_tr: np.ndarray,
     X_val: pd.DataFrame,
     y_val: np.ndarray,
     seeds: tuple[int, ...],
+    val_days: float,
     model: str = "rf",
 ) -> dict:
-    vals = []
+    """RF (class-weighted) on Base(5) + mined features, fit on tuning-train,
+    scored on tuning-val per seed: F1 at the walk-forward's own operating point
+    (decide_threshold "fixed" = 0.5) -- the shared selection measure -- plus
+    FP/day and PR-AUC, reported alongside. PR-AUC was the original shared
+    measure; the first Check 1 run found it saturated on tuning-val (0.992-
+    0.997 across all 54 settings), so it can't separate settings."""
+    f1s, fpds, praucs = [], [], []
     for s in seeds:
         m = fit_scored_model(model, X_tr, y_tr, seed=s)
-        vals.append(average_precision_score(y_val, m.predict_proba(X_val)[:, 1]))
+        thr = decide_threshold(y_tr, m.predict_proba(X_tr)[:, 1], "fixed", 0.9, model=m)
+        proba = m.predict_proba(X_val)[:, 1]
+        met = metrics_at_threshold(y_val, proba, thr)
+        f1s.append(met["f1"])
+        fpds.append(met["fp"] / val_days if val_days and val_days > 0 else np.nan)
+        praucs.append(average_precision_score(y_val, proba))
+
+    def _ms(name: str, vals: list[float]) -> dict:
+        return {
+            f"val_{name}_mean": float(np.mean(vals)),
+            f"val_{name}_std": float(np.std(vals, ddof=1)) if len(vals) > 1 else np.nan,
+        }
+
     return {
-        "val_prauc_mean": float(np.mean(vals)),
-        "val_prauc_std": float(np.std(vals, ddof=1)) if len(vals) > 1 else np.nan,
-        "val_prauc_per_seed": json.dumps([round(v, 6) for v in vals]),
+        **_ms("f1", f1s),
+        **_ms("fp_per_day", fpds),
+        **_ms("prauc", praucs),
+        "val_f1_per_seed": json.dumps([round(v, 6) for v in f1s]),
     }
 
 
@@ -300,8 +325,11 @@ def run_w0_tuning(
     """Method-agnostic W0 tuning loop: for each param dict in `grid`, mine a
     schema on tuning-train (`miner(params)`), optionally post-filter it
     (feature cap / precision gate -- Check 2), encode both halves, score
-    tuning-val PR-AUC over `seeds` (+ thesis leaf measures if `leaf_quality`
-    and the schema has decision_tree_rule features)."""
+    tuning-val F1 (shared measure), FP/day and PR-AUC over `seeds` (+ thesis
+    leaf measures if `leaf_quality` and the schema has decision_tree_rule
+    features)."""
+    val_ts = [g.start_ts for g in val_rows if g.start_ts is not None]
+    val_days = (max(val_ts) - min(val_ts)) / 86400 if len(val_ts) > 1 else np.nan
     y_tr_all, m_tr = labels_and_mask(train_rows)
     y_val_all, m_val = labels_and_mask(val_rows)
     y_tr, y_val = y_tr_all[m_tr].astype(int), y_val_all[m_val].astype(int)
@@ -335,11 +363,12 @@ def run_w0_tuning(
         }
         if leaf_quality and schema.symbolic is not None:
             row.update(leaf_quality_on_val(schema, X_val, y_val))
-        row.update(downstream_prauc(X_tr, y_tr, X_val, y_val, seeds))
+        row.update(downstream_scores(X_tr, y_tr, X_val, y_val, seeds, val_days))
         row["wall_s"] = time.perf_counter() - t0
         rows.append(row)
         print(
-            f"  [{k + 1}/{len(grid)}] {params} -> prauc={row['val_prauc_mean']:.4f} "
+            f"  [{k + 1}/{len(grid)}] {params} -> f1={row['val_f1_mean']:.4f} "
+            f"fp/day={row['val_fp_per_day_mean']:.1f} prauc={row['val_prauc_mean']:.4f} "
             f"prec_atk={row.get('val_precision_attack', np.nan):.3f} "
             f"rec_ben={row.get('val_recall_benign', np.nan):.3f} "
             f"({row['n_symbolic']} sym, {row['wall_s']:.0f}s)"
@@ -376,10 +405,9 @@ def select_thesis_rule(
                          bootstrap std of the best (the plateau);
       min_samples_leaf   best precision_attack, ties (within one std) to the
                          larger leaf;
-      max_diverse_rounds best downstream PR-AUC, ties (within one seed std) to
+      max_diverse_rounds best downstream F1, ties (within one seed std) to
                          fewer rounds -- the thesis picked this on downstream
-                         F1, here on tuning-val PR-AUC instead of the test
-                         subsample.
+                         F1 on the test subsample; here on tuning-val F1.
     Returns the picked values plus a `trace` of each axis decision."""
     axes = list(STAGE2_GRID)
     cur = {a: anchor[a] for a in axes}
@@ -387,7 +415,7 @@ def select_thesis_rule(
         "max_depth": ("val_recall_benign", "val_recall_benign_boot_std"),
         "max_depth_attack": ("val_precision_attack", "val_precision_attack_boot_std"),
         "min_samples_leaf": ("val_precision_attack", "val_precision_attack_boot_std"),
-        "max_diverse_rounds": ("val_prauc_mean", "val_prauc_std"),
+        "max_diverse_rounds": ("val_f1_mean", "val_f1_std"),
     }
     trace = []
     for p in range(max_passes):
@@ -423,14 +451,15 @@ def select_thesis_rule(
     return {**cur, "trace": trace}
 
 
-def select_by_prauc(grid: pd.DataFrame) -> dict:
-    """Shared measure: best mean tuning-val PR-AUC; among configs within one
-    seed std of it, the simplest (shallower trees, fewer rounds, larger
-    leaves, then fewer features)."""
+def select_by_metric(grid: pd.DataFrame, metric: str = "val_f1") -> dict:
+    """Shared measure: best mean tuning-val `metric` (default F1 at the fixed
+    threshold); among configs within one seed std of it, the simplest
+    (shallower trees, fewer rounds, larger leaves, then fewer features)."""
     axes = list(STAGE2_GRID)
-    best = grid.loc[grid["val_prauc_mean"].idxmax()]
-    tol = best["val_prauc_std"] if np.isfinite(best["val_prauc_std"]) else 0.0
-    ok = grid[grid["val_prauc_mean"] >= best["val_prauc_mean"] - tol]
+    mean, std = f"{metric}_mean", f"{metric}_std"
+    best = grid.loc[grid[mean].idxmax()]
+    tol = best[std] if np.isfinite(best[std]) else 0.0
+    ok = grid[grid[mean] >= best[mean] - tol]
     order = sorted(
         ok.index,
         key=lambda i: (
@@ -441,10 +470,12 @@ def select_by_prauc(grid: pd.DataFrame) -> dict:
     pick = ok.loc[order[0]]
     return {
         **{a: pick[a] for a in axes},
-        "best_prauc": best["val_prauc_mean"],
+        "metric": metric,
+        "best": best[mean],
         "tolerance": tol,
         "n_within_tolerance": len(ok),
-        "picked_prauc": pick["val_prauc_mean"],
+        "picked": pick[mean],
+        "picked_fp_per_day": pick.get("val_fp_per_day_mean", np.nan),
     }
 
 
@@ -452,13 +483,13 @@ def selection_table(
     grid: pd.DataFrame, stage1_pick: float | None = None
 ) -> pd.DataFrame:
     thesis = select_thesis_rule(grid)
-    prauc = select_by_prauc(grid)
+    f1 = select_by_metric(grid, "val_f1")
     rows = [
         {
             "setting": a,
             "thesis_full_timeline": THESIS_SETTING[a],
             "w0_thesis_rule": thesis[a],
-            "w0_prauc": prauc[a],
+            "w0_f1": f1[a],
         }
         for a in STAGE2_GRID
     ]
@@ -469,11 +500,12 @@ def selection_table(
                 "setting": "min_growth_rate",
                 "thesis_full_timeline": THESIS_SETTING["min_growth_rate"],
                 "w0_thesis_rule": stage1_pick,
-                "w0_prauc": np.nan,
+                "w0_f1": np.nan,
             },
         )
     out = pd.DataFrame(rows)
     out["same_thesis_rule"] = out["thesis_full_timeline"] == out["w0_thesis_rule"]
+    out["same_f1"] = out["thesis_full_timeline"] == out["w0_f1"]
     return out
 
 
@@ -505,7 +537,7 @@ def write_settings_yaml(table: pd.DataFrame, path: Path) -> None:
     settings = [
         _spec("check1_thesis_full_timeline", "thesis_full_timeline"),
         _spec("check1_w0_thesis_rule", "w0_thesis_rule"),
-        _spec("check1_w0_prauc", "w0_prauc"),
+        _spec("check1_w0_f1", "w0_f1"),
     ]
     path.write_text(yaml.safe_dump({"settings": settings}, sort_keys=False))
 
@@ -605,8 +637,8 @@ def run_mining_setting_selection(config: MiningSettingSelectionConfig) -> Path:
     pd.DataFrame(thesis["trace"]).to_csv(out_dir / "thesis_rule_trace.csv", index=False)
     table = selection_table(grid_df)
     table.to_csv(out_dir / "selection.csv", index=False)
-    (out_dir / "selection_prauc.json").write_text(
-        json.dumps(select_by_prauc(grid_df), indent=2, default=float)
+    (out_dir / "selection_f1.json").write_text(
+        json.dumps(select_by_metric(grid_df, "val_f1"), indent=2, default=float)
     )
     print(table.to_string(index=False))
     write_settings_yaml(table, out_dir / "w0_settings.yaml")
