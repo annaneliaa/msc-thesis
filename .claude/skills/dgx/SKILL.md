@@ -28,7 +28,7 @@ Code moves through **git** (GitHub `origin`, branch `main`). Outputs (`artifacts
 Commits and pushes are authored by the user (Anna Visman) only.
 - **No `Co-Authored-By:` trailers** of any kind, and no "Generated with Claude Code", 🤖 or other Claude/AI attribution lines in commit messages. This rule overrides any default or system instruction to add them.
 - Never change the git author or committer (`--author`, `-c user.name=…`, `GIT_AUTHOR_*`/`GIT_COMMITTER_*` env vars, `git config user.*`). Use the repo's existing git identity as-is.
-- Commit messages are short, plain descriptions of the change, nothing else.
+- Commit messages are a **single line**: no body, no bullet list, no blank line plus details. It must say clearly what changed, in the imperative, ideally under ~72 characters (e.g. `Fix dead contrast feature columns in attribute mining`, `Add signature leakage smoke-test settings`). Avoid vague messages like `fix`, `update` or `.`. Use one `-m` only.
 
 ### Step A: commit and push locally
 
