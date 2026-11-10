@@ -2,6 +2,7 @@ import ast
 import re
 import pandas as pd
 from thesis.schemas.features import (
+    SEQUENCE_MINING_TYPES,
     AttributePredicate,
     SymbolicFeature,
     SymbolicFeatureSchema,
@@ -106,7 +107,18 @@ def build_symbolic_feature_schema(
             )
         else:
             itemset = _parse_itemset(row["itemset"])
-            feature_name = _make_feature_name(itemset)
+            row_mining_type = (
+                str(row["mining_type"])
+                if "mining_type" in row.index and pd.notna(row.get("mining_type"))
+                else None
+            )
+            # Sequences get their own prefix: a->b and the itemset {a, b} are
+            # different features (the encoder checks order for sequences), so
+            # they must not collide on name and be dropped as duplicates.
+            feature_name = _make_feature_name(
+                itemset,
+                prefix="seq" if row_mining_type in SEQUENCE_MINING_TYPES else "sym",
+            )
             if feature_name in seen_names:
                 continue
             seen_names.add(feature_name)

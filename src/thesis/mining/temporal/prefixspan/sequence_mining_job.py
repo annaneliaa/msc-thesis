@@ -26,7 +26,6 @@ from thesis.mining.temporal.prefixspan.prefixspan_mining import (
     run_itemset_prefixspan,
 )
 from thesis.mining.temporal.prefixspan.repeat_encoding import (
-    encode_runs,
     encode_sequence_of_itemsets,
 )
 from thesis.mining.common.token_abstraction import (
@@ -178,25 +177,11 @@ def run_alert_group_prefixspan_job(
 
         mined_df = add_confidence_scores(mined_df)
 
-        # Collapse consecutive same-item runs in each mined pattern into
-        # repeat-encoded tokens (e.g. A, A, B → A__repeat_2, B).
-        # Support counts are already correct; we only rename the patterns.
-        print("Applying item-level repeat encoding to mined patterns...")
-        mined_df["sequence"] = mined_df["sequence"].apply(
-            lambda seq: tuple(encode_runs(list(seq)))
-        )
-        mined_df["sequence_str"] = mined_df["sequence"].apply(lambda x: " -> ".join(x))
-        mined_df["k"] = mined_df["sequence"].apply(len)
-        n_before = len(mined_df)
-        mined_df = (
-            mined_df.sort_values("support_count", ascending=False)
-            .drop_duplicates(subset=["sequence"])
-            .reset_index(drop=True)
-        )
-        if len(mined_df) < n_before:
-            print(
-                f"  Merged {n_before - len(mined_df)} patterns that collapsed to the same encoded form"
-            )
+        # Patterns are kept as mined (no repeat-encoding rename). Renaming
+        # A, A, B to A__repeat_2, B turned a subsequence pattern into a token
+        # that only exists for *consecutive identical* alerts, so the feature
+        # stopped matching the groups its support was counted on. The encoder
+        # now checks sequence features in order (SEQUENCE_MINING_TYPES).
 
         print("Applying mail host abstraction to mined patterns...")
         mined_df = abstract_mail_hosts_item_sequence_df(mined_df)

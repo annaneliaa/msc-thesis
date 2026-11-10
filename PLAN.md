@@ -40,7 +40,59 @@ src/thesis/mining/
 
 ## Phase 2: Audit Eclat and PrefixSpan against the current thesis setup
 
-Problems already seen, to confirm and fix:
+### 2a. Bugs: done (not committed)
+
+Each bug was confirmed with a brute-force repro before fixing. 295 tests pass
+(27 new). The same 3 `lime` failures as before remain.
+
+| # | Bug | Fix |
+|---|---|---|
+| B1 | Sequence features were checked as **unordered sets** at encode time: `a → b` fired on `[b],[a]`, so PrefixSpan's order never reached the model. | The encoder now checks `item_sequence` features as an ordered subsequence of `sorted_items`, with the same rule used to count support (`SEQUENCE_MINING_TYPES` in `schemas/features.py`). |
+| B2 | Mined patterns were renamed with repeat tokens (`a, a → a__repeat_2`). That token only exists for *consecutive identical* alerts, so the feature didn't fire on the groups it was counted on. | The rename is removed; patterns are kept as mined. |
+| B3 | A sequence and an itemset over the same items both got the name `sym__a__b`, and one was dropped as a "duplicate". | Sequences are now named `seq__…`. |
+| B4 | Itemset-PrefixSpan only tracked the first place the prefix matched, so it missed or undercounted patterns (822 missing in the repro). | The projection now keeps every position where the last step can end. It matches brute force exactly. |
+| B5 | `min_count = int(min_support·n)` rounded down: 1 of 30 groups (3.3%) passed a 5% threshold. | `min_support_count()` rounds up (all three miners). |
+| B6 | `run_eclat` / `build_tidsets` crashed when `run_dir=None`. | The debug dumps are now optional. |
+| B7 | `confidence_*` is support_c / Σ support, i.e. balanced precision, not the class rate inside the pattern. At π≈1.5%, a confidence_attack of 0.97 can mean 31% attacks inside the pattern. | Documented. `precision_<label>` (class rate inside the pattern) is added next to it. The filters still use `confidence_*`, since the existing configs are tuned on it. |
+
+Eclat and item-PrefixSpan themselves already matched brute force; only their
+thresholds (B5) and the encoder side (B1–B3) were wrong. Results from earlier
+co-occurrence runs that used sequence features are stale. No final-thesis
+numbers depend on them.
+
+### 2b. Shared infrastructure: done (not committed)
+
+307 tests pass (12 new). The same 3 `lime` failures remain.
+
+1. **Shared item table** (`common/item_table.py`).
+   - Built from the contrast-tree's own `build_categorical_predicate_matrix`, so all methods share exactly the thesis method's candidate space.
+   - `items()` / `baskets()`: one item per field value, plus numerics as quantile-bin items (default 5 bins). Edges are fitted on the mining window only.
+   - Each item maps to `AttributePredicate`s. A bin `lo < x <= hi` is two predicates, so patterns are encoded through the existing predicate path.
+   - On a 20k-group CSCAS slice (oracle fields excluded): 41 items, with no signature words.
+2. **Per-host look-back sequences** (`temporal/lookback.py`).
+   - For each group: the alerts on its host from `start − w` to `end`, in 1-minute buckets of `short:` items. Default w = 10 min.
+   - Stored on the new `AlertGroup.context_steps`. The encoder checks sequence features on it when it's set, so mining and encoding see the same sequence.
+   - On fox (cscas_grouping): 6,092 groups built in 5 s, median 3–4 buckets, none empty.
+   - Not done: benign subsampling, which belongs in the comparison runner.
+3. **Shared pattern format, budget K and schema writer** (`common/patterns.py`).
+   - Pattern frame: `items, mining_type, source_label, n_attack, n_benign`.
+   - `add_pattern_stats` derives support, per-class support, precision and score (= lean precision × support).
+   - `select_budget(k, per_class=False|True)`: in per-class mode, if one class runs short the other fills the gap.
+   - `patterns_to_schema` writes the frame into the existing schema.
+   - A round-trip test checks that each feature fires on exactly the groups the miner counted.
+   - Note: a pooled budget is all benign-leaning on CSCAS-like data (benign support dominates the score), which bears on the open K/2 + K/2 question.
+4. **Not done yet:**
+   - Replacing `top_k_per_pass` with K in the old co-occurrence job.
+   - An adapter that brings the contrast-tree output (survivors + leaves) into the pattern frame, so K counts both.
+   - Wiring the gate into the comparison runner.
+
+   All three belong to the comparison runner (plan 7.4–7.6), not to the miners.
+5. **Design choices to state, not bugs:**
+   - `remove_subset_subsumed` drops a subset when a superset survives, even though the subset may cover more.
+   - The direction filter is applied before the config filters.
+6. **Found, not fixed:** the old `schema_builder` names `proto=1` and `proto=-1` both `sym__proto_1`, so one would be dropped as a duplicate. It doesn't occur in any of the 7 cached schemas. Fixing it would rename every existing contrast feature. The new writer spells out operators, so it doesn't have this problem.
+
+Original audit list:
 
 1. **Eclat input.** It mines `tx.items`, the tokenised signature words. That is where the "Eclat doesn't work on CSCAS" result came from (plan 6.7). It should mine the shared item table instead: one item per field, with numerics binned into quantiles.
 2. **Eclat mines one class.** It mines only `target_label` (benign by default), and attack itemsets come from a separate pass. Check that both passes go through the same filters.

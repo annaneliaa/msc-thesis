@@ -116,6 +116,11 @@ class AlertGroup:  # encoding/experiment input (with weight)
     )
     alert_ips: Optional[set[str]] = None
     alert_labels: Optional[set[str]] = None
+    # Per-host look-back sequence (mining/temporal/lookback.py): the itemsets
+    # of 1-minute buckets of alerts on this group's host in the w minutes
+    # before and during the group. When set, sequence features are mined and
+    # evaluated on it instead of sorted_items. Derived, not persisted.
+    context_steps: Optional[list[set[str]]] = None
 
     # CSCAS-only network metadata (None for AIT-ADS scenarios)
     proto: Optional[int] = None

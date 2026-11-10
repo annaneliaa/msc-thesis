@@ -6,6 +6,7 @@ from pathlib import Path
 import pandas as pd
 
 from thesis.mining.common.load_mining_alert_groups import build_tidsets
+from thesis.mining.common.util import min_support_count
 
 
 def eclat_recursive(
@@ -70,24 +71,25 @@ def run_eclat(
             columns=["itemset", "itemset_str", "k", "support_count", "support"]
         )
 
-    min_count = max(1, int(min_support * n_tx))
+    min_count = min_support_count(min_support, n_tx)
     tidsets = build_tidsets(alert_groups, run_dir=run_dir)
 
     items_with_tidsets = sorted(tidsets.items(), key=lambda x: (x[0], len(x[1])))
 
-    with open(run_dir / "items_with_tidsets.json", "w") as f:
-        json.dump(
-            [
-                {
-                    "item": item,
-                    "support_count": len(tidset),
-                    "tids": sorted(tidset),
-                }
-                for item, tidset in items_with_tidsets
-            ],
-            f,
-            indent=2,
-        )
+    if run_dir is not None:
+        with open(run_dir / "items_with_tidsets.json", "w") as f:
+            json.dump(
+                [
+                    {
+                        "item": item,
+                        "support_count": len(tidset),
+                        "tids": sorted(tidset),
+                    }
+                    for item, tidset in items_with_tidsets
+                ],
+                f,
+                indent=2,
+            )
 
     results: list[dict] = []
     eclat_recursive(

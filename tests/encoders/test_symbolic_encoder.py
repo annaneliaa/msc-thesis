@@ -171,3 +171,60 @@ def test_encoder_transform_batch_matches_transform_one():
     df = encoder.transform(groups)
 
     assert list(df["dtr__category_exploit"]) == [1, 0]
+
+
+def test_sequence_features_fire_only_in_order():
+    # An item_sequence feature a -> b must respect order across alerts, with
+    # the same rule the miner counted support with (strictly later alert).
+    schema = SymbolicFeatureSchema(
+        schema_name="symbolic",
+        schema_version="0.1.0",
+        features=[
+            SymbolicFeature(
+                feature_name="seq__a__b",
+                itemset=("a", "b"),
+                source_label="attack",
+                mining_type="item_sequence",
+            ),
+            SymbolicFeature(
+                feature_name="sym__a__b",
+                itemset=("a", "b"),
+                source_label="attack",
+                mining_type="itemset",
+            ),
+        ],
+    )
+    encoder = SymbolicFeatureEncoder(schema)
+
+    def row(steps):
+        tx = _make_alert_group(sorted_items=steps, n_alerts=len(steps))
+        return encoder.transform_one(tx).iloc[0]
+
+    in_order = row([{"a"}, {"c"}, {"b"}])
+    reversed_ = row([{"b"}, {"a"}])
+    same_alert = row([{"a", "b"}])
+    assert list(in_order.index) == ["seq__a__b", "sym__a__b"]
+    assert in_order["seq__a__b"] == 1
+    assert reversed_["seq__a__b"] == 0
+    assert same_alert["seq__a__b"] == 0
+    # The itemset feature over the same items stays order-blind.
+    assert reversed_["sym__a__b"] == 1
+
+
+def test_repeated_item_sequence_matches_non_consecutive_repeats():
+    # a -> a is mined as a subsequence (two alerts holding a, anything in
+    # between); it must fire on [a], [b], [a].
+    schema = SymbolicFeatureSchema(
+        schema_name="symbolic",
+        schema_version="0.1.0",
+        features=[
+            SymbolicFeature(
+                feature_name="seq__a__a",
+                itemset=("a", "a"),
+                source_label="attack",
+                mining_type="item_sequence",
+            )
+        ],
+    )
+    tx = _make_alert_group(sorted_items=[{"a"}, {"b"}, {"a"}], n_alerts=3)
+    assert SymbolicFeatureEncoder(schema).transform_one(tx).iloc[0]["seq__a__a"] == 1

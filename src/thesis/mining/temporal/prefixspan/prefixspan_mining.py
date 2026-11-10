@@ -3,6 +3,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from thesis.mining.common.util import min_support_count
+
 
 def contains_subsequence(sequence: list[set[str]], pattern: tuple[str, ...]) -> bool:
     """
@@ -114,7 +116,7 @@ def run_prefixspan(
             ]
         )
 
-    min_count = max(1, int(min_support * n_tx))
+    min_count = min_support_count(min_support, n_tx)
 
     results: list[dict] = []
 
@@ -155,98 +157,81 @@ def run_prefixspan(
 # Each pattern step is a frozenset; steps must match in different alerts.
 # Within one step, items may be drawn from the same alert (i-extension).
 # Across steps, a later alert is required (s-extension).
+#
+# Projection: for each sequence we keep `ends`, every alert index at which
+# the pattern's last step can be matched, given the earlier steps matched as
+# early as possible. Keeping all of them (not just the first) is what makes
+# i-extensions correct: in <{a},{a,b}> the first alert holding {a} can't be
+# grown to {a,b}, but a later one can. The earlier version kept only the
+# first match and missed or undercounted such patterns.
 # -----------------------------------------------------------------
-
-
-def _project_itemset_entry(
-    partial: frozenset[str],
-    suffix: list[frozenset[str]],
-    new_item: str,
-    i_extension: bool,
-) -> tuple[frozenset[str], list[frozenset[str]]] | None:
-    """
-    Project one sequence entry for the next extension.
-
-    i_extension=True  — new_item must be in partial (same alert as last match,
-                        lexicographically after the previous pivot item).
-    i_extension=False — new_item must be in some alert in suffix (new alert).
-    """
-    if i_extension:
-        if new_item in partial:
-            return frozenset(x for x in partial if x > new_item), suffix
-        return None
-    else:
-        for idx, alert in enumerate(suffix):
-            if new_item in alert:
-                return frozenset(x for x in alert if x > new_item), suffix[idx + 1 :]
-        return None
 
 
 def _prefixspan_itemset_recursive(
     prefix: tuple[frozenset[str], ...],
-    projected_db: list[tuple[frozenset[str], list[frozenset[str]]]],
+    projected_db: list[tuple[list[frozenset[str]], list[int]]],
     min_count: int,
     results: list[dict],
     max_len: int | None,
 ) -> None:
+    last_step = prefix[-1] if prefix else frozenset()
+    last_max = max(last_step) if last_step else None
+
     i_counts: Counter[str] = Counter()
     s_counts: Counter[str] = Counter()
-
-    for partial, suffix in projected_db:
-        i_counts.update(partial)
-
+    for seq, ends in projected_db:
+        if prefix:
+            # i-extension candidates: items after the step's largest item, in
+            # any alert where the current last step can end.
+            i_seen: set[str] = set()
+            for e in ends:
+                i_seen.update(x for x in seq[e] if x > last_max)
+            i_counts.update(i_seen)
+        # s-extension candidates: items in any alert after the earliest end.
+        first = ends[0] if prefix else -1
         s_seen: set[str] = set()
-        for alert in suffix:
+        for alert in seq[first + 1 :]:
             s_seen.update(alert)
         s_counts.update(s_seen)
+
+    def _emit(new_prefix, count, new_db):
+        results.append(
+            {
+                "sequence": new_prefix,
+                "k": len(new_prefix),
+                "n_items": sum(len(s) for s in new_prefix),
+                "support_count": count,
+            }
+        )
+        if new_db:
+            _prefixspan_itemset_recursive(
+                new_prefix, new_db, min_count, results, max_len
+            )
 
     # i-extensions: add an item to the last step (no new alert required)
     if prefix:
         for item, count in sorted(i_counts.items()):
             if count < min_count:
                 continue
-            new_prefix = prefix[:-1] + (frozenset(prefix[-1] | {item}),)
-            results.append(
-                {
-                    "sequence": new_prefix,
-                    "k": len(new_prefix),
-                    "n_items": sum(len(s) for s in new_prefix),
-                    "support_count": count,
-                }
-            )
-            new_db: list[tuple[frozenset[str], list[frozenset[str]]]] = []
-            for partial, suffix in projected_db:
-                proj = _project_itemset_entry(partial, suffix, item, i_extension=True)
-                if proj is not None:
-                    new_db.append(proj)
-            if new_db:
-                _prefixspan_itemset_recursive(
-                    new_prefix, new_db, min_count, results, max_len
-                )
+            new_db = []
+            for seq, ends in projected_db:
+                new_ends = [e for e in ends if item in seq[e]]
+                if new_ends:
+                    new_db.append((seq, new_ends))
+            _emit(prefix[:-1] + (last_step | {item},), count, new_db)
 
     # s-extensions: append a new singleton step (new alert required)
     if max_len is None or len(prefix) < max_len:
         for item, count in sorted(s_counts.items()):
             if count < min_count:
                 continue
-            new_prefix = prefix + (frozenset({item}),)
-            results.append(
-                {
-                    "sequence": new_prefix,
-                    "k": len(new_prefix),
-                    "n_items": sum(len(s) for s in new_prefix),
-                    "support_count": count,
-                }
-            )
             new_db = []
-            for partial, suffix in projected_db:
-                proj = _project_itemset_entry(partial, suffix, item, i_extension=False)
-                if proj is not None:
-                    new_db.append(proj)
-            if new_db:
-                _prefixspan_itemset_recursive(
-                    new_prefix, new_db, min_count, results, max_len
-                )
+            for seq, ends in projected_db:
+                first = ends[0] if prefix else -1
+                new_ends = [j for j in range(first + 1, len(seq)) if item in seq[j]]
+                if new_ends:
+                    new_db.append((seq, new_ends))
+            _emit(prefix + (frozenset({item}),), count, new_db)
 
 
 def run_itemset_prefixspan(
@@ -276,10 +261,10 @@ def run_itemset_prefixspan(
     if n_tx == 0:
         return pd.DataFrame(columns=_EMPTY_COLS)
 
-    min_count = max(1, int(min_support * n_tx))
+    min_count = min_support_count(min_support, n_tx)
 
-    projected_db: list[tuple[frozenset[str], list[frozenset[str]]]] = [
-        (frozenset(), [frozenset(alert) for alert in seq]) for seq in sequences
+    projected_db: list[tuple[list[frozenset[str]], list[int]]] = [
+        ([frozenset(alert) for alert in seq], []) for seq in sequences
     ]
 
     results: list[dict] = []

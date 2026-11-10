@@ -15,6 +15,12 @@ class BaseFeatureSchema:
     kind: str = "baseline"
 
 
+# mining_type values whose `itemset` is an ordered sequence (one item per
+# alert step), not a set: the encoder fires them only when the items occur in
+# that order, in strictly later alerts of the group's sorted_items.
+SEQUENCE_MINING_TYPES = frozenset({"item_sequence"})
+
+
 @dataclass(frozen=True, slots=True)
 class SymbolicFeature:
     feature_name: str

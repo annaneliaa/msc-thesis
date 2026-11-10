@@ -128,10 +128,10 @@ def load_and_prepare_mining_alert_groups(
 
 def build_tidsets(
     alert_groups: Iterable[frozenset[str]],
-    run_dir: Path,
+    run_dir: Path | None = None,
 ) -> dict[str, set[int]]:
     """
-    Build vertical tidsets for Eclat.
+    Build vertical tidsets for Eclat. Writes a debug dump to run_dir when given.
     """
     tidsets: dict[str, set[int]] = {}
 
@@ -139,11 +139,12 @@ def build_tidsets(
         for item in basket:
             tidsets.setdefault(item, set()).add(tid)
 
-    with open(run_dir / "tidsets.json", "w") as f:
-        json.dump(
-            {item: sorted(tids) for item, tids in tidsets.items()},
-            f,
-            indent=2,
-        )
+    if run_dir is not None:
+        with open(run_dir / "tidsets.json", "w") as f:
+            json.dump(
+                {item: sorted(tids) for item, tids in tidsets.items()},
+                f,
+                indent=2,
+            )
 
     return tidsets

@@ -1,3 +1,4 @@
+import math
 import os
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
@@ -10,6 +11,16 @@ _INTERMEDIATE_FILES = [
     "tidsets.json",
     "items_with_tidsets.json",
 ]
+
+
+def min_support_count(min_support: float, n: int) -> int:
+    """Smallest count c with c / n >= min_support (at least 1).
+
+    Rounds up: int() rounded down, so with n=30 and min_support=0.05 a
+    pattern in 1 of 30 groups (3.3%) passed a 5% threshold. The epsilon keeps
+    exact products like 0.05 * 100 (= 5.000000000000001 in floats) at 5.
+    """
+    return max(1, math.ceil(min_support * n - 1e-9))
 
 
 def cleanup_run_intermediates(run_dir: Path) -> None:
@@ -93,11 +104,35 @@ def add_cross_label_supports(
 
 
 def add_confidence_scores(df: pd.DataFrame) -> pd.DataFrame:
+    """Add confidence_<label> and precision_<label> per pattern.
+
+    confidence_<label> = support_<label> / sum of supports: the share of the
+    pattern's *class-normalised* support. It is the precision you would get
+    with balanced classes, NOT the class rate inside the pattern. At CSCAS's
+    ~1.5% attack rate a pattern with confidence_attack 0.97 can still be
+    ~70% benign. The existing filter configs threshold on it, so it stays.
+
+    precision_<label> = count_<label> / total count: the actual class rate
+    among groups where the pattern occurs (what the paper's precision gate
+    and the comparison's shared output format mean by precision). Only
+    added when the count_* columns from add_cross_label_*supports exist.
+    """
     print("Calculating confidence scores...")
     if df.empty:
         return df.copy()
 
     out = df.copy()
+
+    count_cols = [
+        c for c in out.columns if c.startswith("count_") and c != "count_total"
+    ]
+    if len(count_cols) >= 2:
+        total = sum(out[c] for c in count_cols)
+        for col in count_cols:
+            label = col[len("count_") :]
+            out[f"precision_{label}"] = (
+                (out[col] / total.replace(0, pd.NA)).astype(float).fillna(0.0)
+            )
 
     support_cols = [
         c
