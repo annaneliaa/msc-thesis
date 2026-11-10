@@ -76,6 +76,7 @@ results/
 mlruns/*
 
 .claude/
+PLAN.md
 summaries/
 # MCTSExtent (no license upstream): fetched at a pinned commit by
 # thesis.mining.temporal.mctsextent.vendor, never committed.

@@ -175,3 +175,12 @@ def test_budget_per_class_splits_and_fills():
 def test_budget_requires_stats():
     with pytest.raises(ValueError):
         select_budget(pd.DataFrame({"items": [("a",)]}), k=1)
+
+
+def test_constant_items_are_dropped(groups):
+    # Every synthetic group has qualifiers=set() and ext_port_is_multiple=False:
+    # those items never fire; drop them (and anything that always fires).
+    table = build_item_table(groups)
+    X = table.items()
+    assert "multi_ext_port" not in X.columns
+    assert (X.nunique() > 1).all()

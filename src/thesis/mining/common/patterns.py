@@ -135,6 +135,43 @@ def _feature_name(tokens: tuple[str, ...], prefix: str, taken: set[str]) -> str:
     return name
 
 
+def _condition(
+    row, has_own: bool, item_table: ItemTable | None
+) -> tuple[bool, tuple[str, ...], tuple[AttributePredicate, ...]]:
+    """(is_sequence, tokens, predicates): the condition a pattern row means.
+    Two rows with equal (is_sequence, tokens) are the same feature."""
+    items = tuple(row.items)
+    if row.mining_type in SEQUENCE_MINING_TYPES:
+        return True, items, ()
+    own = row.predicates if has_own else None
+    if isinstance(own, tuple) and own:
+        preds = own
+    elif item_table is None:
+        raise ValueError("atemporal patterns need the item_table")
+    else:
+        preds = item_table.predicates_for(items)
+    return False, tuple(sorted(p.token for p in preds)), tuple(preds)
+
+
+def dedupe_conditions(
+    df: pd.DataFrame, item_table: ItemTable | None = None
+) -> pd.DataFrame:
+    """Keep one row per distinct condition (the highest-scoring one).
+
+    Different patterns can mean the same condition: a RIPPER rule whose items
+    resolve to the same predicates as another, or an Eclat itemset whose bin
+    items collapse. patterns_to_schema keeps only the first of those, so run
+    this before select_budget() or the budget counts duplicates and a method
+    ends up with fewer than K features. Requires add_pattern_stats() first.
+    """
+    if df.empty:
+        return df.copy()
+    has_own = "predicates" in df.columns
+    keys = [_condition(r, has_own, item_table)[:2] for r in df.itertuples(index=False)]
+    ranked = _ranked(df.assign(_cond=keys))
+    return ranked.drop_duplicates("_cond").drop(columns="_cond").reset_index(drop=True)
+
+
 def patterns_to_schema(
     df: pd.DataFrame,
     schema_name: str,
@@ -157,21 +194,9 @@ def patterns_to_schema(
     names: set[str] = set()
     has_own = "predicates" in df.columns
     for row in df.itertuples(index=False):
-        items = tuple(row.items)
-        is_seq = row.mining_type in SEQUENCE_MINING_TYPES
-        own = row.predicates if has_own else None
-        if is_seq:
-            tokens = items
-        else:
-            if isinstance(own, tuple) and own:
-                preds = own
-            elif item_table is None:
-                raise ValueError("atemporal patterns need the item_table")
-            else:
-                preds = item_table.predicates_for(items)
-            for p in preds:
-                alphabet.setdefault(p.token, p)
-            tokens = tuple(sorted(p.token for p in preds))
+        is_seq, tokens, preds = _condition(row, has_own, item_table)
+        for p in preds:
+            alphabet.setdefault(p.token, p)
         key = (is_seq, tokens)
         if key in seen_keys:
             continue  # same condition reached from different items

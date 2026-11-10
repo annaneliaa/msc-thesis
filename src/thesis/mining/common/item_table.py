@@ -152,6 +152,14 @@ def build_item_table(
     X_cat, X_num, y, column_predicate_map = build_categorical_predicate_matrix(
         alert_groups, exclude_fields=exclude_fields
     )
+    # Drop items that are constant on this window: one that fires on every
+    # group carries no information but gets padded onto every Eclat itemset
+    # (on AIT-ADS the CSCAS-only fields are constant -- "category=",
+    # "proto=-1", ... -- and filled the budget with copies of one condition);
+    # one that never fires can't be mined. Neither can change the contrast
+    # tree's output (Step 1 can't pass a constant, the tree can't split on it).
+    if len(X_cat):
+        X_cat = X_cat.loc[:, X_cat.nunique() > 1]
 
     item_predicates: dict[str, tuple[AttributePredicate, ...]] = {}
     for col in X_cat.columns:
