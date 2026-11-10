@@ -13,6 +13,7 @@ from thesis.mining.attribute_features import (
     SET_VALUED_CATEGORICAL_FIELDS,
     compute_candidate_attribute_features,
 )
+from thesis.schemas.features import AttributePredicate
 from thesis.schemas.groups import AlertGroup
 
 _EPS = 1e-9
@@ -396,3 +397,47 @@ def surviving_single_columns(stats_df: pd.DataFrame) -> list[str]:
     for itemset in stats_df["itemset"]:
         cols.update(itemset)
     return sorted(cols)
+
+
+def contrast_survivor_predicates(
+    survivors_df: pd.DataFrame,
+    column_predicate_map: dict[str, tuple[str, Any]],
+) -> list[AttributePredicate]:
+    """
+    The AttributePredicate behind every column a Step-1 survivor uses, so a
+    contrast_categorical feature can be evaluated at encode time.
+
+    The symbolic encoder (encoders/symbolic.py) fires a feature only when
+    every token of its itemset is in the group's items, i.e. raw_items plus
+    the tokens of the schema's predicate alphabet that hold. A survivor's
+    tokens are X_cat column names ("category=SNMP", "cve_present"), which
+    never appear in raw_items (those say "cat:SNMP") -- so without these
+    predicates in the alphabet, a contrast feature only fired when its column
+    happened to also be a decision-tree split, and was otherwise a constant 0
+    column. Token = column name, operator "==", exactly what
+    decision_tree_rule_mining._split_predicate produces for a column the tree
+    splits on, so the two never disagree on a shared token.
+    """
+    if survivors_df.empty:
+        return []
+    preds = []
+    for col in surviving_single_columns(survivors_df):
+        if col in column_predicate_map:
+            attribute, value = column_predicate_map[col]
+            preds.append(
+                AttributePredicate(
+                    token=col, attribute=attribute, operator="==", value=value
+                )
+            )
+    return preds
+
+
+def merge_predicate_alphabets(
+    *alphabets: Sequence[AttributePredicate],
+) -> list[AttributePredicate]:
+    """Union of predicate alphabets, deduplicated by token (first wins)."""
+    merged: dict[str, AttributePredicate] = {}
+    for alphabet in alphabets:
+        for pred in alphabet:
+            merged.setdefault(pred.token, pred)
+    return list(merged.values())

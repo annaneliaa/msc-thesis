@@ -55,6 +55,17 @@ def _save_cache_index(scenario_name: str, root_dir: Path, index: dict) -> None:
         json.dump(index, f, indent=2)
 
 
+# Bumped whenever the *shape* of a mined schema changes without any mining
+# input changing, so every cache entry built under the old shape misses
+# instead of being served. Deliberately invalidates the whole cache.
+#   1: original.
+#   2: predicate alphabet includes Step-1 contrast survivors' predicates
+#      (attribute_contrast_mining.contrast_survivor_predicates). Before this,
+#      contrast_categorical features whose column wasn't also a tree split
+#      never fired at encode time (constant-0 columns).
+SCHEMA_FORMAT_VERSION = 2
+
+
 def compute_fingerprint(
     alert_groups_path: Path,
     attribute_mining_config: AttributeMiningConfig,
@@ -102,6 +113,7 @@ def compute_fingerprint_from_identity(
         **identity,
         "config": attribute_mining_config.model_dump(),
         "exclude_fields": sorted(exclude_fields or ()),
+        "schema_format": SCHEMA_FORMAT_VERSION,
     }
     blob = json.dumps(payload, sort_keys=True).encode("utf-8")
     return hashlib.sha256(blob).hexdigest()[:16]

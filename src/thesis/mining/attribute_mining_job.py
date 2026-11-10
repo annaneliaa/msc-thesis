@@ -25,6 +25,8 @@ from thesis.mining.attribute_contrast_mining import (
     build_categorical_predicate_matrix,
     compute_predicate_contrast_stats,
     filter_contrast_survivors,
+    contrast_survivor_predicates,
+    merge_predicate_alphabets,
     surviving_single_columns,
 )
 from thesis.mining.decision_tree_rule_mining import (
@@ -170,8 +172,15 @@ def run_alert_group_attribute_mining_job(
         X_train, kept_predicate_map = build_training_matrix(
             X_cat, X_num, column_predicate_map, surviving_cols
         )
-        leaf_rules_df, predicates = fit_and_extract_rules(
+        leaf_rules_df, tree_predicates = fit_and_extract_rules(
             X_train, y, kept_predicate_map, config.tree
+        )
+        # The schema's alphabet must cover Step 1's survivors too, or their
+        # contrast_categorical features can never fire at encode time (see
+        # contrast_survivor_predicates).
+        predicates = merge_predicate_alphabets(
+            tree_predicates,
+            contrast_survivor_predicates(survivors_df, column_predicate_map),
         )
         save_dataframe_artifact(leaf_rules_df, run_dir, "decision_tree_rules")
         tree_mode = (

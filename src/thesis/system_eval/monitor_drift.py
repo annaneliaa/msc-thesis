@@ -81,7 +81,9 @@ from thesis.metrics.shortlist import ShortlistedConfig, load_shortlist
 from thesis.mining.attribute_contrast_mining import (
     build_categorical_predicate_matrix,
     compute_predicate_contrast_stats,
+    contrast_survivor_predicates,
     filter_contrast_survivors,
+    merge_predicate_alphabets,
     surviving_single_columns,
 )
 from thesis.mining.decision_tree_rule_mining import (
@@ -194,7 +196,12 @@ def mine_symbolic_and_dynamic_schema(
         source_label="attack",
         schema_name="symbolic",
         schema_version=schema_version_tag,
-        predicates=predicate_alphabet,
+        # Survivors' predicates too, or their contrast features never fire
+        # (attribute_contrast_mining.contrast_survivor_predicates).
+        predicates=merge_predicate_alphabets(
+            predicate_alphabet,
+            contrast_survivor_predicates(survivors_df, column_predicate_map),
+        ),
     )
     schema = FeatureSchema(
         schema_name="base+symbolic",
