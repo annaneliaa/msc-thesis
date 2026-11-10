@@ -173,12 +173,24 @@ def build_dynamic_schema(
         confidence_attack = float(row["confidence_attack"])
         confidence_benign = float(row["confidence_benign"])
         prediction = _direction(confidence_attack, confidence_benign)
+        # Mined confidence = the leaf's PRECISION in its predicted class (share
+        # of the leaf's own groups with that label) -- the same quantity
+        # monitor.signals.compute_signal_2 observes on incoming groups.
+        # confidence_attack/_benign above are per-class RECALL (n_class_in_leaf
+        # / n_class_total), so the old max(recall_attack, recall_benign) made
+        # signal 2 compare recall against precision.
+        n_leaf_attack = int(row["n_attack"])
+        n_leaf = n_leaf_attack + int(row["n_benign"])
+        precision_attack = n_leaf_attack / n_leaf if n_leaf else 0.0
+        confidence = (
+            precision_attack if prediction == "attack" else 1.0 - precision_attack
+        )
         compound_rules.append(
             DynamicCompoundRule(
                 rule_id=_rule_id(conditions),
                 conditions=conditions,
                 prediction=prediction,
-                confidence=max(confidence_attack, confidence_benign),
+                confidence=confidence,
                 support_attack=confidence_attack,
                 support_benign=confidence_benign,
                 n_samples=int(row["support_count"]),

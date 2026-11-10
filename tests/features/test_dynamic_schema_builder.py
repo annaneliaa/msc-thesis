@@ -153,6 +153,42 @@ def test_build_dynamic_schema_categorical_and_numeric_single_predicates():
         assert 0.0 <= rule.confidence <= 1.0
         assert rule.n_samples > 0
 
+    # Mined confidence is the leaf's precision in its predicted class (what
+    # monitor.signals.compute_signal_2 observes), not per-class recall.
+    for rule, (_, leaf) in zip(schema.compound_rules, leaf_rules_df.iterrows()):
+        n = leaf["n_attack"] + leaf["n_benign"]
+        expected = (
+            leaf["n_attack"] if rule.prediction == "attack" else leaf["n_benign"]
+        ) / n
+        assert abs(rule.confidence - expected) < 1e-9
+
+
+def test_compound_rule_confidence_is_precision_not_recall():
+    # A leaf with 3 attacks + 97 benign, against 6 attacks / 9700 benign
+    # overall: recall_attack 0.5 > recall_benign 0.01 -> "attack" leaf, but
+    # its precision is only 3%. Mined confidence must be the 3%.
+    survivors_df, leaf_rules_df, predicate_alphabet, column_predicate_map, X_num, y = (
+        _mine(_build_mixed_signal_groups())
+    )
+    leaf = leaf_rules_df.iloc[[0]].copy()
+    leaf["n_attack"], leaf["n_benign"], leaf["support_count"] = 3, 97, 100
+    leaf["confidence_attack"], leaf["confidence_benign"] = 3 / 6, 97 / 9700
+
+    schema = build_dynamic_schema(
+        contrast_stats_df=survivors_df,
+        leaf_rules_df=leaf,
+        predicate_alphabet=predicate_alphabet,
+        column_predicate_map=column_predicate_map,
+        X_num=X_num,
+        y=y,
+        version=1,
+        mining_window_start=_WINDOW_START,
+        mining_window_end=_WINDOW_END,
+    )
+    (rule,) = schema.compound_rules
+    assert rule.prediction == "attack"
+    assert abs(rule.confidence - 0.03) < 1e-9
+
 
 def test_build_dynamic_schema_excludes_pairwise_survivors_from_single_predicates():
     # Neither predicate alone is discriminative, but their AND combination is
