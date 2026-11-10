@@ -139,3 +139,28 @@ def test_precision_is_class_rate_inside_pattern():
     assert out["confidence_attack"].iloc[0] == pytest.approx(0.30 / 0.31)
     assert out["precision_attack"].iloc[0] == pytest.approx(45 / 145)
     assert out["precision_benign"].iloc[0] == pytest.approx(100 / 145)
+
+
+@pytest.mark.parametrize("seed", range(3))
+def test_eclat_matches_mlxtend_fpgrowth(seed):
+    # Independent reference implementation (mlxtend, dev dependency).
+    mlxtend = pytest.importorskip("mlxtend.frequent_patterns")
+    from mlxtend.preprocessing import TransactionEncoder
+
+    rng = random.Random(seed)
+    items = "abcdefg"
+    txs = [
+        frozenset(x for x in items if rng.random() < 0.35) or frozenset("a")
+        for _ in range(300)
+    ]
+    for ms in (0.05, 0.1, 0.2):
+        ours = run_eclat(txs, ms, max_len=None)
+        ours = {frozenset(s): c for s, c in zip(ours["itemset"], ours["support_count"])}
+        te = TransactionEncoder()
+        onehot = pd.DataFrame(te.fit(txs).transform(txs), columns=te.columns_)
+        ref = mlxtend.fpgrowth(onehot, min_support=ms, use_colnames=True)
+        ref = {
+            frozenset(s): round(sup * len(txs))
+            for s, sup in zip(ref["itemsets"], ref["support"])
+        }
+        assert ours == ref

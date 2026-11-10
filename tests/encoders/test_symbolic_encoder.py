@@ -228,3 +228,28 @@ def test_repeated_item_sequence_matches_non_consecutive_repeats():
     )
     tx = _make_alert_group(sorted_items=[{"a"}, {"b"}, {"a"}], n_alerts=3)
     assert SymbolicFeatureEncoder(schema).transform_one(tx).iloc[0]["seq__a__a"] == 1
+
+
+def test_itemset_sequence_features_match_steps_as_subsets_in_order():
+    schema = SymbolicFeatureSchema(
+        schema_name="symbolic",
+        schema_version="0.1.0",
+        features=[
+            SymbolicFeature(
+                feature_name="seq__ab_then_c",
+                itemset=("a & b", "c"),
+                source_label="attack",
+                mining_type="itemset_sequence",
+            )
+        ],
+    )
+    encoder = SymbolicFeatureEncoder(schema)
+
+    def fires(steps):
+        tx = _make_alert_group(context_steps=steps, n_alerts=len(steps))
+        return encoder.transform_one(tx).iloc[0]["seq__ab_then_c"]
+
+    assert fires([{"a", "b", "x"}, {"c"}]) == 1
+    assert fires([{"a"}, {"b"}, {"c"}]) == 0  # a and b must share a step
+    assert fires([{"c"}, {"a", "b"}]) == 0  # order matters
+    assert fires([{"a", "b", "c"}]) == 0  # c needs a later step

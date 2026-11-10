@@ -10,6 +10,12 @@ Every miner emits a *pattern frame*, one row per pattern:
     n_attack      int              mining-window attack groups it fires on
     n_benign      int              mining-window benign groups it fires on
 
+Optional column:
+    predicates    tuple[AttributePredicate, ...]  the AND the pattern means,
+                  for atemporal patterns whose conditions aren't plain item-table
+                  items (a RIPPER negation, a decision-tree split threshold).
+                  When present and non-empty it overrides the item lookup.
+
 add_pattern_stats() derives support and precision from the counts the same
 way for every method; select_budget() keeps the top K; patterns_to_schema()
 writes the result into the existing SymbolicFeatureSchema, so the encoder,
@@ -139,7 +145,9 @@ def patterns_to_schema(
 
     Atemporal patterns (items from the item table) become an AND of the
     items' AttributePredicate tokens, evaluated by the encoder's predicate
-    path; their predicates go into the schema's alphabet. Sequence patterns
+    path; their predicates go into the schema's alphabet. A row's own
+    `predicates` (when the column exists and is non-empty) is used instead
+    of looking its items up in the item table. Sequence patterns
     (mining_type in SEQUENCE_MINING_TYPES) keep their ordered items and are
     evaluated in order on the group's look-back sequence.
     """
@@ -147,15 +155,20 @@ def patterns_to_schema(
     alphabet: dict[str, AttributePredicate] = {}
     seen_keys: set[tuple[bool, tuple[str, ...]]] = set()
     names: set[str] = set()
+    has_own = "predicates" in df.columns
     for row in df.itertuples(index=False):
         items = tuple(row.items)
         is_seq = row.mining_type in SEQUENCE_MINING_TYPES
+        own = row.predicates if has_own else None
         if is_seq:
             tokens = items
         else:
-            if item_table is None:
+            if isinstance(own, tuple) and own:
+                preds = own
+            elif item_table is None:
                 raise ValueError("atemporal patterns need the item_table")
-            preds = item_table.predicates_for(items)
+            else:
+                preds = item_table.predicates_for(items)
             for p in preds:
                 alphabet.setdefault(p.token, p)
             tokens = tuple(sorted(p.token for p in preds))

@@ -15,10 +15,26 @@ class BaseFeatureSchema:
     kind: str = "baseline"
 
 
-# mining_type values whose `itemset` is an ordered sequence (one item per
-# alert step), not a set: the encoder fires them only when the items occur in
-# that order, in strictly later alerts of the group's sorted_items.
-SEQUENCE_MINING_TYPES = frozenset({"item_sequence"})
+# mining_type values whose `itemset` is an ordered sequence of steps, not a
+# set: the encoder fires them only when each step is a subset of a strictly
+# later step of the group's sequence (context_steps, else sorted_items).
+#   item_sequence:    one item per step, itemset = (item, item, ...)
+#   itemset_sequence: several items per step; each element of `itemset` is
+#                     one step, its items joined with STEP_ITEM_SEP
+#                     (sorted), e.g. ("short:A & short:B", "short:C").
+# Storing steps as joined strings keeps the existing schema JSON format.
+SEQUENCE_MINING_TYPES = frozenset({"item_sequence", "itemset_sequence"})
+STEP_ITEM_SEP = " & "
+
+
+def join_step(items) -> str:
+    """One itemset_sequence step as a schema token (sorted, joined)."""
+    return STEP_ITEM_SEP.join(sorted(items))
+
+
+def split_step(step: str) -> frozenset[str]:
+    """Inverse of join_step."""
+    return frozenset(step.split(STEP_ITEM_SEP))
 
 
 @dataclass(frozen=True, slots=True)

@@ -120,30 +120,44 @@ Original audit list:
 
 All five write their output through the same function: clause, leaning class, support and precision, then the gate, then top-K.
 
-## Phase 4: Mini experiment per method
+### Status: all 5 done (not committed). 320 tests pass, plus the same 3 `lime` failures.
 
-Each method runs on one CSCAS window (W₀) and one AIT-ADS scenario window, including the combinations expected to fail (temporal methods on CSCAS). Those failures back up the paper's claim that CSCAS has no order to mine.
+Every method has a `miner.py` that returns the shared pattern frame. The frame
+may carry its own `predicates`, for conditions that aren't plain items: RIPPER
+negations and tree thresholds. A round-trip test per method checks that each
+feature, once encoded, fires on exactly the groups the miner counted.
 
-For each run, the report gives:
+| Method | Entry point | Notes |
+|---|---|---|
+| Eclat + filters | `atemporal/eclat/miner.py::mine_eclat(table, …)` | One pass per class on the item table. Then cross-class supports, the direction filter, and `ItemsetFilterConfig`. No OR step and no mail-host abstraction. Matches `mlxtend.fpgrowth` exactly (new test). |
+| Contrast + two-tree | `atemporal/contrast_tree/miner.py::mine_contrast_tree(table, config)` | Same Steps 1 and 2 as `attribute_mining_job`. Survivors and leaves both count towards K. |
+| RIPPER | `atemporal/ripper/miner.py::mine_ripper(table, random_state, …)` | `wittgenstein==0.3.5` (MIT, added to pyproject), one fit per class, defaults otherwise. wittgenstein doesn't find numeric thresholds itself: it cuts numerics into equal-frequency bins treated as categorical values. So RIPPER gets the *shared* bins (one bin-valued column per numeric field), and its own binning is switched off. Negated items become `!=` / `NOT_<col>` predicates, the tree's convention. Deterministic given the seed. |
+| PrefixSpan + filters | `temporal/prefixspan/miner.py::mine_prefixspan(groups, …)` | Runs on `context_steps` (the look-back sequences). Then cross-class supports, the direction filter, and `SequenceFilterConfig`. No `top_k_per_pass`. |
+| MCTSExtent | `temporal/mctsextent/miner.py::mine_mctsextent(groups, top_k, theta, iterations, random_state, …)` | Runs the authors' code, fetched at a pinned commit (details below). One run per class on `context_steps`, WRAcc, upstream θ=0.8. Patterns are sequences of itemsets, so they're stored as the new `itemset_sequence` feature type, which the encoder checks in order. Stops after a fixed number of iterations (not a time budget), so a seeded run is reproducible. Fox, 266 attack + 1,000 sampled benign groups: 20 patterns, 3.7 s for 1,000 iterations. |
 
-- the number of patterns before filtering, after the gate and after the budget
-- the length distribution of the patterns
-- the top 10 patterns per class, with support and precision
-- **the share of features that fire at least once in the test window**, to catch dead columns like the contrast-feature bug
-- attack coverage
-- the share of features that just restate a single signature, to catch the earlier Eclat failure
-- runtime
+On the 20k-group CSCAS slice (oracle fields excluded):
 
-**Pass criterion:** non-empty features for both classes that aren't constant on the test window and aren't single-signature tautologies.
+| Method | Patterns | Time |
+|---|---|---|
+| RIPPER | 20 rules (8 attack, 12 benign) | 2.4 s |
+| Eclat | 281 itemsets | 0.6 s |
+| Contrast tree | 65 patterns | 0.2 s |
 
-**Format:** one script plus a notebook under `notebooks/paper/`. Mini runs are small enough to run locally.
+SPMF cross-check for PrefixSpan: skipped. The brute-force tests already check
+item- and itemset-PrefixSpan exactly against an enumeration, so SPMF would
+add a download and little else.
 
-## Order
+**MCTSExtent: fetched at a pinned commit (decided 2026-11-10).**
 
-Phase 1 → 2 → 3 (RIPPER before MCTSExtent) → 4. Run each method's mini experiment as soon as that method is ready, rather than leaving them all to the end.
+Why not a normal pip dependency:
 
-## Open questions
+- The repo has no license.
+- `setup.py` installs a package named `mctsextend`, but the folder is `mctsextent`.
+- `requirements.txt` pins numpy 1.15 and pandas 0.23.
 
-- Confirm the library choices in the Phase 3 table.
-- Can the OR-disjunctions and the mail-host abstraction be turned off for the comparison?
-- Who launches the mini experiments: Claude locally, or the user?
+What we do instead (`temporal/mctsextent/vendor.py`):
+
+- `ensure_mctsextent()` clones the repo at commit `7fe135d` into `external/MCTSExtent/`, which is gitignored, so nothing upstream is ever committed. It runs automatically on first use, so the DGX needs network access once.
+- `load_launch_mcts()` imports `launch_mcts`, the in-memory entry point, so no `.dat` file is needed.
+- One patch is applied in memory; the upstream files are untouched. Upstream calls `random.sample` on sets, which fails on Python ≥ 3.11. The shim sorts the set first: items directly, MCTS nodes by their pattern.
+- With a plain `list(set)` instead, two identical seeded runs gave different patterns, because node order followed memory addresses. Sorting makes seeded runs reproducible (tested).

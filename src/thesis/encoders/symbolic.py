@@ -4,6 +4,7 @@ import pandas as pd
 from thesis.schemas.groups import AlertGroup
 from thesis.schemas.features import (
     SEQUENCE_MINING_TYPES,
+    split_step,
     AttributePredicate,
     SymbolicFeatureSchema,
     SymbolicFeature,
@@ -13,7 +14,7 @@ from thesis.mining.temporal.prefixspan.repeat_encoding import (
     encode_sequence_of_itemsets,
 )
 from thesis.mining.common.token_abstraction import abstract_mail_hosts
-from thesis.mining.common.util import sequence_contains_pattern
+from thesis.mining.common.util import itemset_sequence_contains_pattern
 from thesis.monitor.predicate_eval import evaluate_condition
 
 
@@ -56,7 +57,7 @@ def _alert_group_steps(tx: AlertGroup) -> list[set[str]]:
 
 def _compile_feature(
     feature: "SymbolicFeature",
-) -> tuple[str, list[frozenset[str]]] | tuple[str, tuple[str, ...]]:
+) -> tuple[str, list[frozenset[str]]] | tuple[str, tuple[frozenset[str], ...]]:
     """Return (name, clauses) for set features, (name, pattern) for sequences.
 
     Set features: each clause is one AND-set; a plain AND feature produces a
@@ -66,8 +67,10 @@ def _compile_feature(
     pattern; fire if it is a subsequence of the group's alert steps, with the
     same matching rule the miner counted support with.
     """
+    if feature.mining_type == "itemset_sequence":
+        return feature.feature_name, tuple(split_step(s) for s in feature.itemset)
     if feature.mining_type in SEQUENCE_MINING_TYPES:
-        return feature.feature_name, tuple(feature.itemset)
+        return feature.feature_name, tuple(frozenset({i}) for i in feature.itemset)
     if feature.clauses is not None:
         return feature.feature_name, [frozenset(c) for c in feature.clauses]
     return feature.feature_name, [frozenset(feature.itemset)]
@@ -108,7 +111,7 @@ class SymbolicFeatureEncoder:
         if self.compiled_sequences:
             steps = _alert_group_steps(tx)
             for name, pattern in self.compiled_sequences:
-                row[name] = int(sequence_contains_pattern(steps, pattern))
+                row[name] = int(itemset_sequence_contains_pattern(steps, pattern))
         return {name: row[name] for name in self._column_order if name in row}
 
     def transform_one(self, tx: AlertGroup) -> pd.DataFrame:

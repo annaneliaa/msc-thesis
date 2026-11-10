@@ -31,6 +31,7 @@ dependencies = [
   "accelerate>=1.1.0",
   "shap",
   "lime",
+  "wittgenstein==0.3.5",  # RIPPER for the mining comparison (MIT)
   "deepcase @ git+https://github.com/Thijsvanede/DeepCASE.git@7d19eaa798da257b83567aeaed78d88bd3574370",
 ]
 
@@ -41,6 +42,7 @@ dev = [
   "ruff>=0.6",
   "black>=24.0",
   "pre-commit>=3.8",
+  "mlxtend>=0.23",  # tests only: independent reference for Eclat itemsets
 ]
 # graph-tool is required for AlertBERT grouping but is not pip-installable.
 # Install it via conda before pip install -e .:
