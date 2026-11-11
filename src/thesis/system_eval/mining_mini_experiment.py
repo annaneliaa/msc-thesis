@@ -513,6 +513,57 @@ def write_cell_artifacts(
     (cell_dir / "mining.json").write_text(json.dumps(meta, indent=2, default=str))
 
 
+@dataclass
+class FeatureSelection:
+    """One method's mined patterns on one mining window, through the shared
+    gate -> condition dedupe -> firing dedupe -> budget pipeline."""
+
+    stats: pd.DataFrame  # every mined pattern, with pattern_id
+    stages: dict  # pattern_id sets per stage (see _pattern_stage)
+    budget: pd.DataFrame  # the kept patterns, ranked
+    mine_seconds: float
+    counts: dict  # n_raw, n_raw_attack, n_gated_conditions, n_gated, n_budget
+
+
+def select_features(
+    method: str, window: MiniWindow, config: MiniConfig, table: ItemTable | None
+) -> FeatureSelection:
+    """Mine `window.train` with `method`, then apply the shared treatment
+    every method gets: precision gate, condition dedupe, near-duplicate
+    firing dedupe and budget K."""
+    y_tr = _labels(window.train)
+    n_attack, n_benign = int(y_tr.sum()), int((~y_tr).sum())
+    base_rate = n_attack / len(y_tr)
+    t0 = time.perf_counter()
+    frame = mine(method, window, table, config)
+    mine_seconds = round(time.perf_counter() - t0, 2)
+
+    stats = add_pattern_stats(frame, n_attack, n_benign)
+    stats.insert(0, "pattern_id", range(len(stats)))
+    passed = gate(stats, base_rate, config.gate_g, window.benign_gate_g)
+    gated = dedupe_conditions(passed, table)
+    n_gated_conditions = len(gated)
+    distinct_condition = set(gated["pattern_id"])
+    if config.dedupe_identical_firing:
+        gated = dedupe_firing(gated, table, window.train, config.dedupe_jaccard)
+    budget = select_budget(gated, config.k, per_class=config.per_class_budget)
+    stages = {
+        "gated": set(passed["pattern_id"]),
+        "distinct_condition": distinct_condition,
+        "distinct_firing": set(gated["pattern_id"]),
+        "budget": set(budget["pattern_id"]),
+        "budget_order": list(budget["pattern_id"]),
+    }
+    counts = dict(
+        n_raw=len(stats),
+        n_raw_attack=int((stats["source_label"] == "attack").sum()),
+        n_gated_conditions=n_gated_conditions,  # distinct conditions passing
+        n_gated=len(gated),  # ...and distinct firing patterns among those
+        n_budget=len(budget),
+    )
+    return FeatureSelection(stats, stages, budget, mine_seconds, counts)
+
+
 def evaluate(
     method: str,
     window: MiniWindow,
@@ -534,8 +585,7 @@ def evaluate(
         return row, pd.DataFrame()
 
     y_tr, y_te = _labels(window.train), _labels(window.test)
-    n_attack, n_benign = int(y_tr.sum()), int((~y_tr).sum())
-    base_rate = n_attack / len(y_tr)
+    n_attack = int(y_tr.sum())
     row.update(
         n_train=len(y_tr),
         n_train_attack=n_attack,
@@ -544,33 +594,10 @@ def evaluate(
         benign_gate_g=window.benign_gate_g or config.gate_g,
     )
 
-    t0 = time.perf_counter()
-    frame = mine(method, window, table, config)
-    row["mine_seconds"] = round(time.perf_counter() - t0, 2)
-
-    stats = add_pattern_stats(frame, n_attack, n_benign)
-    stats.insert(0, "pattern_id", range(len(stats)))
-    passed = gate(stats, base_rate, config.gate_g, window.benign_gate_g)
-    gated = dedupe_conditions(passed, table)
-    n_gated_conditions = len(gated)
-    distinct_condition = set(gated["pattern_id"])
-    if config.dedupe_identical_firing:
-        gated = dedupe_firing(gated, table, window.train, config.dedupe_jaccard)
-    budget = select_budget(gated, config.k, per_class=config.per_class_budget)
-    stages = {
-        "gated": set(passed["pattern_id"]),
-        "distinct_condition": distinct_condition,
-        "distinct_firing": set(gated["pattern_id"]),
-        "budget": set(budget["pattern_id"]),
-        "budget_order": list(budget["pattern_id"]),
-    }
-    row.update(
-        n_raw=len(stats),
-        n_raw_attack=int((stats["source_label"] == "attack").sum()),
-        n_gated_conditions=n_gated_conditions,  # distinct conditions passing
-        n_gated=len(gated),  # ...and distinct firing patterns among those
-        n_budget=len(budget),
-    )
+    sel = select_features(method, window, config, table)
+    stats, stages, budget = sel.stats, sel.stages, sel.budget
+    row["mine_seconds"] = sel.mine_seconds
+    row.update(sel.counts)
     if method == "eclat":
         row["eclat_min_support_count"] = eclat_count_floor(config, table)
     if budget.empty:
