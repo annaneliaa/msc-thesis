@@ -61,6 +61,7 @@ from thesis.mining.common.patterns import (
 )
 from thesis.mining.temporal.lookback import (
     DEFAULT_WINDOW_MINUTES,
+    HostAlertIndex,
     attach_lookback_steps,
     load_ait_ads_raw_alerts,
 )
@@ -102,6 +103,10 @@ class MiniWindow:
     # Benign side of the precision gate: benign rules need attack rate
     # <= pi / benign_gate_g. None = same g as the attack side.
     benign_gate_g: float | None = None
+    # Sets context_steps on the given groups for this window's token arm.
+    # Called by run_mini before the temporal methods, because windows of
+    # different arms share the same group objects. None = steps already set.
+    attach_steps: Callable[[list[AlertGroup]], None] | None = None
 
 
 @dataclass
@@ -719,11 +724,11 @@ def run_mini(
                 f"[{window.name}] item table {table.items().shape} "
                 f"in {time.perf_counter() - t0:.1f}s"
             )
+        steps_attached = False
         for method in config.methods:
-            # Token arms only change the item table; temporal methods mine
-            # look-back sequences of full codes, so run them on T0 only.
-            if method in TEMPORAL and window.token_arm != "T0":
-                continue
+            if method in TEMPORAL and window.attach_steps and not steps_attached:
+                window.attach_steps(window.train + window.test)
+                steps_attached = True
             print(f"[{window.name}] {method} ...", flush=True)
             try:
                 row, f = evaluate(
@@ -813,6 +818,42 @@ TOKEN_ARMS: dict[str, tuple[set[str], set[str]]] = {
     "T2": ({"short_src", "short_cat", "short_family", "sig_family"}, set()),
     "T3": ({"short_src", "short_cat", "short_family", "sig_family"}, {"short", "sig"}),
 }
+# The arm the comparison uses on AIT-ADS, for every method (decided
+# 2026-11-11): full codes plus all coarse levels.
+COMPARISON_TOKEN_ARM = "T2"
+
+
+def lookback_token_fields(token_arm: str) -> frozenset[str]:
+    """The look-back items an arm gives the temporal methods: the same coarse
+    fields as the item table, plus the full code unless the arm excludes it."""
+    include, exclude = TOKEN_ARMS[token_arm]
+    return frozenset(({"short"} - exclude) | include)
+
+
+_LOOKBACK_INDEX: dict[tuple[str, frozenset[str]], HostAlertIndex] = {}
+
+
+def lookback_attacher(
+    scenario: str, token_arm: str, window_minutes: int = DEFAULT_WINDOW_MINUTES
+) -> Callable[[list[AlertGroup]], None]:
+    """attach_steps for an AIT-ADS window: look-back steps with the arm's
+    tokens, the per-host index built once per (scenario, token fields)."""
+    fields = lookback_token_fields(token_arm)
+
+    def attach(groups: list[AlertGroup]) -> None:
+        key = (scenario, fields)
+        if key not in _LOOKBACK_INDEX:
+            _LOOKBACK_INDEX[key] = HostAlertIndex(
+                load_ait_ads_raw_alerts(scenario), fields
+            )
+        attach_lookback_steps(
+            groups,
+            alerts=None,
+            window_minutes=window_minutes,
+            index=_LOOKBACK_INDEX[key],
+        )
+
+    return attach
 
 
 def ait_ads_window(
@@ -837,9 +878,6 @@ def ait_ads_window(
         scenario, CACHE_DIR / scenario / "groups" / method
     )
     groups = labelled(sorted(groups, key=lambda g: g.start_ts))
-    attach_lookback_steps(
-        groups, load_ait_ads_raw_alerts(scenario), window_minutes=lookback_minutes
-    )
     if split_ts is None:
         cut = int(len(groups) * train_frac)
         split_desc = f"first {train_frac:.0%} -> rest"
@@ -859,6 +897,7 @@ def ait_ads_window(
         grouping=method,
         token_arm=token_arm,
         has_raw_alerts=True,
+        attach_steps=lookback_attacher(scenario, token_arm, lookback_minutes),
         # AIT-ADS time-window labels mark background alerts during attack
         # phases as attacks (and event labels can't separate them: they're
         # absent for dnsteal / scans / reverse shell), so benign rules only

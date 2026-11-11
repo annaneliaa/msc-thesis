@@ -45,6 +45,7 @@ from thesis.system_eval.mining_mini_experiment import (  # noqa: E402
     TOKEN_ARMS,
     MiniConfig,
     ait_ads_window,
+    lookback_attacher,
     reference_split_ts,
     run_mini,
 )
@@ -94,6 +95,9 @@ def main() -> None:
                     token_arm=arm,
                     include_fields=set(include),
                     exclude_fields=default_leaky_attribute_fields(a.scenario) | exclude,
+                    attach_steps=lookback_attacher(
+                        a.scenario, arm, config.lookback_minutes
+                    ),
                 )
             )
 

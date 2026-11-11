@@ -25,7 +25,9 @@ _REPO = next(p for p in _HERE.parents if (p / "pyproject.toml").exists())
 sys.path.insert(0, str(_REPO / "src"))
 
 from thesis.system_eval.mining_mini_experiment import (  # noqa: E402
+    COMPARISON_TOKEN_ARM,
     METHODS,
+    TOKEN_ARMS,
     MiniConfig,
     ait_ads_window,
     cscas_window,
@@ -40,6 +42,12 @@ def main() -> None:
     )
     p.add_argument("--datasets", nargs="+", default=["cscas", "ait_ads"])
     p.add_argument("--scenario", default="fox", help="AIT-ADS scenario")
+    p.add_argument(
+        "--token-arm",
+        default=COMPARISON_TOKEN_ARM,
+        choices=TOKEN_ARMS,
+        help="AIT-ADS token arm, for every method",
+    )
     p.add_argument("--train-frac", type=float, default=0.7, help="AIT-ADS split")
     p.add_argument("--gran", type=float, default=0.05, help="CSCAS window size")
     p.add_argument("--methods", nargs="+", default=list(METHODS), choices=METHODS)
@@ -64,6 +72,7 @@ def main() -> None:
                 a.scenario,
                 train_frac=a.train_frac,
                 lookback_minutes=config.lookback_minutes,
+                token_arm=a.token_arm,
             )
         )
     out = a.output_dir or default_out_dir()

@@ -83,3 +83,44 @@ def test_encoder_uses_lookback_sequence_when_attached():
     row = SymbolicFeatureEncoder(schema).transform_one(g).iloc[0]
     assert row["seq__x"] == 1
     assert row["seq__rev"] == 0
+
+
+def test_alert_tokens_coarse_fields():
+    from thesis.mining.temporal.lookback import alert_tokens
+
+    t0 = alert_tokens("W-Sys-Fai", "Wazuh: login failed")
+    assert t0 == {"short:W-Sys-Fai"}
+    t2 = alert_tokens(
+        "W-Sys-Fai",
+        "Wazuh: login failed",
+        frozenset({"short", "short_src", "short_cat", "short_family", "sig_family"}),
+    )
+    assert t2 == {
+        "short:W-Sys-Fai",
+        "short_src:W",
+        "short_cat:W-Sys",
+        "short_family:authentication",
+        "sig_family:authentication",
+    }
+    # T3: coarse only, no full code
+    t3 = alert_tokens("W-Sys-Fai", "", frozenset({"short_src", "short_cat"}))
+    assert t3 == {"short_src:W", "short_cat:W-Sys"}
+
+
+def test_lookback_steps_with_coarse_tokens():
+    fields = frozenset({"short", "short_src"})
+    steps = lookback_steps(
+        _group(), HostAlertIndex(_alerts(), fields), window_minutes=10
+    )
+    # synthetic codes have no "-": the source part is the whole code
+    assert steps[1] == {"short:LOGIN", "short_src:LOGIN"}
+    assert len(steps) == 3
+
+
+def test_attach_reuses_prebuilt_index():
+    g1, g2 = _group(), _group()
+    index = HostAlertIndex(_alerts(), frozenset({"short_src"}))
+    attach_lookback_steps([g1], None, window_minutes=10, index=index)
+    attach_lookback_steps([g2], _alerts(), window_minutes=10)
+    assert all(i.startswith("short_src:") for step in g1.context_steps for i in step)
+    assert all(i.startswith("short:") for step in g2.context_steps for i in step)

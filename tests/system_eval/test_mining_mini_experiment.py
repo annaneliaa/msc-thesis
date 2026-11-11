@@ -346,3 +346,53 @@ def test_cell_artifacts_are_written_and_consistent(tmp_path):
         mine = feats[feats["method"] == method]
         assert list(X.columns) == list(mine["feature"])
         assert X.sum().tolist() == mine["train_fires"].tolist()
+
+
+def test_lookback_token_fields_follow_arm():
+    from thesis.system_eval.mining_mini_experiment import (
+        COMPARISON_TOKEN_ARM,
+        lookback_token_fields,
+    )
+
+    assert COMPARISON_TOKEN_ARM == "T2"
+    assert lookback_token_fields("T0") == {"short"}
+    assert lookback_token_fields("T2") == {
+        "short",
+        "short_src",
+        "short_cat",
+        "short_family",
+        "sig_family",
+    }
+    assert "short" not in lookback_token_fields("T3")
+
+
+def test_run_mini_attaches_steps_per_window(tmp_path):
+    """Temporal methods run on every arm, each with its own look-back steps."""
+    ait = _ait_groups()
+    calls = []
+
+    def attacher(tag):
+        def attach(groups):
+            calls.append(tag)
+            for g in groups:
+                g.context_steps = [{f"{tag}:x"}]
+
+        return attach
+
+    windows = [
+        MiniWindow(
+            "ait_ads",
+            f"synthetic {arm}",
+            ait[:110],
+            ait[110:],
+            signature_of=lambda g: g.group_id.split(":")[2],
+            token_arm=arm,
+            has_raw_alerts=True,
+            attach_steps=attacher(arm),
+        )
+        for arm in ("T0", "T2")
+    ]
+    config = MiniConfig(k=5, methods=("prefixspan",), prefixspan_min_k=1)
+    summary, _ = run_mini(windows, config, tmp_path)
+    assert calls == ["T0", "T2"]
+    assert list(summary["token_arm"]) == ["T0", "T2"]
