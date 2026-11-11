@@ -89,13 +89,24 @@ def rule_attack_rates(
 
 
 def passes_gate(
-    source_label: pd.Series, attack_rate: pd.Series, base_rate: float, g: float
+    source_label: pd.Series,
+    attack_rate: pd.Series,
+    base_rate: float,
+    g: float,
+    benign_g: float | None = None,
 ) -> pd.Series:
     """Gate per rule. A rule that never fires fails; "mixed" rules (no
-    leaning class) are kept, since the gate is defined per leaning class."""
+    leaning class) are kept, since the gate is defined per leaning class.
+
+    benign_g (default: g) sets the benign side separately: benign-leaning
+    rules need attack rate <= pi / benign_g. The mining comparison uses
+    benign_g = 1 on AIT-ADS, whose time-window labels mark background alerts
+    during attack phases as attacks, so a routine benign pattern can't reach
+    pi / 2 (see PLAN.md, "AIT-ADS label noise")."""
+    benign_g = g if benign_g is None else benign_g
     rate = attack_rate.astype(float)
     attack_ok = (source_label == "attack") & (rate >= g * base_rate)
-    benign_ok = (source_label == "benign") & (rate <= base_rate / g)
+    benign_ok = (source_label == "benign") & (rate <= base_rate / benign_g)
     mixed = ~source_label.isin(["attack", "benign"])
     return attack_ok | benign_ok | mixed  # NaN rate (never fires) compares False
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
+from functools import lru_cache
 from typing import Any
 
 from thesis.schemas.groups import AlertGroup
@@ -43,6 +45,26 @@ MULTI_VALUED_CATEGORICAL_FIELDS: tuple[str, ...] = (
 # membership in this tuple to handle that correctly (multiple columns set
 # to 1 per row; cross-value pairs NOT assumed mutually exclusive).
 SET_VALUED_CATEGORICAL_FIELDS: tuple[str, ...] = ("short", "sig", "host")
+
+# Opt-in coarser AIT-ADS token levels (mining comparison, Phase 4b): also
+# set-valued, but NOT mining candidates unless a caller asks for them via
+# build_categorical_predicate_matrix(include_fields=...), so existing schemas,
+# thesis runs and cache fingerprints are unchanged. They are always computed
+# (cheap), so a schema mined with them can be evaluated at encode time.
+#   short_src     "A" / "S" / "W"        (AMiner / Suricata / Wazuh)
+#   short_cat     e.g. "W-Aut", "A-Dns"  (source-category, 18 values)
+#   short_family  e.g. "authentication"  (configs/abstraction_map.json, 14)
+#   sig_family    e.g. "web_access"      (same map, for sig keywords, 6)
+COARSE_SET_VALUED_FIELDS: tuple[str, ...] = (
+    "short_src",
+    "short_cat",
+    "short_family",
+    "sig_family",
+)
+# Every set-valued field (several values per group possible), coarse or not.
+ALL_SET_VALUED_FIELDS: tuple[str, ...] = (
+    SET_VALUED_CATEGORICAL_FIELDS + COARSE_SET_VALUED_FIELDS
+)
 
 # Application-layer *Similarity columns grouped by protocol, for the
 # applicable_layer:* binary features below -- which app-layer protocol(s)
@@ -275,6 +297,22 @@ def _normalize_host(host: str) -> str:
     return host
 
 
+@lru_cache(maxsize=1)
+def _abstraction_families() -> dict[str, str]:
+    """token ("short:<code>" / "sig:<kw>") -> its top-level family in
+    configs/abstraction_map.json (the last, most general level)."""
+    from thesis.paths import ABSTRACTION_MAP_PATH
+
+    with open(ABSTRACTION_MAP_PATH, encoding="utf-8") as f:
+        return {tok: levels[-1] for tok, levels in json.load(f).items() if levels}
+
+
+def _short_parts(code: str) -> tuple[str, str]:
+    """("A", "A-Acc") for "A-Acc-Chr1": source and source-category."""
+    parts = code.split("-")
+    return parts[0], "-".join(parts[:2])
+
+
 def compute_ait_ads_attribute_features(tx: AlertGroup) -> dict[str, set[str]]:
     """AIT-ADS's SET_VALUED_CATEGORICAL_FIELDS, derived from the raw_items
     tokens every AIT-ADS grouping method already produces per alert (see
@@ -286,12 +324,22 @@ def compute_ait_ads_attribute_features(tx: AlertGroup) -> dict[str, set[str]]:
     mailboxes don't leak scenario-specific identities into the mined schema.
     Merged into compute_candidate_attribute_features's returned dict below,
     same "called at mining time and at encode time" contract."""
+    shorts = _tokens_with_prefix(tx.raw_items, "short:")
+    sigs = _tokens_with_prefix(tx.raw_items, "sig:")
+    families = _abstraction_families()
     return {
-        "short": _tokens_with_prefix(tx.raw_items, "short:"),
-        "sig": _tokens_with_prefix(tx.raw_items, "sig:"),
+        "short": shorts,
+        "sig": sigs,
         "host": {
             _normalize_host(h) for h in _tokens_with_prefix(tx.raw_items, "host:")
         },
+        # Coarse levels (COARSE_SET_VALUED_FIELDS); unknown tokens are skipped.
+        "short_src": {_short_parts(c)[0] for c in shorts},
+        "short_cat": {_short_parts(c)[1] for c in shorts},
+        "short_family": {
+            families[f"short:{c}"] for c in shorts if f"short:{c}" in families
+        },
+        "sig_family": {families[f"sig:{k}"] for k in sigs if f"sig:{k}" in families},
     }
 
 

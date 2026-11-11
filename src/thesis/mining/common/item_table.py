@@ -142,15 +142,20 @@ def build_item_table(
     alert_groups: Sequence[AlertGroup],
     exclude_fields: set[str] | None = None,
     n_bins: int = DEFAULT_N_BINS,
+    include_fields: set[str] | None = None,
 ) -> ItemTable:
     """Build the shared item table for one mining window.
+
+    include_fields opts in extra candidate fields that are off by default,
+    i.e. the coarse AIT-ADS token levels (COARSE_SET_VALUED_FIELDS:
+    short_src, short_cat, short_family, sig_family).
 
     Mixed-label and unlabelled groups should be dropped by the caller (the
     label is binary here: anything other than "attack" counts as benign,
     exactly as in build_categorical_predicate_matrix).
     """
     X_cat, X_num, y, column_predicate_map = build_categorical_predicate_matrix(
-        alert_groups, exclude_fields=exclude_fields
+        alert_groups, exclude_fields=exclude_fields, include_fields=include_fields
     )
     # Drop items that are constant on this window: one that fires on every
     # group carries no information but gets padded onto every Eclat itemset

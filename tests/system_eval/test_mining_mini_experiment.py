@@ -4,6 +4,7 @@ signature-restating feature is flagged."""
 
 import random
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -170,3 +171,132 @@ def test_single_signature_flag():
     X = pd.DataFrame({"one_sig": [1, 1, 0, 0], "two_sigs": [1, 0, 1, 0], "never": 0})
     flags = single_signature_share(X, groups, lambda g: "A" if g.start_ts < 2 else "B")
     assert flags.to_dict() == {"one_sig": True, "two_sigs": False, "never": False}
+
+
+def test_benign_gate_factor_defaults_to_g_and_can_be_relaxed():
+    from thesis.system_eval.rule_precision_gate import passes_gate
+
+    labels = pd.Series(["benign", "benign", "attack", "attack"])
+    rates = pd.Series([0.015, 0.008, 0.05, 0.03])
+    # pi = 2%: strict benign gate needs <= 1%, attack gate needs >= 4%.
+    assert passes_gate(labels, rates, 0.02, 2.0).tolist() == [False, True, True, False]
+    # benign_g = 1: benign rules only need <= pi; attack side unchanged.
+    assert passes_gate(labels, rates, 0.02, 2.0, benign_g=1.0).tolist() == [
+        True,
+        True,
+        True,
+        False,
+    ]
+
+
+def test_restatement_generalises_to_signature_sets():
+    from thesis.system_eval.mining_mini_experiment import restatement_flags
+
+    groups = [
+        AlertGroup(
+            alert_group_id=str(i),
+            group_id=str(i),
+            method="m",
+            start_ts=i,
+            end_ts=i,
+            n_alerts=1,
+        )
+        for i in range(4)
+    ]
+    sigs = [{"A", "B"}, {"A", "C"}, {"B"}, {"C"}]
+    X = pd.DataFrame(
+        {
+            "always_with_A": [1, 1, 0, 0],  # {A,B} & {A,C} = {A} -> restatement
+            "no_common": [1, 0, 1, 1],  # {A,B} & {B} & {C} = {} -> not
+            "never": [0, 0, 0, 0],
+        }
+    )
+    flags = restatement_flags(X, groups, lambda g: sigs[g.start_ts])
+    assert flags.to_dict() == {
+        "always_with_A": True,
+        "no_common": False,
+        "never": False,
+    }
+
+
+def test_relative_eclat_floor_and_token_arms():
+    from thesis.mining.common.item_table import build_item_table
+    from thesis.system_eval.mining_mini_experiment import TOKEN_ARMS, eclat_count_floor
+
+    rng = random.Random(0)
+    table = build_item_table([_cscas_group(i, rng) for i in range(300)])
+    assert eclat_count_floor(MiniConfig(), table) == 10
+    rel = eclat_count_floor(MiniConfig(eclat_min_support_count="relative"), table)
+    assert rel == max(3, -(-table.n_attack * 5 // 100))
+    assert TOKEN_ARMS["T3"][1] == {"short", "sig"}
+    assert TOKEN_ARMS["T0"] == (set(), set())
+
+
+def test_unseen_attack_masks_any_vs_all():
+    from thesis.system_eval.mining_mini_experiment import unseen_attack_masks
+
+    def g(i, codes):
+        return AlertGroup(
+            alert_group_id=str(i),
+            group_id=str(i),
+            method="m",
+            start_ts=i,
+            end_ts=i,
+            n_alerts=1,
+            raw_items={f"short:{c}" for c in codes},
+        )
+
+    train = [g(0, {"A"}), g(1, {"B"})]
+    test = [g(2, {"A", "X"}), g(3, {"Y"}), g(4, {"A"}), g(5, {"Z"})]
+    window = MiniWindow(
+        "ait_ads",
+        "w",
+        train,
+        test,
+        signature_of=lambda t: frozenset(i[6:] for i in t.raw_items),
+    )
+    y = np.array([True, True, True, False])
+    any_, all_ = unseen_attack_masks(window, y)
+    assert any_.tolist() == [True, True, False, False]  # benign Z never counts
+    assert all_.tolist() == [False, True, False, False]
+
+
+def test_equivalence_vs_confined_restatement():
+    from thesis.system_eval.mining_mini_experiment import (
+        equivalence_flags,
+        restatement_flags,
+    )
+
+    # BG is a background code in every group; X occurs in groups 0-4.
+    groups = [
+        AlertGroup(
+            alert_group_id=str(i),
+            group_id=str(i),
+            method="m",
+            start_ts=i,
+            end_ts=i,
+            n_alerts=1,
+        )
+        for i in range(10)
+    ]
+    sigs = [{"BG", "X"} if i < 5 else {"BG"} for i in range(10)]
+    X = pd.DataFrame(
+        {
+            "is_x": [1] * 5 + [0] * 5,  # = X exactly
+            "slice_of_x": [1, 1, 0, 0, 0] + [0] * 5,  # inside X, but 2/5 of it
+            "host_rule": [0, 0, 0, 0, 0, 1, 1, 1, 0, 0],  # only shares BG
+        }
+    )
+    sig_of = lambda g: sigs[g.start_ts]  # noqa: E731
+    confined = restatement_flags(X, groups, sig_of)
+    eq = equivalence_flags(X, groups, sig_of, jaccard=0.9)
+    # Confined flags all three (every group contains BG); equivalence only
+    # flags the feature that IS a signature.
+    assert confined.to_dict() == {"is_x": True, "slice_of_x": True, "host_rule": True}
+    assert eq["equivalent"].to_dict() == {
+        "is_x": True,
+        "slice_of_x": False,
+        "host_rule": False,
+    }
+    assert eq.loc["is_x", "equiv_signature"] == "X"
+    assert eq.loc["slice_of_x", "equiv_jaccard"] == 0.4

@@ -7,7 +7,9 @@ import numpy as np
 import pandas as pd
 
 from thesis.mining.common.attribute_features import (
+    ALL_SET_VALUED_FIELDS,
     BINARY_CATEGORICAL_FIELDS,
+    COARSE_SET_VALUED_FIELDS,
     MULTI_VALUED_CATEGORICAL_FIELDS,
     NUMERIC_FIELDS,
     SET_VALUED_CATEGORICAL_FIELDS,
@@ -37,6 +39,7 @@ _CONTRAST_STATS_COLUMNS = [
 def build_categorical_predicate_matrix(
     alert_groups: Sequence[AlertGroup],
     exclude_fields: set[str] | None = None,
+    include_fields: set[str] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series, dict[str, tuple[str, Any]]]:
     """
     Single per-group pass building everything downstream mining needs:
@@ -62,8 +65,16 @@ def build_categorical_predicate_matrix(
     multi_valued_fields = [
         f for f in MULTI_VALUED_CATEGORICAL_FIELDS if f not in exclude_fields
     ]
+    # include_fields opts in the coarse AIT-ADS token levels
+    # (COARSE_SET_VALUED_FIELDS); off by default, so existing callers and
+    # cache fingerprints are unchanged.
+    include_fields = include_fields or set()
     set_valued_fields = [
         f for f in SET_VALUED_CATEGORICAL_FIELDS if f not in exclude_fields
+    ] + [
+        f
+        for f in COARSE_SET_VALUED_FIELDS
+        if f in include_fields and f not in exclude_fields
     ]
     binary_fields = [f for f in BINARY_CATEGORICAL_FIELDS if f not in exclude_fields]
     numeric_fields = [f for f in NUMERIC_FIELDS if f not in exclude_fields]
@@ -238,7 +249,7 @@ def compute_predicate_contrast_stats(
         pb = column_predicate_map.get(b)
         if pa is None or pb is None or pa[0] != pb[0]:
             return False
-        if pa[0] in SET_VALUED_CATEGORICAL_FIELDS:
+        if pa[0] in ALL_SET_VALUED_FIELDS:
             # Same attribute, but it's one AIT-ADS lets take several values
             # per group at once -- unlike MULTI_VALUED_CATEGORICAL_FIELDS,
             # different values here are NOT assumed exclusive; let the

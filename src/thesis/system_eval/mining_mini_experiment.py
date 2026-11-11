@@ -32,6 +32,7 @@ test window and is not a single-signature restatement.
 from __future__ import annotations
 
 import json
+import math
 import time
 import traceback
 from dataclasses import asdict, dataclass, field
@@ -64,7 +65,11 @@ from thesis.mining.temporal.mctsextent.miner import mine_mctsextent
 from thesis.mining.temporal.prefixspan.miner import mine_prefixspan
 from thesis.paths import ROOT
 from thesis.schemas.groups import AlertGroup
-from thesis.schemas.mining import AttributeMiningConfig, SequenceFilterConfig
+from thesis.schemas.mining import (
+    AttributeMiningConfig,
+    ItemsetFilterConfig,
+    SequenceFilterConfig,
+)
 from thesis.system_eval.rule_precision_gate import MAIN_G, passes_gate
 
 METHODS = ("eclat", "contrast_tree", "ripper", "prefixspan", "mctsextent")
@@ -80,10 +85,20 @@ class MiniWindow:
     name: str  # e.g. "cscas W0->W1", "fox 70/30"
     train: list[AlertGroup]
     test: list[AlertGroup]
-    # group -> signature identity, for the single-signature restatement check
+    # group -> its signature(s), for the restatement check: one id (CSCAS
+    # SignatureID) or a set of ids (AIT-ADS: the group's short codes).
     signature_of: Callable[[AlertGroup], object]
     exclude_fields: set[str] = field(default_factory=set)
+    # Opt-in candidate fields (coarse AIT-ADS token levels, Phase 4b).
+    include_fields: set[str] = field(default_factory=set)
+    # Optional second identity reported alongside (cscas_grouping: alert name).
+    name_signature_of: Callable[[AlertGroup], object] | None = None
+    grouping: str = ""
+    token_arm: str = "T0"
     has_raw_alerts: bool = False
+    # Benign side of the precision gate: benign rules need attack rate
+    # <= pi / benign_gate_g. None = same g as the attack side.
+    benign_gate_g: float | None = None
 
 
 @dataclass
@@ -102,6 +117,16 @@ class MiniConfig:
     prefixspan_min_k: int = 2  # >= 2 so patterns actually use order
     mctsextent_top_k: int = 25
     mctsextent_iterations: int = 1000
+    # Eclat's absolute floor on a pattern's count in its own class
+    # (ItemsetFilterConfig.min_support_count). An int is used as is (10 = the
+    # existing filter configs); "relative" tunes it to the mining window:
+    # max(3, ceil(eclat_min_support * n_attack_train)).
+    eclat_min_support_count: int | str = 10
+    # Count features that fire on exactly the same mining-window groups once
+    # (e.g. {short=A-Acc-Chr1} and {short=A-Acc-Chr1, short_cat=A-Acc}).
+    dedupe_identical_firing: bool = True
+    # Equivalence restatement: Jaccard(feature's groups, groups with s) >= this.
+    equivalence_jaccard: float = 0.9
     contrast_tree_setting: str = "gr3_md1_mda4_rounds2"
     mining_settings_path: Path = (
         ROOT / "src/thesis/configs/monitor_eda_mining_setting.yaml"
@@ -130,6 +155,9 @@ def mine(
             table,
             min_support=config.eclat_min_support,
             max_len=config.eclat_max_len,
+            filters=ItemsetFilterConfig(
+                min_support_count=eclat_count_floor(config, table)
+            ),
         )
     if method == "contrast_tree":
         return mine_contrast_tree(table, contrast_tree_config(config))
@@ -152,30 +180,140 @@ def mine(
     raise ValueError(f"unknown method {method!r}")
 
 
-def gate(stats: pd.DataFrame, base_rate: float, g: float) -> pd.DataFrame:
+def eclat_count_floor(config: MiniConfig, table: ItemTable) -> int:
+    if config.eclat_min_support_count == "relative":
+        return max(3, math.ceil(config.eclat_min_support * table.n_attack))
+    return int(config.eclat_min_support_count)
+
+
+def _as_set(sig) -> frozenset:
+    if isinstance(sig, (set, frozenset, list, tuple)) and not isinstance(sig, str):
+        # tuple signatures (e.g. a composite key) are one id, not a set
+        return frozenset(sig) if not isinstance(sig, tuple) else frozenset([sig])
+    return frozenset([sig])
+
+
+def restatement_flags(
+    X_train: pd.DataFrame, train: list[AlertGroup], signature_of
+) -> pd.Series:
+    """Per feature: True if it restates one signature, i.e. there is a
+    signature s that every mining-window group it fires on contains, so the
+    feature can never fire outside s. For single-signature groups (CSCAS,
+    AIT-ADS cscas_grouping) that is "every group it fires on has the same
+    signature"; for multi-signature groups it generalises to "all of them
+    contain s". A feature that never fires is not a restatement."""
+    sigs = [_as_set(signature_of(g)) for g in train]
+    out = {}
+    for col in X_train.columns:
+        common = None
+        for i in np.flatnonzero(X_train[col].to_numpy()):
+            common = sigs[i] if common is None else common & sigs[i]
+            if not common:
+                break
+        out[col] = bool(common)
+    return pd.Series(out, dtype=bool)
+
+
+def unseen_attack_masks(
+    window: "MiniWindow", y_test: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """Test attack groups that carry signatures never seen in the mining
+    window (the generalisation test), in two strengths:
+
+    - any: at least one of the group's signatures is unseen. The main
+      metric: under multi-code groupings (fixed_window, time_delta,
+      AlertBERT) almost every group also contains a common, seen code, so
+      "all unseen" is empty there.
+    - all: none of the group's signatures were seen (the Phase 4b fox run's
+      original definition). Equal to "any" for single-signature groups.
+    """
+    seen = frozenset().union(*(_as_set(window.signature_of(g)) for g in window.train))
+    any_unseen, all_unseen = [], []
+    for g, y in zip(window.test, y_test):
+        sigs = _as_set(window.signature_of(g))
+        new = sigs - seen
+        any_unseen.append(bool(y) and bool(new))
+        all_unseen.append(bool(y) and bool(sigs) and new == sigs)
+    return np.array(any_unseen, dtype=bool), np.array(all_unseen, dtype=bool)
+
+
+# Backwards-compatible name (Phase 4 notebooks/tests).
+single_signature_share = restatement_flags
+
+
+def equivalence_flags(
+    X_train: pd.DataFrame,
+    train: list[AlertGroup],
+    signature_of,
+    jaccard: float = 0.9,
+) -> pd.DataFrame:
+    """Per feature: does it fire on (almost) exactly the mining-window groups
+    that contain one signature s, i.e. Jaccard(F, S_s) >= `jaccard`? That is
+    "this feature IS signature s", and unlike the confined check
+    (restatement_flags) it isn't triggered when a frequent background code
+    merely co-occurs in every group the feature fires on, so it means the
+    same thing for single- and multi-signature groupings.
+
+    Returns columns `equivalent` (bool), `equiv_signature` (best s) and
+    `equiv_jaccard` (its Jaccard)."""
+    sigs = [_as_set(signature_of(g)) for g in train]
+    size: dict = {}
+    for ss in sigs:
+        for sig in ss:
+            size[sig] = size.get(sig, 0) + 1
+    rows = {}
+    for col in X_train.columns:
+        idx = np.flatnonzero(X_train[col].to_numpy())
+        if len(idx) == 0:
+            rows[col] = (False, None, 0.0)
+            continue
+        inter: dict = {}
+        for i in idx:
+            for sig in sigs[i]:
+                inter[sig] = inter.get(sig, 0) + 1
+        best, best_j = None, 0.0
+        for sig, n in inter.items():
+            j = n / (len(idx) + size[sig] - n)
+            if j > best_j:
+                best, best_j = sig, j
+        rows[col] = (best_j >= jaccard, best, round(best_j, 3))
+    return pd.DataFrame.from_dict(
+        rows, orient="index", columns=["equivalent", "equiv_signature", "equiv_jaccard"]
+    )
+
+
+def dedupe_identical_firing(
+    gated: pd.DataFrame, table: ItemTable | None, train: list[AlertGroup]
+) -> pd.DataFrame:
+    """Keep the first (highest-scoring) of features that fire on exactly the
+    same mining-window groups. `gated` must already be deduplicated by
+    condition and ranked (dedupe_conditions), so its rows map 1:1, in order,
+    onto patterns_to_schema's features."""
+    if gated.empty:
+        return gated
+    schema = patterns_to_schema(gated, "dedupe", "0", item_table=table)
+    if len(schema.features) != len(gated):
+        raise AssertionError("gated rows and schema features are not 1:1")
+    X = SymbolicFeatureEncoder(schema).transform(train)
+    seen, keep = set(), []
+    for i, f in enumerate(schema.features):
+        key = X[f.feature_name].to_numpy().astype(bool).tobytes()
+        if key not in seen:
+            seen.add(key)
+            keep.append(i)
+    return gated.iloc[keep].reset_index(drop=True)
+
+
+def gate(
+    stats: pd.DataFrame, base_rate: float, g: float, benign_g: float | None = None
+) -> pd.DataFrame:
     """The paper's precision gate on the mining window (Check 2), applied to
     the miner's own counts (identical to the encoded counts: round-trip
     tested per method)."""
     n_fire = stats["n_attack"] + stats["n_benign"]
     rate = (stats["n_attack"] / n_fire.where(n_fire > 0)).astype(float)
-    keep = passes_gate(stats["source_label"], rate, base_rate, g)
+    keep = passes_gate(stats["source_label"], rate, base_rate, g, benign_g)
     return stats[keep.to_numpy()].reset_index(drop=True)
-
-
-def single_signature_share(
-    X_train: pd.DataFrame, train: list[AlertGroup], signature_of
-) -> pd.Series:
-    """Per feature: True if every mining-window group it fires on has the
-    same signature (a restatement of one signature)."""
-    # Fill a 1-D object array explicitly: np.array() on tuple signatures
-    # would build a 2-D array.
-    sigs = np.empty(len(train), dtype=object)
-    sigs[:] = [signature_of(g) for g in train]
-    out = {}
-    for col in X_train.columns:
-        fired = sigs[X_train[col].to_numpy().astype(bool)]
-        out[col] = len(fired) > 0 and len(set(fired.tolist())) == 1
-    return pd.Series(out, dtype=bool)
 
 
 def evaluate(
@@ -185,7 +323,13 @@ def evaluate(
     table: ItemTable | None,
 ) -> tuple[dict, pd.DataFrame]:
     """One (method, window) cell: summary row + per-feature table."""
-    row: dict = {"method": method, "dataset": window.dataset, "window": window.name}
+    row: dict = {
+        "method": method,
+        "dataset": window.dataset,
+        "window": window.name,
+        "grouping": window.grouping,
+        "token_arm": window.token_arm,
+    }
     if method in TEMPORAL and not window.has_raw_alerts:
         row["status"] = "n/a: no raw per-alert stream to build sequences from"
         return row, pd.DataFrame()
@@ -198,6 +342,7 @@ def evaluate(
         n_train_attack=n_attack,
         n_test=len(y_te),
         n_test_attack=int(y_te.sum()),
+        benign_gate_g=window.benign_gate_g or config.gate_g,
     )
 
     t0 = time.perf_counter()
@@ -205,14 +350,22 @@ def evaluate(
     row["mine_seconds"] = round(time.perf_counter() - t0, 2)
 
     stats = add_pattern_stats(frame, n_attack, n_benign)
-    gated = dedupe_conditions(gate(stats, base_rate, config.gate_g), table)
+    gated = dedupe_conditions(
+        gate(stats, base_rate, config.gate_g, window.benign_gate_g), table
+    )
+    n_gated_conditions = len(gated)
+    if config.dedupe_identical_firing:
+        gated = dedupe_identical_firing(gated, table, window.train)
     budget = select_budget(gated, config.k, per_class=config.per_class_budget)
     row.update(
         n_raw=len(stats),
         n_raw_attack=int((stats["source_label"] == "attack").sum()),
-        n_gated=len(gated),  # distinct conditions passing the gate
+        n_gated_conditions=n_gated_conditions,  # distinct conditions passing
+        n_gated=len(gated),  # ...and distinct firing patterns among those
         n_budget=len(budget),
     )
+    if method == "eclat":
+        row["eclat_min_support_count"] = eclat_count_floor(config, table)
     if budget.empty:
         row["status"] = "FAIL: no features after gate + budget"
         return row, pd.DataFrame()
@@ -247,13 +400,28 @@ def evaluate(
         te.sum(0) > 0, (te & y_te[:, None]).sum(0) / np.maximum(te.sum(0), 1), np.nan
     )
     feats["support"] = tr.mean(axis=0)
-    feats["single_signature"] = single_signature_share(
+    feats["single_signature"] = restatement_flags(
         X_tr[feats["feature"]], window.train, window.signature_of
     ).to_numpy()
+    eq = equivalence_flags(
+        X_tr[feats["feature"]],
+        window.train,
+        window.signature_of,
+        config.equivalence_jaccard,
+    )
+    feats["equivalent_signature"] = eq["equivalent"].to_numpy(dtype=bool)
+    feats["equiv_signature"] = eq["equiv_signature"].astype(str).to_numpy()
+    feats["equiv_jaccard"] = eq["equiv_jaccard"].to_numpy()
+    if window.name_signature_of is not None:
+        feats["single_signature_name"] = restatement_flags(
+            X_tr[feats["feature"]], window.train, window.name_signature_of
+        ).to_numpy()
     feats["live_test"] = feats["test_fires"] > 0
 
     attack = (feats["source_label"] == "attack").to_numpy()
-    good = feats["live_test"].to_numpy() & ~feats["single_signature"].to_numpy()
+    live = feats["live_test"].to_numpy()
+    good = live & ~feats["single_signature"].to_numpy()
+    unseen, unseen_all = unseen_attack_masks(window, y_te)
     row.update(
         n_budget_attack=int(attack.sum()),
         n_budget_benign=int((~attack).sum()),
@@ -262,6 +430,9 @@ def evaluate(
         dead_on_train=int((feats["train_fires"] == 0).sum()),
         live_share_test=round(float(feats["live_test"].mean()), 3),
         single_signature_share=round(float(feats["single_signature"].mean()), 3),
+        equivalent_signature_share=round(
+            float(feats["equivalent_signature"].mean()), 3
+        ),
         test_attack_coverage=(
             round(float(te[:, attack].any(axis=1)[y_te].mean()), 3)
             if attack.any() and y_te.any()
@@ -278,13 +449,32 @@ def evaluate(
             else np.nan
         ),
         test_base_rate=round(float(y_te.mean()), 4) if len(y_te) else np.nan,
+        n_test_attack_unseen=int(unseen.sum()),
+        unseen_attack_coverage=(
+            round(float(te[:, attack].any(axis=1)[unseen].mean()), 3)
+            if attack.any() and unseen.any()
+            else np.nan
+        ),
+        n_test_attack_unseen_all=int(unseen_all.sum()),
+        unseen_all_attack_coverage=(
+            round(float(te[:, attack].any(axis=1)[unseen_all].mean()), 3)
+            if attack.any() and unseen_all.any()
+            else np.nan
+        ),
     )
-    ok_attack = bool((good & attack).any())
-    ok_benign = bool((good & ~attack).any())
+    if "single_signature_name" in feats:
+        row["single_signature_share_name"] = round(
+            float(feats["single_signature_name"].mean()), 3
+        )
+    # Verdict (decided 2026-11-10): restatement is a reported metric, not a
+    # fail criterion. PASS = a live feature for each class; pass_strict
+    # keeps the Phase 4 rule (live AND not a restatement) for comparison.
+    ok_attack, ok_benign = bool((live & attack).any()), bool((live & ~attack).any())
+    row["pass_strict"] = bool((good & attack).any() and (good & ~attack).any())
     row["status"] = (
         "PASS"
         if ok_attack and ok_benign
-        else "FAIL: no live, non-restatement "
+        else "FAIL: no live "
         + " or ".join(
             c for c, ok in (("attack", ok_attack), ("benign", ok_benign)) if not ok
         )
@@ -292,6 +482,8 @@ def evaluate(
     )
     feats.insert(0, "method", method)
     feats.insert(1, "dataset", window.dataset)
+    feats.insert(2, "grouping", window.grouping)
+    feats.insert(3, "token_arm", window.token_arm)
     return row, feats
 
 
@@ -308,13 +500,20 @@ def run_mini(
         if any(m not in TEMPORAL for m in config.methods):
             t0 = time.perf_counter()
             table = build_item_table(
-                window.train, exclude_fields=window.exclude_fields, n_bins=config.n_bins
+                window.train,
+                exclude_fields=window.exclude_fields,
+                n_bins=config.n_bins,
+                include_fields=window.include_fields,
             )
             print(
                 f"[{window.name}] item table {table.items().shape} "
                 f"in {time.perf_counter() - t0:.1f}s"
             )
         for method in config.methods:
+            # Token arms only change the item table; temporal methods mine
+            # look-back sequences of full codes, so run them on T0 only.
+            if method in TEMPORAL and window.token_arm != "T0":
+                continue
             print(f"[{window.name}] {method} ...", flush=True)
             try:
                 row, f = evaluate(method, window, config, table)
@@ -381,12 +580,40 @@ def _ait_signature(group: AlertGroup) -> str:
     return ":".join(parts[2:-1]) if len(parts) > 3 else group.group_id
 
 
+def _ait_short_codes(group: AlertGroup) -> frozenset[str]:
+    """Signature identity for AIT-ADS under every grouping: the group's short
+    codes. Every alert name maps to exactly one code (verified 2026-11-10;
+    10 of 75 codes cover 2-6 names), so this is slightly coarser than the
+    name and the restatement share is slightly overstated, never understated."""
+    return frozenset(
+        i[len("short:") :] for i in (group.raw_items or ()) if i.startswith("short:")
+    )
+
+
+# Phase 4b token arms: (include_fields, extra exclude_fields).
+TOKEN_ARMS: dict[str, tuple[set[str], set[str]]] = {
+    "T0": (set(), set()),
+    "T1": ({"short_src", "short_cat"}, set()),
+    "T2": ({"short_src", "short_cat", "short_family", "sig_family"}, set()),
+    "T3": ({"short_src", "short_cat", "short_family", "sig_family"}, {"short", "sig"}),
+}
+
+
 def ait_ads_window(
     scenario: str = "fox",
     method: str = "cscas_grouping",
     train_frac: float = 0.7,
     lookback_minutes: int = DEFAULT_WINDOW_MINUTES,
+    token_arm: str = "T0",
+    split_ts: int | None = None,
 ) -> MiniWindow:
+    """Mining window = groups starting before the split, test = the rest.
+
+    split_ts None: the first train_frac of groups (by count). Pass a
+    timestamp to cut every grouping at the *same moment*: a count-based cut
+    lands at a different time per grouping (on fox 12:17 vs. 12:43), and a
+    burst of new codes right after the cut then counts as seen for one
+    grouping and unseen for another."""
     from thesis.paths import CACHE_DIR
     from thesis.pipeline.pipeline import load_or_build_alert_groups
 
@@ -397,16 +624,50 @@ def ait_ads_window(
     attach_lookback_steps(
         groups, load_ait_ads_raw_alerts(scenario), window_minutes=lookback_minutes
     )
-    cut = int(len(groups) * train_frac)
+    if split_ts is None:
+        cut = int(len(groups) * train_frac)
+        split_desc = f"first {train_frac:.0%} -> rest"
+    else:
+        cut = sum(g.start_ts < split_ts for g in groups)
+        split_desc = f"split at ts {split_ts}"
+    include, exclude = TOKEN_ARMS[token_arm]
     return MiniWindow(
         dataset="ait_ads",
-        name=f"{scenario} {method} first {train_frac:.0%} -> rest",
+        name=f"{scenario} {method} {token_arm} {split_desc}",
         train=groups[:cut],
         test=groups[cut:],
-        signature_of=_ait_signature,
-        exclude_fields=default_leaky_attribute_fields(scenario),
+        signature_of=_ait_short_codes,
+        exclude_fields=default_leaky_attribute_fields(scenario) | exclude,
+        include_fields=set(include),
+        name_signature_of=_ait_signature if method == "cscas_grouping" else None,
+        grouping=method,
+        token_arm=token_arm,
         has_raw_alerts=True,
+        # AIT-ADS time-window labels mark background alerts during attack
+        # phases as attacks (and event labels can't separate them: they're
+        # absent for dnsteal / scans / reverse shell), so benign rules only
+        # need to be no more attack-enriched than the base rate.
+        benign_gate_g=1.0,
     )
+
+
+def reference_split_ts(
+    scenario: str, reference: str = "cscas_grouping", train_frac: float = 0.7
+) -> int:
+    """The start time of the first test group when the reference grouping is
+    cut at train_frac by count; used as the common split for all groupings."""
+    from thesis.paths import CACHE_DIR
+    from thesis.pipeline.pipeline import load_or_build_alert_groups
+
+    groups = labelled(
+        sorted(
+            load_or_build_alert_groups(
+                scenario, CACHE_DIR / scenario / "groups" / reference
+            ),
+            key=lambda g: g.start_ts,
+        )
+    )
+    return groups[int(len(groups) * train_frac)].start_ts
 
 
 def default_out_dir() -> Path:

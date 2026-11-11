@@ -34,8 +34,22 @@ ITEM_PREFIX = "short:"
 
 def load_ait_ads_raw_alerts(scenario: str, path: Path | None = None) -> pd.DataFrame:
     """Raw per-alert time/host/short for one AIT-ADS scenario, from the
-    canonical alerts.json pipeline.convert_ait_alerts_to_json writes."""
+    canonical alerts.json pipeline.convert_ait_alerts_to_json writes. Falls
+    back to the raw CSV (data/alerts_csv/<scenario>_alerts.txt, same
+    time/host/short columns) when that JSON hasn't been generated."""
     path = path or ARTIFACTS_DIR / "processed-data" / scenario / "alerts.json"
+    if not Path(path).exists():
+        csv = ARTIFACTS_DIR.parent / "data" / "alerts_csv" / f"{scenario}_alerts.txt"
+        df = pd.read_csv(
+            csv, usecols=["time", "host", "short"], dtype={"host": str, "short": str}
+        )
+        return pd.DataFrame(
+            {
+                "time": df["time"].astype(int),
+                "host": df["host"].fillna(""),
+                "short": df["short"].fillna(""),
+            }
+        )
     with Path(path).open("r", encoding="utf-8") as f:
         rows = json.load(f)
     return pd.DataFrame(
