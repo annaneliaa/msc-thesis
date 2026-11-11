@@ -29,6 +29,7 @@ from thesis.mining.common.attribute_features import (  # noqa: E402
 )
 from thesis.system_eval.mining_comparison import (  # noqa: E402
     ATEMPORAL_METHODS,
+    COMPARISON_K,
     ComparisonConfig,
     run_comparison,
 )
@@ -46,7 +47,7 @@ def main() -> None:
         choices=ATEMPORAL_METHODS,
     )
     p.add_argument("--seeds", nargs="+", type=int, default=[0, 1, 2, 3, 4])
-    p.add_argument("--k", type=int, default=MiniConfig.k, help="feature budget K")
+    p.add_argument("--k", type=int, default=COMPARISON_K, help="feature budget K")
     p.add_argument(
         "--pooled-budget", action="store_true", help="one pool instead of K/2 per class"
     )

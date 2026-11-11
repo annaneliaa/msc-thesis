@@ -114,3 +114,8 @@ def test_stability_share_of_next_step():
     )
     # step0->1: 1/2 reappear; step1->2: 0/2
     assert stability(feats).loc[0, "stability"] == pytest.approx(0.25)
+
+
+def test_comparison_budget_default():
+    assert ComparisonConfig().mining.k == 60
+    assert ComparisonConfig().mining.per_class_budget

@@ -79,6 +79,10 @@ from thesis.system_eval.mining_mini_experiment import (
 ATEMPORAL_METHODS = ("eclat", "contrast_tree", "ripper")
 STOCHASTIC_MINERS = {"ripper", "mctsextent"}
 NO_MINING = "none"
+# Budget K for the comparison (decided 2026-11-11): about what the contrast
+# tree keeps after gate + dedupe on CSCAS (55-58 on the first two steps), so
+# the cap doesn't cut the thesis method down. Robustness: K in {10, 25, 50}.
+COMPARISON_K = 60
 
 
 @dataclass
@@ -88,7 +92,7 @@ class ComparisonConfig:
     methods: tuple[str, ...] = ATEMPORAL_METHODS
     include_no_mining: bool = True
     # Per-method settings, gate, dedupe and budget K (k, per_class_budget).
-    mining: MiniConfig = field(default_factory=MiniConfig)
+    mining: MiniConfig = field(default_factory=lambda: MiniConfig(k=COMPARISON_K))
     reseed_stochastic_miners: bool = True
     # Extra fields left out of the item table (e.g. the signature-derived
     # items, for the "no signature items" condition of Check 3).
