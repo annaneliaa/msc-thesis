@@ -33,10 +33,13 @@ from __future__ import annotations
 
 import json
 import math
+import subprocess
+import sys
 import time
 import traceback
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 from typing import Callable
 
@@ -124,7 +127,10 @@ class MiniConfig:
     eclat_min_support_count: int | str = 10
     # Count features that fire on exactly the same mining-window groups once
     # (e.g. {short=A-Acc-Chr1} and {short=A-Acc-Chr1, short_cat=A-Acc}).
-    dedupe_identical_firing: bool = True
+    dedupe_identical_firing: bool = True  # firing dedupe on/off
+    # Firing dedupe threshold: drop a feature whose mining-window firing has
+    # Jaccard >= this with a higher-scoring kept one (1.0 = exact copies only).
+    dedupe_jaccard: float = 0.95
     # Equivalence restatement: Jaccard(feature's groups, groups with s) >= this.
     equivalence_jaccard: float = 0.9
     contrast_tree_setting: str = "gr3_md1_mda4_rounds2"
@@ -282,11 +288,19 @@ def equivalence_flags(
     )
 
 
-def dedupe_identical_firing(
-    gated: pd.DataFrame, table: ItemTable | None, train: list[AlertGroup]
+def dedupe_firing(
+    gated: pd.DataFrame,
+    table: ItemTable | None,
+    train: list[AlertGroup],
+    jaccard: float = 0.95,
 ) -> pd.DataFrame:
-    """Keep the first (highest-scoring) of features that fire on exactly the
-    same mining-window groups. `gated` must already be deduplicated by
+    """Drop near-duplicate features before the budget: walking `gated` in
+    score order, a feature is dropped if its mining-window firing has
+    Jaccard >= `jaccard` with a feature already kept (identical firing is
+    Jaccard 1). Applied to every method alike, so no method fills its budget
+    with copies of one condition -- e.g. Eclat's many coarse-token variants of
+    the same big benign code under multi-code groupings. jaccard=1.0 keeps
+    only exact duplicates out. `gated` must already be deduplicated by
     condition and ranked (dedupe_conditions), so its rows map 1:1, in order,
     onto patterns_to_schema's features."""
     if gated.empty:
@@ -295,13 +309,24 @@ def dedupe_identical_firing(
     if len(schema.features) != len(gated):
         raise AssertionError("gated rows and schema features are not 1:1")
     X = SymbolicFeatureEncoder(schema).transform(train)
-    seen, keep = set(), []
-    for i, f in enumerate(schema.features):
-        key = X[f.feature_name].to_numpy().astype(bool).tobytes()
-        if key not in seen:
-            seen.add(key)
-            keep.append(i)
+    F = X[[f.feature_name for f in schema.features]].to_numpy(dtype=np.float32)
+    inter = F.T @ F  # pairwise co-firing counts
+    size = np.diag(inter)
+    union = size[:, None] + size[None, :] - inter
+    jac = np.divide(inter, union, out=np.zeros_like(inter), where=union > 0)
+    keep: list[int] = []
+    for i in range(len(schema.features)):
+        if keep and jac[i, keep].max() >= jaccard:
+            continue
+        keep.append(i)
     return gated.iloc[keep].reset_index(drop=True)
+
+
+def dedupe_identical_firing(
+    gated: pd.DataFrame, table: ItemTable | None, train: list[AlertGroup]
+) -> pd.DataFrame:
+    """Exact-duplicate firing only (dedupe_firing with jaccard=1.0)."""
+    return dedupe_firing(gated, table, train, jaccard=1.0)
 
 
 def gate(
@@ -316,13 +341,182 @@ def gate(
     return stats[keep.to_numpy()].reset_index(drop=True)
 
 
+@lru_cache(maxsize=1)
+def _repo_commit() -> str:
+    try:
+        return subprocess.run(
+            ["git", "-C", str(ROOT), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    except Exception:  # not a git checkout
+        return "unknown"
+
+
+def method_settings(method: str, config: MiniConfig, table: ItemTable | None) -> dict:
+    """The exact settings a method ran with, for mining.json."""
+    if method == "eclat":
+        return {
+            "min_support": config.eclat_min_support,
+            "max_len": config.eclat_max_len,
+            "min_support_diff": 0.05,
+            "min_support_count": eclat_count_floor(config, table),
+            "min_support_count_rule": config.eclat_min_support_count,
+            "filters": ItemsetFilterConfig(
+                min_support_count=eclat_count_floor(config, table)
+            ).model_dump(),
+        }
+    if method == "contrast_tree":
+        return {
+            "setting": config.contrast_tree_setting,
+            "settings_file": str(config.mining_settings_path),
+            "config": contrast_tree_config(config).model_dump(),
+        }
+    if method == "ripper":
+        import wittgenstein
+
+        return {
+            "library": "wittgenstein",
+            "version": getattr(wittgenstein, "__version__", "unknown"),
+            "random_state": config.seed,
+            "n_discretize_bins": 0,
+            "other_parameters": "library defaults",
+        }
+    if method == "prefixspan":
+        return {
+            "min_support": config.prefixspan_min_support,
+            "max_len": config.prefixspan_max_len,
+            "min_support_diff": 0.05,
+            "filters": SequenceFilterConfig(min_k=config.prefixspan_min_k).model_dump(),
+            "lookback_minutes": config.lookback_minutes,
+        }
+    if method == "mctsextent":
+        from thesis.mining.temporal.mctsextent.miner import UPSTREAM_DEFAULT_THETA
+        from thesis.mining.temporal.mctsextent.vendor import COMMIT, REPO_URL
+
+        return {
+            "upstream": REPO_URL,
+            "upstream_commit": COMMIT,
+            "top_k": config.mctsextent_top_k,
+            "theta": UPSTREAM_DEFAULT_THETA,
+            "iterations": config.mctsextent_iterations,
+            "quality_measure": "WRAcc",
+            "random_state": config.seed,
+            "lookback_minutes": config.lookback_minutes,
+        }
+    return {}
+
+
+def cell_dir_for(out_dir: Path, window: MiniWindow, method: str) -> Path:
+    """cells/<scenario>/<grouping>/<token arm>/<method>/"""
+    scenario = window.name.split()[0]
+    grouping = window.grouping or (
+        "cscas_pregrouped" if window.dataset == "cscas" else "default"
+    )
+    return out_dir / "cells" / scenario / grouping / window.token_arm / method
+
+
+def _pattern_stage(stats: pd.DataFrame, stages: dict[str, set[int]]) -> pd.Series:
+    def stage(pid: int) -> str:
+        if pid not in stages["gated"]:
+            return "dropped_gate"
+        if pid not in stages["distinct_condition"]:
+            return "dropped_duplicate_condition"
+        if pid not in stages["distinct_firing"]:
+            return "dropped_duplicate_firing"
+        if pid not in stages["budget"]:
+            return "dropped_budget"
+        return "kept"
+
+    return stats["pattern_id"].map(stage)
+
+
+def write_cell_artifacts(
+    cell_dir: Path,
+    method: str,
+    window: MiniWindow,
+    config: MiniConfig,
+    table: ItemTable | None,
+    stats: pd.DataFrame,
+    stages: dict[str, set[int]],
+    schema,
+    row: dict,
+) -> None:
+    """Per-cell inspection files:
+    patterns.csv  every mined pattern with its stats and `stage`
+                  (dropped_gate / dropped_duplicate_condition /
+                  dropped_duplicate_firing (Jaccard >= dedupe_jaccard with a
+                  kept feature) / dropped_budget / kept) and, for
+                  kept ones, the schema feature name;
+    schema.json   the budgeted SymbolicFeatureSchema (reloadable with
+                  features.persistence.load_symbolic_feature_schema);
+    mining.json   method + its exact settings, the shared settings, the
+                  window, versions and this cell's summary row."""
+    from thesis.features.persistence import save_symbolic_feature_schema
+
+    cell_dir.mkdir(parents=True, exist_ok=True)
+    out = stats.copy()
+    out["stage"] = _pattern_stage(out, stages)
+    out["items"] = out["items"].map(lambda it: " | ".join(map(str, it)))
+    if "predicates" in out:
+        out["predicates"] = out["predicates"].map(
+            lambda ps: " ∧ ".join(p.token for p in ps) if isinstance(ps, tuple) else ""
+        )
+    out["feature"] = ""
+    if schema is not None:
+        kept = stages["budget_order"]
+        if len(kept) == len(schema.features):
+            names = {pid: f.feature_name for pid, f in zip(kept, schema.features)}
+            out["feature"] = out["pattern_id"].map(names).fillna("")
+        save_symbolic_feature_schema(schema, cell_dir / "schema.json")
+    out.to_csv(cell_dir / "patterns.csv", index=False)
+
+    include = sorted(window.include_fields)
+    meta = {
+        "method": method,
+        "method_settings": method_settings(method, config, table),
+        "shared_settings": {
+            "k": config.k,
+            "per_class_budget": config.per_class_budget,
+            "gate_g": config.gate_g,
+            "benign_gate_g": window.benign_gate_g or config.gate_g,
+            "n_bins": config.n_bins,
+            "dedupe_firing": config.dedupe_identical_firing,
+            "dedupe_jaccard": config.dedupe_jaccard,
+            "equivalence_jaccard": config.equivalence_jaccard,
+            "seed": config.seed,
+        },
+        "window": {
+            "name": window.name,
+            "dataset": window.dataset,
+            "grouping": window.grouping,
+            "token_arm": window.token_arm,
+            "include_fields": include,
+            "exclude_fields": sorted(window.exclude_fields),
+            "n_items": int(table.items().shape[1]) if table is not None else None,
+            "train_start_ts": min((g.start_ts for g in window.train), default=None),
+            "test_start_ts": min((g.start_ts for g in window.test), default=None),
+        },
+        "versions": {
+            "repo_commit": _repo_commit(),
+            "python": sys.version.split()[0],
+        },
+        "summary": row,
+        "written_at": datetime.now(timezone.utc).isoformat(),
+    }
+    (cell_dir / "mining.json").write_text(json.dumps(meta, indent=2, default=str))
+
+
 def evaluate(
     method: str,
     window: MiniWindow,
     config: MiniConfig,
     table: ItemTable | None,
+    cell_dir: Path | None = None,
 ) -> tuple[dict, pd.DataFrame]:
-    """One (method, window) cell: summary row + per-feature table."""
+    """One (method, window) cell: summary row + per-feature table. With
+    cell_dir, also writes patterns.csv / schema.json / mining.json there."""
     row: dict = {
         "method": method,
         "dataset": window.dataset,
@@ -350,13 +544,21 @@ def evaluate(
     row["mine_seconds"] = round(time.perf_counter() - t0, 2)
 
     stats = add_pattern_stats(frame, n_attack, n_benign)
-    gated = dedupe_conditions(
-        gate(stats, base_rate, config.gate_g, window.benign_gate_g), table
-    )
+    stats.insert(0, "pattern_id", range(len(stats)))
+    passed = gate(stats, base_rate, config.gate_g, window.benign_gate_g)
+    gated = dedupe_conditions(passed, table)
     n_gated_conditions = len(gated)
+    distinct_condition = set(gated["pattern_id"])
     if config.dedupe_identical_firing:
-        gated = dedupe_identical_firing(gated, table, window.train)
+        gated = dedupe_firing(gated, table, window.train, config.dedupe_jaccard)
     budget = select_budget(gated, config.k, per_class=config.per_class_budget)
+    stages = {
+        "gated": set(passed["pattern_id"]),
+        "distinct_condition": distinct_condition,
+        "distinct_firing": set(gated["pattern_id"]),
+        "budget": set(budget["pattern_id"]),
+        "budget_order": list(budget["pattern_id"]),
+    }
     row.update(
         n_raw=len(stats),
         n_raw_attack=int((stats["source_label"] == "attack").sum()),
@@ -368,6 +570,10 @@ def evaluate(
         row["eclat_min_support_count"] = eclat_count_floor(config, table)
     if budget.empty:
         row["status"] = "FAIL: no features after gate + budget"
+        if cell_dir is not None:
+            write_cell_artifacts(
+                cell_dir, method, window, config, table, stats, stages, None, row
+            )
         return row, pd.DataFrame()
 
     schema = patterns_to_schema(budget, method, "mini", item_table=table)
@@ -480,6 +686,10 @@ def evaluate(
         )
         + " feature"
     )
+    if cell_dir is not None:
+        write_cell_artifacts(
+            cell_dir, method, window, config, table, stats, stages, schema, row
+        )
     feats.insert(0, "method", method)
     feats.insert(1, "dataset", window.dataset)
     feats.insert(2, "grouping", window.grouping)
@@ -516,7 +726,13 @@ def run_mini(
                 continue
             print(f"[{window.name}] {method} ...", flush=True)
             try:
-                row, f = evaluate(method, window, config, table)
+                row, f = evaluate(
+                    method,
+                    window,
+                    config,
+                    table,
+                    cell_dir=cell_dir_for(out_dir, window, method),
+                )
             except Exception as exc:  # record and keep going
                 traceback.print_exc()
                 row = {

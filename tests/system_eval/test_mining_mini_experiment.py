@@ -300,3 +300,49 @@ def test_equivalence_vs_confined_restatement():
     }
     assert eq.loc["is_x", "equiv_signature"] == "X"
     assert eq.loc["slice_of_x", "equiv_jaccard"] == 0.4
+
+
+def test_cell_artifacts_are_written_and_consistent(tmp_path):
+    import json
+
+    from thesis.encoders.symbolic import SymbolicFeatureEncoder
+    from thesis.features.persistence import load_symbolic_feature_schema
+
+    rng = random.Random(0)
+    cscas = [_cscas_group(i, rng) for i in range(900)]
+    window = MiniWindow(
+        "cscas",
+        "synthetic cscas",
+        cscas[:600],
+        cscas[600:],
+        signature_of=lambda g: (g.category, g.ruleset, g.proto),
+    )
+    config = MiniConfig(k=10, n_bins=4, methods=("eclat", "contrast_tree", "ripper"))
+    summary, feats = run_mini([window], config, tmp_path)
+    for method in config.methods:
+        cell = tmp_path / "cells" / "synthetic" / "cscas_pregrouped" / "T0" / method
+        patterns = pd.read_csv(cell / "patterns.csv")
+        meta = json.loads((cell / "mining.json").read_text())
+        row = summary.set_index("method").loc[method]
+        # Stage counts agree with the summary row.
+        assert len(patterns) == row["n_raw"]
+        assert (patterns["stage"] == "kept").sum() == row["n_budget"]
+        assert (patterns["stage"] != "dropped_gate").sum() >= row["n_gated_conditions"]
+        assert set(patterns["stage"]) <= {
+            "dropped_gate",
+            "dropped_duplicate_condition",
+            "dropped_duplicate_firing",
+            "dropped_budget",
+            "kept",
+        }
+        # Kept patterns carry their feature name; settings are recorded.
+        kept = patterns[patterns["stage"] == "kept"]
+        assert (kept["feature"].fillna("") != "").all()
+        assert meta["method"] == method and meta["method_settings"]
+        assert meta["versions"]["repo_commit"]
+        # The saved schema reloads and encodes exactly like the run did.
+        schema = load_symbolic_feature_schema(cell / "schema.json")
+        X = SymbolicFeatureEncoder(schema).transform(window.train)
+        mine = feats[feats["method"] == method]
+        assert list(X.columns) == list(mine["feature"])
+        assert X.sum().tolist() == mine["train_fires"].tolist()

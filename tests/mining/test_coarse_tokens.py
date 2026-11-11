@@ -148,3 +148,44 @@ def test_dedupe_identical_firing_drops_hierarchy_duplicates():
     out = dedupe_identical_firing(gated, table, groups)
     assert len(out) == 2  # ...but only two distinct firing patterns
     assert ("short=W-Aut-Ssh2",) in set(out["items"])
+
+
+def test_dedupe_firing_drops_near_duplicates_only():
+    from thesis.mining.common.patterns import dedupe_conditions
+    from thesis.system_eval.mining_mini_experiment import dedupe_firing
+
+    # short_cat=A-Acc and short=A-Acc-Chr1 fire on the same 39 groups
+    # (A-Acc-Chr1 is the only A-Acc code); short=W-Aut-Ssh2 fires on 20 of
+    # them (Jaccard 20/39 = 0.51 with the A-Acc features).
+    groups = [
+        _group(
+            i,
+            ["A-Acc-Chr1", "W-Aut-Ssh2"]
+            if i % 2
+            else (["A-Acc-Chr1"] if i else ["S-Tls-Hnd"]),
+            label="attack" if i % 4 == 0 else "benign",
+        )
+        for i in range(40)
+    ]
+    table = build_item_table(groups, include_fields={"short_cat"})
+    frame = pd.DataFrame(
+        {
+            "items": [
+                ("short_cat=A-Acc",),
+                ("short=A-Acc-Chr1",),
+                ("short=W-Aut-Ssh2",),
+            ],
+            "mining_type": "itemset",
+            "source_label": ["benign", "benign", "benign"],
+            "n_attack": [9, 9, 0],
+            "n_benign": [30, 30, 20],
+        }
+    )
+    gated = dedupe_conditions(add_pattern_stats(frame, 10, 30), table)
+    exact = dedupe_firing(gated, table, groups, jaccard=1.0)
+    near = dedupe_firing(gated, table, groups, jaccard=0.95)
+    # short_cat=A-Acc and short=A-Acc-Chr1 fire identically -> one goes even
+    # at 1.0; nothing else is within 0.95 of the kept features.
+    assert len(exact) == 2 and len(near) == 2
+    near90 = dedupe_firing(gated, table, groups, jaccard=0.4)
+    assert len(near90) == 1  # Jaccard 0.5 >= 0.4: the Ssh2 feature goes too
