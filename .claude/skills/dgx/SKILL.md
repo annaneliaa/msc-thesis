@@ -106,6 +106,16 @@ ssh dgx-spark 'docker exec -d thesis-run bash -lc "cd /workspace && mkdir -p art
 
 Never kill, restart or re-launch a run without being asked, even if it looks stuck or crashed. Report it and let the user decide. Never `docker stop`/`docker rm` the container.
 
+### Memory: never overload the shared machine
+
+On 2026-11-16 a run froze the DGX: 8 parallel folds, each holding every scenario's data, all reached their memory peak together, and the machine stopped answering SSH and ping. Other people use this machine, so:
+
+- **Measure peak memory before any parallel launch.** Run one full unit of work (one fold or step, every method, one seed) alone under `/usr/bin/time -v` and read `Maximum resident set size`. A local measurement that skips a method doesn't count.
+- **Keep the planned total under ~60% of RAM** (121 GiB total): parallel processes × measured peak. If you can't measure, don't run things in parallel.
+- **Check `free -h` before launching** and stay off the machine if someone else is already using a lot of it.
+- **Watch memory for the first stretch** of any parallel run (Monitor loop); report if MemAvailable trends towards zero.
+- Container memory caps (`docker update --memory`) change the container: only with the user's OK.
+
 ### Known scripts
 
 | Script | Python process to look for | Log | Success marker | Smoke test |
@@ -113,6 +123,7 @@ Never kill, restart or re-launch a run without being asked, even if it looks stu
 | `src/thesis/shell-scripts/paper/run_signature_leakage.sh` | `run_signature_leakage.py` | `artifacts/logs/signature_leakage/<UTC ts>.log` | `Saved →` / `Mirrored →` lines; output in `artifacts/experiments/signature_leakage/<ts>/` | `MAX_STEPS=1 SEEDS="0"` |
 | `src/thesis/shell-scripts/paper/run_mining_setting_selection.sh` | `run_mining_setting_selection.py` | `artifacts/logs/mining_setting_selection/<UTC ts>.log` | `Saved →` / `Mirrored →` lines; output in `artifacts/experiments/mining_setting_selection/<ts>/` (`stage2_grid.csv` is rewritten after every grid point, so its row count shows progress out of 54) | `SMOKE=1 SEEDS="0"` |
 | `src/thesis/shell-scripts/paper/run_rule_precision_gate.sh` | `run_rule_precision_gate.py` | `artifacts/logs/rule_precision_gate/<UTC ts>.log` | `Saved →` / `Mirrored →` lines; output in `artifacts/experiments/rule_precision_gate/<ts>/` | `MAX_STEPS=1 SEEDS="0"` |
+| `src/thesis/shell-scripts/paper/run_mining_comparison_ait_ads.sh` | `run_mining_comparison.py --dataset ait_ads` (one per running fold) | `artifacts/logs/mining_comparison_ait_ads/<UTC ts>/<scenario>.log`, `merge.log`, `peak_memory.txt`, `killed.txt` | `Saved →` in the launcher log / `merge.log`; merged output in `artifacts/experiments/mining_comparison_ait_ads/<ts>/` (per fold: `folds/<scenario>/`) | Measure first: `TEST_SCENARIOS=fox SEEDS=0 MAX_PARALLEL=1`. Safety knobs: `MAX_PARALLEL` (default 3), `STAGGER_SECONDS` (300), `START_FREE_GB` (40), `CRIT_FREE_GB` (12, watchdog kills the newest fold below it) |
 
 (The script tries `conda activate thesis`. That env doesn't exist in the container, so a `[warn] 'conda activate thesis' failed` line is expected and harmless: it falls back to the image's Python. A `FATAL: … can't import the core deps` line is a real failure.)
 
