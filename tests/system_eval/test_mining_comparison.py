@@ -1,6 +1,7 @@
 """Mining comparison runner on a synthetic CSCAS-like step: every arm runs
 end to end through the shared treatment, plus the summary statistics."""
 
+import json
 import random
 
 import numpy as np
@@ -18,6 +19,7 @@ from thesis.system_eval.mining_comparison import (
     ait_ads_base_schema,
     attack_phases,
     loso_folds,
+    merge_runs,
     phase_cuts,
     phase_split,
     firing_overlap,
@@ -269,3 +271,56 @@ def test_loso_folds_subset_of_held_out_scenarios():
     assert s == "b" and len(train) == 2  # still trains on every other scenario
     with pytest.raises(ValueError, match="not in the pool"):
         loso_folds(pool, ("zzz",))
+
+
+def test_merge_runs_renumbers_steps_and_recomputes_stats(tmp_path):
+    runs = []
+    for k, scen in enumerate(["a", "b", "c"]):
+        d = tmp_path / "folds" / scen
+        d.mkdir(parents=True)
+        rows = [
+            {
+                "arm": arm,
+                "seed": 0,
+                "scenario": scen,
+                "step_i": 0,
+                "f1": f1 + 0.01 * k,
+                "pr_auc": f1 + 0.01 * k,
+                "tp_seen": 1,
+                "n_attack_seen": 2,
+                "tp_unseen": 0,
+                "n_attack_unseen": 0,
+            }
+            for arm, f1 in ((NO_MINING, 0.2), ("m1", 0.4), ("m2", 0.3))
+        ]
+        pd.DataFrame(rows).to_csv(d / "per_step_results.csv", index=False)
+        pd.DataFrame(
+            {
+                "arm": ["m1"],
+                "mining_seed": [0],
+                "scenario": [scen],
+                "step_i": [0],
+                "condition": ["x"],
+            }
+        ).to_csv(d / "features.csv", index=False)
+        pd.DataFrame({"step_i": [0], "scenario": [scen]}).to_csv(
+            d / "windows.csv", index=False
+        )
+        runs.append(d)
+    out = merge_runs(runs, tmp_path / "merged")
+    ps = pd.read_csv(out / "per_step_results.csv")
+    assert dict(ps.groupby("scenario")["step_i"].first()) == {"a": 0, "b": 1, "c": 2}
+    assert set(pd.read_csv(out / "features.csv")["step_i"]) == {0, 1, 2}
+    hh = pd.read_csv(out / "helps_hurts.csv")
+    m1 = hh[(hh["arm"] == "m1") & (hh["metric"] == "f1")].iloc[0]
+    assert m1["n_steps"] == 3 and m1["helps"] == 3
+    stats = json.loads((out / "stats.json").read_text())
+    assert stats["f1"]["avg_rank"]["m1"] == 1.0
+    # one step per scenario: no consecutive pairs for stability
+    assert (pd.read_csv(out / "stability.csv")["n_pairs"] == 0).all()
+
+
+def test_merge_runs_refuses_an_unfinished_fold(tmp_path):
+    (tmp_path / "empty").mkdir()
+    with pytest.raises(FileNotFoundError, match="unfinished"):
+        merge_runs([tmp_path / "empty"], tmp_path / "out")

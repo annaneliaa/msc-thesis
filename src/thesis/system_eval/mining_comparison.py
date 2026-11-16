@@ -947,3 +947,53 @@ def write_summary(
         )
     (out_dir / "summary.txt").write_text(text + "\n")
     print(text)
+
+
+# --- Merging per-fold runs --------------------------------------------------
+
+
+def merge_runs(run_dirs: list[Path], out_dir: Path) -> Path:
+    """Merge separate runs (e.g. one LOSO fold per process) into one run
+    folder and recompute the summary, helps/hurts and statistics on the
+    whole. Each run numbers its own steps from 0, so steps are renumbered
+    by (run order, original step). Writes per_step_results.csv,
+    features.csv, windows.csv, sources.json and the summary files."""
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    per_step, feats, windows, sources = [], [], [], []
+    offset = 0
+    for d in map(Path, run_dirs):
+        ps_path = d / "per_step_results.csv"
+        if not ps_path.exists():
+            raise FileNotFoundError(f"{d}: no per_step_results.csv (run unfinished?)")
+        ps = pd.read_csv(ps_path)
+        steps = sorted(ps["step_i"].unique())
+        remap = {s: offset + k for k, s in enumerate(steps)}
+        per_step.append(ps.assign(step_i=ps["step_i"].map(remap), source_run=d.name))
+        if (d / "features.csv").exists():
+            f = pd.read_csv(d / "features.csv")
+            feats.append(f.assign(step_i=f["step_i"].map(remap)))
+        if (d / "windows.csv").exists():
+            w = pd.read_csv(d / "windows.csv")
+            windows.append(w.assign(step_i=w["step_i"].map(remap), source_run=d.name))
+        cfg = d / "config.json"
+        sources.append(
+            {
+                "run": str(d),
+                "steps": {int(k): int(v) for k, v in remap.items()},
+                "config": json.loads(cfg.read_text()) if cfg.exists() else None,
+            }
+        )
+        offset += len(steps)
+    per_step_df = pd.concat(per_step, ignore_index=True)
+    feats_df = pd.concat(feats, ignore_index=True) if feats else None
+    per_step_df.to_csv(out_dir / "per_step_results.csv", index=False)
+    if feats_df is not None:
+        feats_df.to_csv(out_dir / "features.csv", index=False)
+    if windows:
+        pd.concat(windows, ignore_index=True).to_csv(
+            out_dir / "windows.csv", index=False
+        )
+    (out_dir / "sources.json").write_text(json.dumps(sources, indent=2, default=str))
+    write_summary(out_dir, per_step_df, feats_df)
+    return out_dir
