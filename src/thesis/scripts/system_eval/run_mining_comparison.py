@@ -1,8 +1,13 @@
 """
-Mining comparison (paper plan 7.6): walk-forward over CSCAS, Base(5) alone
-vs. Base(5) + each method's features, every method under the same item
-table, precision gate, near-duplicate dedupe, budget K and class-weighted RF
+Mining comparison (paper plan 7.6): Base(5) alone vs. Base(5) + each
+method's features, every method under the same item table, precision gate,
+near-duplicate dedupe, budget K and class-weighted RF
 (see thesis.system_eval.mining_comparison).
+
+--dataset cscas (default): walk-forward over CSCAS, atemporal methods.
+--dataset ait_ads: leave-one-scenario-out over the AIT-ADS scenarios
+(cscas_grouping, token arm T2), all five methods by default. --ait-protocol
+phase runs the within-scenario attack-phase walk instead (reference only).
 
 Writes per_step_results.csv, features.csv, windows.csv, config.json,
 summary.csv, helps_hurts.csv, stability.csv and stats.json (Friedman +
@@ -11,6 +16,9 @@ Nemenyi) under artifacts/experiments/mining_comparison/<timestamp>/.
 Usage:
     python src/thesis/scripts/system_eval/run_mining_comparison.py
     python src/thesis/scripts/system_eval/run_mining_comparison.py --max-steps 2 --seeds 0
+    python src/thesis/scripts/system_eval/run_mining_comparison.py --dataset ait_ads
+    python src/thesis/scripts/system_eval/run_mining_comparison.py --dataset ait_ads \
+        --test-scenarios fox --seeds 0
 """
 
 from __future__ import annotations
@@ -28,23 +36,32 @@ from thesis.mining.common.attribute_features import (  # noqa: E402
     CSCAS_SIGNATURE_DERIVED_FIELDS,
 )
 from thesis.system_eval.mining_comparison import (  # noqa: E402
+    AIT_ADS_METHODS,
+    AIT_ADS_SCENARIOS,
     ATEMPORAL_METHODS,
     COMPARISON_K,
+    PHASE_GAP_SECONDS,
     ComparisonConfig,
     run_comparison,
 )
-from thesis.system_eval.mining_mini_experiment import MiniConfig  # noqa: E402
+from thesis.system_eval.mining_mini_experiment import (  # noqa: E402
+    COMPARISON_TOKEN_ARM,
+    TOKEN_ARMS,
+    MiniConfig,
+)
 
 
 def main() -> None:
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
+    p.add_argument("--dataset", choices=("cscas", "ait_ads"), default="cscas")
     p.add_argument(
         "--methods",
         nargs="+",
-        default=list(ATEMPORAL_METHODS),
-        choices=ATEMPORAL_METHODS,
+        default=None,
+        choices=AIT_ADS_METHODS,
+        help="default: eclat contrast_tree ripper on CSCAS, all five on AIT-ADS",
     )
     p.add_argument("--seeds", nargs="+", type=int, default=[0, 1, 2, 3, 4])
     p.add_argument("--k", type=int, default=COMPARISON_K, help="feature budget K")
@@ -64,12 +81,52 @@ def main() -> None:
         help="mine RIPPER once per step instead of once per seed",
     )
     p.add_argument("--output-dir", type=Path, default=None)
+    ait = p.add_argument_group("AIT-ADS")
+    ait.add_argument(
+        "--ait-protocol",
+        choices=("loso", "phase"),
+        default="loso",
+        help="leave-one-scenario-out (default) or the within-scenario phase walk",
+    )
+    ait.add_argument(
+        "--scenarios",
+        nargs="+",
+        default=list(AIT_ADS_SCENARIOS),
+        metavar="S",
+        help="scenario pool (LOSO trains on all but the held-out one)",
+    )
+    ait.add_argument(
+        "--test-scenarios",
+        nargs="+",
+        default=None,
+        metavar="S",
+        help="LOSO: only run the folds holding out these (default: all)",
+    )
+    ait.add_argument("--grouping", default="cscas_grouping")
+    ait.add_argument(
+        "--token-arm", default=COMPARISON_TOKEN_ARM, choices=sorted(TOKEN_ARMS)
+    )
+    ait.add_argument("--phase-gap-seconds", type=int, default=PHASE_GAP_SECONDS)
     a = p.parse_args()
 
+    methods = a.methods or list(
+        ATEMPORAL_METHODS if a.dataset == "cscas" else AIT_ADS_METHODS
+    )
+    if a.dataset == "cscas" and set(methods) - set(ATEMPORAL_METHODS):
+        p.error(f"CSCAS runs {list(ATEMPORAL_METHODS)} only")
+    if a.dataset == "ait_ads" and a.no_signature_items:
+        p.error("--no-signature-items is the CSCAS Check 3 condition only")
+    experiment = "mining_comparison"
+    if a.dataset == "ait_ads":
+        experiment += "_ait_ads" + ("_phase" if a.ait_protocol == "phase" else "")
+    if a.no_signature_items:
+        experiment += "_no_sig"
+
     config = ComparisonConfig(
+        dataset=a.dataset,
         gran=a.gran,
         seeds=tuple(a.seeds),
-        methods=tuple(a.methods),
+        methods=tuple(methods),
         mining=replace(MiniConfig(), k=a.k, per_class_budget=not a.pooled_budget),
         reseed_stochastic_miners=not a.mine_once,
         extra_exclude_fields=(
@@ -79,9 +136,13 @@ def main() -> None:
         ),
         max_steps=a.max_steps,
         out_dir=a.output_dir,
-        experiment=(
-            "mining_comparison_no_sig" if a.no_signature_items else "mining_comparison"
-        ),
+        experiment=experiment,
+        scenarios=tuple(a.scenarios),
+        grouping=a.grouping,
+        token_arm=a.token_arm,
+        phase_gap_seconds=a.phase_gap_seconds,
+        ait_ads_protocol=a.ait_protocol,
+        test_scenarios=tuple(a.test_scenarios) if a.test_scenarios else None,
     )
     run_comparison(config)
 

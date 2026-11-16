@@ -9,10 +9,17 @@ import pytest
 
 from thesis.encoders.baseline import BaselineFeatureEncoder
 from thesis.schemas.features import BaseFeatureSchema, FeatureSchema
+from thesis.schemas.groups import AlertGroup
 from thesis.system_eval.mining_comparison import (
     NO_MINING,
     ComparisonConfig,
+    DatasetSpec,
     Step,
+    ait_ads_base_schema,
+    attack_phases,
+    loso_folds,
+    phase_cuts,
+    phase_split,
     firing_overlap,
     friedman_nemenyi,
     helps_hurts,
@@ -23,7 +30,7 @@ from thesis.system_eval.mining_comparison import (
 )
 from thesis.system_eval.mining_mini_experiment import MiniConfig
 
-from test_mining_mini_experiment import _cscas_group
+from test_mining_mini_experiment import _ait_groups, _cscas_group, _methods
 
 
 @pytest.fixture(scope="module")
@@ -37,7 +44,8 @@ def step_rows():
         mining=MiniConfig(k=10, n_bins=4),
     )
     step = Step(0, groups[:600], groups[600:], test_days=1.0)
-    rows, feats = run_step(config, step, base, lambda g: (g.category, g.ruleset), set())
+    spec = DatasetSpec("cscas", base, lambda g: (g.category, g.ruleset))
+    rows, feats = run_step(config, step, spec)
     return pd.DataFrame(rows), pd.concat(feats, ignore_index=True)
 
 
@@ -119,3 +127,145 @@ def test_stability_share_of_next_step():
 def test_comparison_budget_default():
     assert ComparisonConfig().mining.k == 60
     assert ComparisonConfig().mining.per_class_budget
+
+
+# --- AIT-ADS attack-phase walk ---------------------------------------------
+
+
+def _timed(ts_labels):
+    return [
+        AlertGroup(
+            alert_group_id=f"g{i}",
+            group_id=f"g{i}",
+            method="cscas_grouping",
+            start_ts=t,
+            end_ts=t,
+            n_alerts=1,
+            group_label="attack" if atk else "benign",
+        )
+        for i, (t, atk) in enumerate(ts_labels)
+    ]
+
+
+def test_attack_phases_split_on_gaps():
+    h = 3600
+    groups = _timed(
+        [
+            (0, 0),
+            (10 * h, 1),
+            (10 * h + 1800, 1),
+            (11 * h, 1),
+            (20 * h, 0),
+            (30 * h, 1),
+            (31 * h + 1, 0),
+            (40 * h, 1),
+            (50 * h, 0),
+        ]
+    )
+    phases = attack_phases(groups, gap_seconds=h)
+    assert phases == [(10 * h, 11 * h), (30 * h, 30 * h), (40 * h, 40 * h)]
+    assert phase_cuts(phases) == [20.5 * h, 35 * h]
+
+    split = phase_split(groups, gap_seconds=h)
+    assert [p for p, _, _ in split] == [1, 2]
+    _, tr1, te1 = split[0]
+    assert [g.start_ts for g in tr1] == [0, 10 * h, 10 * h + 1800, 11 * h, 20 * h]
+    assert [g.start_ts for g in te1] == [30 * h, 31 * h + 1]
+    _, tr2, te2 = split[1]  # expanding window; last test runs to the end
+    assert len(tr2) == 7 and [g.start_ts for g in te2] == [40 * h, 50 * h]
+    # every training window holds an earlier phase's attacks
+    assert all(any(g.group_label == "attack" for g in tr) for _, tr, _ in split)
+
+
+def test_single_phase_gives_no_step():
+    groups = _timed([(0, 0), (100, 1), (200, 1), (10_000, 0)])
+    assert phase_split(groups, gap_seconds=3600) == []
+
+
+def test_ait_ads_base_schema_is_the_thesis_base():
+    from thesis.configs import load_base_features
+
+    schema = ait_ads_base_schema()
+    assert list(schema.base.features) == load_base_features("ait-ads")
+
+
+def test_ait_ads_step_runs_temporal_methods_with_attach():
+    groups = _ait_groups()
+    cols = list(BaselineFeatureEncoder().transform(groups[:5]).columns)
+    base = FeatureSchema("base", "1", base=BaseFeatureSchema(features=cols))
+    attached = []
+    spec = DatasetSpec(
+        "ait_ads",
+        base,
+        lambda g: g.group_id.split(":")[2],
+        benign_gate_g=1.0,
+        # steps are already on the synthetic groups; just record the call
+        attach_steps=lambda gs: attached.append(len(gs)),
+    )
+    methods = tuple(m for m in _methods() if m in ("eclat", "prefixspan", "mctsextent"))
+    config = ComparisonConfig(
+        dataset="ait_ads", seeds=(0,), methods=methods, mining=MiniConfig(k=10)
+    )
+    step = Step(3, groups[:110], groups[110:], 1.0, scenario="syn", phase=1)
+    rows, feats = run_step(config, step, spec)
+    rows = pd.DataFrame(rows)
+    assert attached == [160]  # once per step, train + test
+    assert set(rows["arm"]) == {NO_MINING, *methods}
+    assert (rows["scenario"] == "syn").all() and (rows["phase"] == 1).all()
+    feats = pd.concat(feats, ignore_index=True)
+    assert set(feats["scenario"]) == {"syn"}
+    seq = feats[feats["arm"] == "prefixspan"]
+    assert not seq.empty and seq["condition"].str.contains(" -> ").all()
+
+
+def test_temporal_method_without_raw_alerts_is_an_error():
+    groups = _ait_groups()
+    cols = list(BaselineFeatureEncoder().transform(groups[:5]).columns)
+    base = FeatureSchema("base", "1", base=BaseFeatureSchema(features=cols))
+    spec = DatasetSpec("ait_ads", base, lambda g: g.group_id)
+    config = ComparisonConfig(dataset="ait_ads", seeds=(0,), methods=("prefixspan",))
+    with pytest.raises(ValueError, match="no raw alerts"):
+        run_step(config, Step(0, groups[:110], groups[110:], 1.0), spec)
+
+
+def test_stability_only_pairs_steps_within_a_scenario():
+    feats = pd.DataFrame(
+        {
+            "arm": "a",
+            "mining_seed": 0,
+            "scenario": ["s1", "s1", "s2"],
+            "step_i": [0, 1, 2],
+            "condition": ["x", "x", "x"],
+        }
+    )
+    out = stability(feats).set_index("arm")
+    # (0, 1) in s1 counts; (1, 2) crosses scenarios and doesn't
+    assert out.loc["a", "n_pairs"] == 1
+    assert out.loc["a", "stability"] == 1.0
+
+
+# --- AIT-ADS leave-one-scenario-out ----------------------------------------
+
+
+def test_loso_folds_hold_out_one_scenario_each():
+    pool = {
+        "a": _timed([(0, 1), (1, 0)]),
+        "b": _timed([(0, 0), (1, 1), (2, 0)]),
+        "c": _timed([(0, 0)]),
+    }
+    folds = loso_folds(pool)
+    assert [s for s, _, _ in folds] == ["a", "b", "c"]
+    for s, train, test in folds:
+        assert test is pool[s]
+        assert len(train) == sum(len(g) for t, g in pool.items() if t != s)
+        assert not {id(g) for g in train} & {id(g) for g in test}
+
+
+def test_loso_folds_subset_of_held_out_scenarios():
+    pool = {"a": _timed([(0, 1)]), "b": _timed([(0, 0)]), "c": _timed([(0, 0)])}
+    folds = loso_folds(pool, ("b",))
+    assert len(folds) == 1
+    s, train, test = folds[0]
+    assert s == "b" and len(train) == 2  # still trains on every other scenario
+    with pytest.raises(ValueError, match="not in the pool"):
+        loso_folds(pool, ("zzz",))

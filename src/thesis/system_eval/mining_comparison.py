@@ -1,7 +1,8 @@
 """
 Mining comparison (paper plan 7.6): walk-forward comparison of the mining
-methods on CSCAS, every method under the same treatment.
+methods, every method under the same treatment. Two datasets:
 
+CSCAS (atemporal arm: eclat, contrast_tree, ripper):
 Per walk-forward step i (the thesis's always-retrain protocol, baseline_split
 scheme at the paper's granularity, identical windows to Checks 1-3): mine on
 the labelled groups of training window Wi, train on Wi, test on W(i+1).
@@ -36,6 +37,23 @@ seed-averaged step metrics), ΔF1 / ΔPR-AUC vs. "none" with helps/hurts
 counts, and a Friedman test with average ranks and the Nemenyi critical
 difference over the steps.
 
+AIT-ADS (temporal arm: prefixspan, mctsextent, plus the atemporal methods on
+the same steps, so Eclat vs. PrefixSpan isolates order): cscas_grouping, token
+arm T2 for every method. Two protocols:
+
+  - "loso" (default, decided 2026-11-16): leave-one-scenario-out. Fold i
+    trains on the other scenarios' labelled groups and tests on scenario i's
+    whole timeline. The scenarios run the same multi-step attack chain on
+    different networks, so every stage of the held-out chain has been seen as
+    an attack elsewhere. Look-back steps come from each group's own scenario.
+  - "phase": within one scenario, one step per attack phase after the first
+    (train on everything before the phase, test up to the next phase; cut
+    halfway between phases). Kept for reference: later phases are different
+    attack stages, so this tests transfer between stages, not between methods
+    (FINDINGS.md). A rolling 5% walk-forward is not an option on AIT-ADS: the
+    1-3 attack phases per scenario are < ~4 h each, so its windows almost
+    never hold attacks on both sides (the collapsed cells of thesis §5.6).
+
 Method settings are the mini experiment's documented defaults, not tuned
 (the tuning criterion is still open, see FINDINGS.md).
 """
@@ -53,6 +71,8 @@ import pandas as pd
 from scipy import stats as sps
 from sklearn.metrics import average_precision_score
 
+from typing import Callable, Iterator
+
 from thesis.encoders.service import encode_alert_groups_for_schema
 from thesis.encoders.symbolic import SymbolicFeatureEncoder
 from thesis.experiments._shared import (
@@ -64,19 +84,45 @@ from thesis.mining.common.attribute_features import default_leaky_attribute_fiel
 from thesis.mining.common.item_table import build_item_table
 from thesis.mining.common.patterns import patterns_to_schema
 from thesis.paths import ROOT
-from thesis.schemas.features import SEQUENCE_MINING_TYPES
+from thesis.schemas.features import (
+    SEQUENCE_MINING_TYPES,
+    BaseFeatureSchema,
+    FeatureSchema,
+)
 from thesis.schemas.groups import AlertGroup
 from thesis.system_eval.mining_mini_experiment import (
+    COMPARISON_TOKEN_ARM,
+    METHODS,
     TEMPORAL,
+    TOKEN_ARMS,
     MiniConfig,
     MiniWindow,
+    _ait_signature,
     _labels,
     _repo_commit,
     labelled,
+    lookback_attacher,
     select_features,
 )
 
 ATEMPORAL_METHODS = ("eclat", "contrast_tree", "ripper")
+# AIT-ADS runs every method: the temporal pair plus the atemporal ones on the
+# same steps (Eclat vs. PrefixSpan = atemporal vs. temporal, plan section 1).
+AIT_ADS_METHODS = METHODS
+AIT_ADS_SCENARIOS = (
+    "fox",
+    "harrison",
+    "russellmitchell",
+    "santos",
+    "shaw",
+    "wardbeck",
+    "wheeler",
+    "wilson",
+)
+# Attack groups more than this far apart belong to different attack phases.
+# Every AIT-ADS phase lasts < ~4 h and phases are >= 10 h apart, so the phase
+# count is the same for any gap between 1 h and 4 h.
+PHASE_GAP_SECONDS = 3600
 STOCHASTIC_MINERS = {"ripper", "mctsextent"}
 NO_MINING = "none"
 # Budget K for the comparison (decided 2026-11-11): about what the contrast
@@ -87,7 +133,8 @@ COMPARISON_K = 60
 
 @dataclass
 class ComparisonConfig:
-    gran: float = 0.05
+    dataset: str = "cscas"  # "cscas" | "ait_ads"
+    gran: float = 0.05  # CSCAS walk-forward granularity
     seeds: tuple[int, ...] = (0, 1, 2, 3, 4)
     methods: tuple[str, ...] = ATEMPORAL_METHODS
     include_no_mining: bool = True
@@ -104,6 +151,15 @@ class ComparisonConfig:
     max_steps: int | None = None
     out_dir: Path | None = None
     experiment: str = "mining_comparison"
+    # AIT-ADS only.
+    scenarios: tuple[str, ...] = AIT_ADS_SCENARIOS
+    grouping: str = "cscas_grouping"
+    token_arm: str = COMPARISON_TOKEN_ARM
+    phase_gap_seconds: int = PHASE_GAP_SECONDS
+    ait_ads_protocol: str = "loso"  # "loso" | "phase"
+    # LOSO: the held-out scenarios to run folds for (None = every scenario in
+    # `scenarios`); training always pools all the other `scenarios`.
+    test_scenarios: tuple[str, ...] | None = None
 
 
 @dataclass
@@ -114,6 +170,24 @@ class Step:
     train: list[AlertGroup]
     test: list[AlertGroup]
     test_days: float
+    scenario: str = "cscas"
+    phase: int | None = None  # AIT-ADS: index of the attack phase tested
+
+
+@dataclass
+class DatasetSpec:
+    """What a step's mining window needs beyond its rows: base features,
+    signature identity, item-table fields, gate side and look-back steps."""
+
+    dataset: str  # "cscas" | "ait_ads"
+    base_schema: FeatureSchema
+    # group -> the signature identity used for seen/unseen recall
+    signature_of: Callable[[AlertGroup], object]
+    exclude_fields: set[str] = field(default_factory=set)
+    include_fields: set[str] = field(default_factory=set)
+    benign_gate_g: float | None = None
+    # Sets context_steps on groups (temporal methods); None = not available.
+    attach_steps: Callable[[list[AlertGroup]], None] | None = None
 
 
 # --- Per-step pieces ------------------------------------------------------
@@ -260,13 +334,10 @@ def fit_and_score(
 
 
 def run_step(
-    config: ComparisonConfig,
-    step: Step,
-    base_schema,
-    signature_of,
-    exclude_fields: set[str],
+    config: ComparisonConfig, step: Step, spec: DatasetSpec
 ) -> tuple[list[dict], list[pd.DataFrame]]:
     """All arms x seeds on one step."""
+    base_schema, signature_of = spec.base_schema, spec.signature_of
     y_tr = _labels(step.train).astype(int)
     y_te = _labels(step.test).astype(int)
     tr_sigs = {signature_of(g) for g in step.train}
@@ -278,6 +349,8 @@ def run_step(
         drop=True
     )
     common = {
+        "scenario": step.scenario,
+        "phase": step.phase,
         "step_i": step.i,
         "n_train": len(y_tr),
         "n_train_attack": int(y_tr.sum()),
@@ -303,20 +376,33 @@ def run_step(
             )
 
     window = MiniWindow(
-        "cscas",
-        f"step {step.i}",
+        spec.dataset,
+        f"{step.scenario} step {step.i}",
         step.train,
         step.test,
         signature_of=signature_of,
-        exclude_fields=exclude_fields,
+        exclude_fields=spec.exclude_fields,
+        include_fields=spec.include_fields,
+        token_arm=config.token_arm if spec.dataset == "ait_ads" else "T0",
+        has_raw_alerts=spec.attach_steps is not None,
+        benign_gate_g=spec.benign_gate_g,
     )
     table = None
     if any(m not in TEMPORAL for m in config.methods):
         t0 = time.perf_counter()
         table = build_item_table(
-            step.train, exclude_fields=exclude_fields, n_bins=config.mining.n_bins
+            step.train,
+            exclude_fields=spec.exclude_fields,
+            n_bins=config.mining.n_bins,
+            include_fields=spec.include_fields,
         )
         print(f"  item table {table.items().shape} in {time.perf_counter() - t0:.1f}s")
+    if any(m in TEMPORAL for m in config.methods):
+        if spec.attach_steps is None:
+            raise ValueError(f"{spec.dataset} has no raw alerts for sequences")
+        t0 = time.perf_counter()
+        spec.attach_steps(step.train + step.test)
+        print(f"  look-back steps in {time.perf_counter() - t0:.1f}s")
 
     for method in config.methods:
         reseed = config.reseed_stochastic_miners and method in STOCHASTIC_MINERS
@@ -330,7 +416,8 @@ def run_step(
                     f = mined.features.copy()
                     f.insert(0, "arm", method)
                     f.insert(1, "mining_seed", seed if reseed else config.seeds[0])
-                    f.insert(2, "step_i", step.i)
+                    f.insert(2, "scenario", step.scenario)
+                    f.insert(3, "step_i", step.i)
                     feats.append(f)
             X_tr = pd.concat([Xb_tr, mined.X_tr], axis=1)
             X_te = pd.concat([Xb_te, mined.X_te], axis=1)
@@ -360,9 +447,11 @@ def run_step(
 # --- CSCAS walk-forward ---------------------------------------------------
 
 
-def cscas_steps(config: ComparisonConfig):
-    """The CSCAS walk-forward steps (same windows as Checks 1-3), the base
-    schema and the SignatureID lookup."""
+def cscas_steps(
+    config: ComparisonConfig,
+) -> tuple[Callable[[], Iterator[tuple[Step, DatasetSpec]]], pd.DataFrame]:
+    """The CSCAS walk-forward steps (same windows as Checks 1-3), each with
+    the dataset spec (base schema, SignatureID lookup, leaky fields)."""
     from thesis.config import GroupingConfig
     from thesis.experiments._shared import load_scenario_context
     from thesis.grouping.group_alerts import CSCAS_PREGROUPED_METHOD
@@ -385,16 +474,26 @@ def cscas_steps(config: ComparisonConfig):
     bounds = training_window_bounds(scheme, config.gran)
     n = len(bounds) if config.max_steps is None else min(len(bounds), config.max_steps)
     lookup = load_cscas_signature_lookup()
+    spec = DatasetSpec(
+        dataset="cscas",
+        base_schema=ctx.base_schema,
+        signature_of=lambda g: lookup.get(g.group_id),
+        exclude_fields=set(default_leaky_attribute_fields("cscas"))
+        | set(config.extra_exclude_fields),
+    )
 
     def steps():
         for i in range(n):
             s, e = bounds[i]
             ts, te = scheme.target_bounds(config.gran, i + 1)
-            yield Step(
-                i,
-                labelled(groups[s:e]),
-                labelled(groups[ts:te]),
-                _window_days(groups[ts:te]),
+            yield (
+                Step(
+                    i,
+                    labelled(groups[s:e]),
+                    labelled(groups[ts:te]),
+                    _window_days(groups[ts:te]),
+                ),
+                spec,
             )
 
     windows = pd.DataFrame(
@@ -409,7 +508,224 @@ def cscas_steps(config: ComparisonConfig):
             for i in range(n)
         ]
     )
-    return steps, windows, ctx.base_schema, (lambda g: lookup.get(g.group_id))
+    return steps, windows
+
+
+# --- AIT-ADS attack-phase walk --------------------------------------------
+
+
+def attack_phases(groups: list[AlertGroup], gap_seconds: int) -> list[tuple[int, int]]:
+    """(first, last) start_ts of each attack phase: runs of attack groups with
+    no gap longer than gap_seconds. `groups` sorted by start_ts."""
+    ts = [g.start_ts for g in groups if g.group_label == "attack"]
+    phases: list[tuple[int, int]] = []
+    for t in ts:
+        if phases and t - phases[-1][1] <= gap_seconds:
+            phases[-1] = (phases[-1][0], t)
+        else:
+            phases.append((t, t))
+    return phases
+
+
+def phase_cuts(phases: list[tuple[int, int]]) -> list[float]:
+    """The split time before each phase after the first: halfway between the
+    end of the previous phase and the start of this one."""
+    return [(phases[p - 1][1] + phases[p][0]) / 2 for p in range(1, len(phases))]
+
+
+def phase_split(
+    groups: list[AlertGroup], gap_seconds: int
+) -> list[tuple[int, list[AlertGroup], list[AlertGroup]]]:
+    """(phase, train, test) per attack phase after the first: train = every
+    group before the cut, test = the cut up to the next phase's cut (or the
+    end). `groups` labelled and sorted by start_ts."""
+    cuts = phase_cuts(attack_phases(groups, gap_seconds))
+    out = []
+    for p, cut in enumerate(cuts, start=1):
+        end = cuts[p] if p < len(cuts) else np.inf
+        train = [g for g in groups if g.start_ts < cut]
+        test = [g for g in groups if cut <= g.start_ts < end]
+        out.append((p, train, test))
+    return out
+
+
+def ait_ads_base_schema() -> FeatureSchema:
+    from thesis.configs import load_base_features
+
+    return FeatureSchema(
+        schema_name="base",
+        schema_version="0.1.0",
+        base=BaseFeatureSchema(load_base_features("ait-ads")),
+        symbolic=None,
+    )
+
+
+def _ait_ads_spec(config: ComparisonConfig, scenarios, attach_steps) -> DatasetSpec:
+    include, exclude = TOKEN_ARMS[config.token_arm]
+    leaky = set().union(*(default_leaky_attribute_fields(s) for s in scenarios))
+    return DatasetSpec(
+        dataset="ait_ads",
+        base_schema=ait_ads_base_schema(),
+        # cscas_grouping groups hold one alert name, like a CSCAS
+        # SignatureID; other groupings fall back to the group id.
+        signature_of=_ait_signature,
+        exclude_fields=leaky | set(exclude) | set(config.extra_exclude_fields),
+        include_fields=set(include),
+        # Background alerts inside attack phases carry the attack label, so
+        # benign rules only need attack rate <= pi (same as the mini
+        # experiment and the grouping x token grid).
+        benign_gate_g=1.0,
+        attach_steps=attach_steps,
+    )
+
+
+def _load_ait_ads_groups(config: ComparisonConfig, scenario: str) -> list[AlertGroup]:
+    from thesis.paths import CACHE_DIR
+    from thesis.pipeline.pipeline import load_or_build_alert_groups
+
+    groups = load_or_build_alert_groups(
+        scenario, CACHE_DIR / scenario / "groups" / config.grouping
+    )
+    return labelled(sorted(groups, key=lambda g: g.start_ts))
+
+
+def loso_folds(
+    groups_by_scenario: dict[str, list[AlertGroup]],
+    test_scenarios: tuple[str, ...] | None = None,
+) -> list[tuple[str, list[AlertGroup], list[AlertGroup]]]:
+    """(held-out scenario, train, test) per fold: train pools every other
+    scenario, test is the held-out scenario's whole timeline."""
+    held_out = test_scenarios or tuple(groups_by_scenario)
+    unknown = set(held_out) - set(groups_by_scenario)
+    if unknown:
+        raise ValueError(f"test scenarios not in the pool: {sorted(unknown)}")
+    return [
+        (
+            s,
+            [g for t, gs in groups_by_scenario.items() if t != s for g in gs],
+            groups_by_scenario[s],
+        )
+        for s in held_out
+    ]
+
+
+def ait_ads_loso_steps(
+    config: ComparisonConfig,
+) -> tuple[Callable[[], Iterator[tuple[Step, DatasetSpec]]], pd.DataFrame]:
+    """Leave-one-scenario-out folds over config.scenarios. Every scenario's
+    groups stay in memory; their look-back steps are attached once up front,
+    one scenario's raw alerts at a time, so folds share them."""
+    from thesis.mining.temporal.lookback import load_ait_ads_raw_alerts
+    from thesis.system_eval import mining_mini_experiment as mme
+
+    groups_by_scenario = {s: _load_ait_ads_groups(config, s) for s in config.scenarios}
+    folds = loso_folds(groups_by_scenario, config.test_scenarios)
+    if config.max_steps is not None:
+        folds = folds[: config.max_steps]
+    windows = pd.DataFrame(
+        [
+            {
+                "step_i": i,
+                "scenario": s,
+                "train_scenarios": " ".join(t for t in groups_by_scenario if t != s),
+                "n_train": len(tr),
+                "n_train_attack": int(_labels(tr).sum()),
+                "n_test": len(te),
+                "n_test_attack": int(_labels(te).sum()),
+                "test_days": _window_days(te),
+            }
+            for i, (s, tr, te) in enumerate(folds)
+        ]
+    )
+
+    def steps():
+        if any(m in TEMPORAL for m in config.methods):
+            for s, groups in groups_by_scenario.items():
+                t0 = time.perf_counter()
+                lookback_attacher(s, config.token_arm, config.mining.lookback_minutes)(
+                    groups
+                )
+                mme._LOOKBACK_INDEX.clear()
+                load_ait_ads_raw_alerts.cache_clear()
+                print(f"  look-back steps {s} in {time.perf_counter() - t0:.1f}s")
+        # Steps are already on every group; run_step's attach call is a no-op.
+        spec = _ait_ads_spec(config, groups_by_scenario, lambda groups: None)
+        for i, (s, tr, te) in enumerate(folds):
+            yield Step(i, tr, te, _window_days(te), scenario=s), spec
+
+    return steps, windows
+
+
+def ait_ads_steps(
+    config: ComparisonConfig,
+) -> tuple[Callable[[], Iterator[tuple[Step, DatasetSpec]]], pd.DataFrame]:
+    """The AIT-ADS attack-phase steps over config.scenarios, numbered across
+    scenarios. Loads each scenario's groups twice (once here for the window
+    table, once lazily in the generator) to keep only one scenario in memory."""
+    from thesis.mining.temporal.lookback import load_ait_ads_raw_alerts
+    from thesis.system_eval import mining_mini_experiment as mme
+
+    def load(scenario: str) -> list[AlertGroup]:
+        return _load_ait_ads_groups(config, scenario)
+
+    plan: list[dict] = []
+    for scenario in config.scenarios:
+        groups = load(scenario)
+        n_phases = len(attack_phases(groups, config.phase_gap_seconds))
+        split = phase_split(groups, config.phase_gap_seconds)
+        for p, train, test in split:
+            plan.append(
+                {
+                    "step_i": len(plan),
+                    "scenario": scenario,
+                    "phase": p,
+                    "n_phases": n_phases,
+                    "train_end_ts": test[0].start_ts if test else np.nan,
+                    "test_end_ts": test[-1].start_ts if test else np.nan,
+                    "n_train": len(train),
+                    "n_train_attack": int(_labels(train).sum()),
+                    "n_test": len(test),
+                    "n_test_attack": int(_labels(test).sum()),
+                }
+            )
+        if not split:
+            print(f"  [skip] {scenario}: {n_phases} attack phase(s), no step")
+    if config.max_steps is not None:
+        plan = plan[: config.max_steps]
+    windows = pd.DataFrame(plan)
+
+    def steps():
+        for scenario in dict.fromkeys(r["scenario"] for r in plan):
+            groups = load(scenario)
+            spec = _ait_ads_spec(
+                config,
+                [scenario],
+                lookback_attacher(
+                    scenario, config.token_arm, config.mining.lookback_minutes
+                ),
+            )
+            split = {
+                p: (tr, te)
+                for p, tr, te in phase_split(groups, config.phase_gap_seconds)
+            }
+            for r in (r for r in plan if r["scenario"] == scenario):
+                tr, te = split[r["phase"]]
+                yield (
+                    Step(
+                        r["step_i"],
+                        tr,
+                        te,
+                        _window_days(te),
+                        scenario=scenario,
+                        phase=r["phase"],
+                    ),
+                    spec,
+                )
+            # One scenario's raw alerts and per-host index at a time.
+            mme._LOOKBACK_INDEX.clear()
+            load_ait_ads_raw_alerts.cache_clear()
+
+    return steps, windows
 
 
 def default_out_dir(experiment: str = "mining_comparison") -> Path:
@@ -418,14 +734,17 @@ def default_out_dir(experiment: str = "mining_comparison") -> Path:
 
 
 def run_comparison(config: ComparisonConfig) -> Path:
-    """Walk-forward over every step x arm x seed on CSCAS. Writes
+    """Walk-forward over every step x arm x seed (CSCAS or AIT-ADS). Writes
     per_step_results.csv and features.csv (rewritten after every step, so a
     crashed run keeps what it finished), windows.csv, config.json, and at the
     end summary.csv, helps_hurts.csv, stability.csv and stats.json."""
-    unknown = set(config.methods) - set(ATEMPORAL_METHODS)
+    allowed = ATEMPORAL_METHODS if config.dataset == "cscas" else AIT_ADS_METHODS
+    if config.dataset not in ("cscas", "ait_ads"):
+        raise ValueError(f"unknown dataset {config.dataset!r}")
+    unknown = set(config.methods) - set(allowed)
     if unknown:
         raise ValueError(
-            f"CSCAS runs the atemporal methods only; got {sorted(unknown)}"
+            f"{config.dataset} runs {list(allowed)}; got {sorted(unknown)}"
         )
     out_dir = (
         Path(config.out_dir) if config.out_dir else default_out_dir(config.experiment)
@@ -436,11 +755,14 @@ def run_comparison(config: ComparisonConfig) -> Path:
             {**asdict(config), "repo_commit": _repo_commit()}, indent=2, default=str
         )
     )
-    steps, windows, base_schema, signature_of = cscas_steps(config)
-    windows.to_csv(out_dir / "windows.csv", index=False)
-    exclude = set(default_leaky_attribute_fields("cscas")) | set(
-        config.extra_exclude_fields
+    steps, windows = (
+        cscas_steps(config)
+        if config.dataset == "cscas"
+        else ait_ads_loso_steps(config)
+        if config.ait_ads_protocol == "loso"
+        else ait_ads_steps(config)
     )
+    windows.to_csv(out_dir / "windows.csv", index=False)
     print(
         f"Output → {out_dir}  ({len(windows)} steps x "
         f"{len(config.methods) + config.include_no_mining} arms x "
@@ -449,15 +771,15 @@ def run_comparison(config: ComparisonConfig) -> Path:
 
     rows: list[dict] = []
     feats: list[pd.DataFrame] = []
-    for step in steps():
+    for step, spec in steps():
         print(
-            f"[step {step.i}] train {len(step.train)} "
+            f"[step {step.i} {step.scenario}] train {len(step.train)} "
             f"({int(_labels(step.train).sum())} attack), test {len(step.test)}"
         )
         if len(set(_labels(step.train))) < 2:
             print("  [warn] single-class training window -- skipped")
             continue
-        r, f = run_step(config, step, base_schema, signature_of, exclude)
+        r, f = run_step(config, step, spec)
         rows += r
         feats += f
         pd.DataFrame(rows).to_csv(out_dir / "per_step_results.csv", index=False)
@@ -519,18 +841,23 @@ def helps_hurts(per_step: pd.DataFrame, metric: str = "f1") -> pd.DataFrame:
 
 def stability(features: pd.DataFrame) -> pd.DataFrame:
     """Per arm (and mining seed): the mean share of step i's conditions that
-    reappear in step i+1's kept features."""
+    reappear in step i+1's kept features, within one scenario (AIT-ADS steps
+    of different scenarios are not consecutive)."""
     if features is None or features.empty:
         return pd.DataFrame()
+    if "scenario" not in features:
+        features = features.assign(scenario="cscas")
     out = []
     for (arm, seed), g in features.groupby(["arm", "mining_seed"]):
-        by_step = g.groupby("step_i")["condition"].apply(set).sort_index()
-        steps = list(by_step.index)
-        shares = [
-            len(by_step[a] & by_step[b]) / len(by_step[a])
-            for a, b in zip(steps, steps[1:])
-            if b == a + 1 and by_step[a]
-        ]
+        shares = []
+        for _, gs in g.groupby("scenario"):
+            by_step = gs.groupby("step_i")["condition"].apply(set).sort_index()
+            steps = list(by_step.index)
+            shares += [
+                len(by_step[a] & by_step[b]) / len(by_step[a])
+                for a, b in zip(steps, steps[1:])
+                if b == a + 1 and by_step[a]
+            ]
         out.append(
             {
                 "arm": arm,
