@@ -20,6 +20,7 @@ from thesis.system_eval.mining_comparison import (
     attack_phases,
     loso_folds,
     merge_runs,
+    mining_cache_key,
     phase_cuts,
     phase_split,
     firing_overlap,
@@ -324,3 +325,94 @@ def test_merge_runs_refuses_an_unfinished_fold(tmp_path):
     (tmp_path / "empty").mkdir()
     with pytest.raises(FileNotFoundError, match="unfinished"):
         merge_runs([tmp_path / "empty"], tmp_path / "out")
+
+
+# --- Two-stage runs: mining cache -------------------------------------------
+
+
+def _cscas_spec_and_step():
+    rng = random.Random(0)
+    groups = [_cscas_group(i, rng) for i in range(900)]
+    cols = list(BaselineFeatureEncoder().transform(groups[:5]).columns)
+    base = FeatureSchema("base", "1", base=BaseFeatureSchema(features=cols))
+    spec = DatasetSpec("cscas", base, lambda g: (g.category, g.ruleset))
+    return spec, Step(0, groups[:600], groups[600:], test_days=1.0)
+
+
+def _score_cols(rows):
+    cols = ["arm", "seed", "f1", "pr_auc", "n_symbolic", "n_gated", "n_raw"]
+    return pd.DataFrame(rows)[cols].sort_values(["arm", "seed"]).reset_index(drop=True)
+
+
+def test_two_stage_matches_one_pass(tmp_path):
+    spec, step = _cscas_spec_and_step()
+    base = dict(seeds=(0, 1), mining=MiniConfig(k=10, n_bins=4))
+    one_pass, _ = run_step(ComparisonConfig(**base), step, spec)
+
+    cache = tmp_path / "mcache"
+    mined, _ = run_step(
+        ComparisonConfig(**base, stage="mine", mining_cache_dir=cache), step, spec
+    )
+    assert mined == []  # mining stage trains nothing
+    # deterministic methods cached once, RIPPER once per seed
+    assert len(list((cache / "eclat").glob("*.pkl"))) == 1
+    assert len(list((cache / "ripper").glob("*.pkl"))) == 2
+
+    trained, _ = run_step(
+        ComparisonConfig(**base, stage="train", mining_cache_dir=cache), step, spec
+    )
+    pd.testing.assert_frame_equal(_score_cols(one_pass), _score_cols(trained))
+
+
+def test_train_stage_reuses_cache_at_another_k(tmp_path):
+    spec, step = _cscas_spec_and_step()
+    cache = tmp_path / "mcache"
+    cfg = dict(seeds=(0,), methods=("eclat",), include_no_mining=False)
+    run_step(
+        ComparisonConfig(
+            **cfg,
+            mining=MiniConfig(k=10, n_bins=4),
+            stage="mine",
+            mining_cache_dir=cache,
+        ),
+        step,
+        spec,
+    )
+    rows, _ = run_step(
+        ComparisonConfig(
+            **cfg,
+            mining=MiniConfig(k=4, n_bins=4),
+            stage="train",
+            mining_cache_dir=cache,
+        ),
+        step,
+        spec,
+    )
+    assert rows[0]["n_symbolic"] <= 4  # K applied at training time
+
+
+def test_train_stage_refuses_to_mine(tmp_path):
+    spec, step = _cscas_spec_and_step()
+    config = ComparisonConfig(
+        seeds=(0,), methods=("eclat",), stage="train", mining_cache_dir=tmp_path
+    )
+    with pytest.raises(FileNotFoundError, match="run --stage mine first"):
+        run_step(config, step, spec)
+
+
+def test_mining_cache_key_tracks_data_and_settings_not_budget():
+    spec, step = _cscas_spec_and_step()
+    mini = MiniConfig(k=10, n_bins=4)
+    key = mining_cache_key("eclat", step, spec, mini, "T2")
+    from dataclasses import replace as dc_replace
+
+    assert key == mining_cache_key(
+        "eclat", step, spec, dc_replace(mini, k=60, per_class_budget=False), "T2"
+    )
+    assert key != mining_cache_key("eclat", step, spec, dc_replace(mini, seed=1), "T2")
+    assert key != mining_cache_key(
+        "eclat", step, spec, dc_replace(mini, eclat_min_support=0.1), "T2"
+    )
+    assert key != mining_cache_key("ripper", step, spec, mini, "T2")
+    shorter = Step(0, step.train[:-1], step.test, 1.0)
+    assert key != mining_cache_key("eclat", shorter, spec, mini, "T2")

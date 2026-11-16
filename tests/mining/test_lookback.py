@@ -124,3 +124,54 @@ def test_attach_reuses_prebuilt_index():
     attach_lookback_steps([g2], _alerts(), window_minutes=10)
     assert all(i.startswith("short_src:") for step in g1.context_steps for i in step)
     assert all(i.startswith("short:") for step in g2.context_steps for i in step)
+
+
+def test_cached_lookback_steps_roundtrip_and_staleness(tmp_path, monkeypatch):
+    from thesis.mining.temporal import lookback as lb
+
+    groups = [
+        AlertGroup(
+            alert_group_id=f"g{i}",
+            group_id=f"g{i}",
+            method="cscas_grouping",
+            start_ts=1000 + i,
+            end_ts=1000 + i,
+            n_alerts=1,
+        )
+        for i in range(3)
+    ]
+    builds = []
+
+    def build(gs):
+        builds.append(len(gs))
+        for g in gs:
+            g.context_steps = [{f"short:{g.group_id}"}, {"short:X"}]
+
+    stamp = {"path": "alerts.json", "size": 1, "mtime": 1}
+    monkeypatch.setattr(lb, "_alerts_source_stamp", lambda scenario: dict(stamp))
+    path = tmp_path / "fox" / "lookback" / "c.pkl"
+
+    assert lb.attach_cached_lookback_steps(groups, "fox", path, build) is False
+    assert path.exists() and builds == [3]
+
+    for g in groups:
+        g.context_steps = None
+    assert lb.attach_cached_lookback_steps(groups, "fox", path, build) is True
+    assert builds == [3]  # no rebuild on a hit
+    assert groups[1].context_steps == [{"short:g1"}, {"short:X"}]
+
+    stamp["size"] = 2  # raw alerts changed -> rebuild
+    assert lb.attach_cached_lookback_steps(groups, "fox", path, build) is False
+    assert builds == [3, 3]
+
+    extra = groups + [
+        AlertGroup(
+            alert_group_id="new",
+            group_id="new",
+            method="cscas_grouping",
+            start_ts=5,
+            end_ts=5,
+            n_alerts=1,
+        )
+    ]
+    assert lb.attach_cached_lookback_steps(extra, "fox", path, build) is False

@@ -81,6 +81,26 @@ def main() -> None:
         help="mine RIPPER once per step instead of once per seed",
     )
     p.add_argument("--output-dir", type=Path, default=None)
+    p.add_argument(
+        "--stage",
+        choices=("all", "mine", "train", "prepare"),
+        default="all",
+        help="all: mine what isn't cached + train; mine: only mine and cache; "
+        "train: only train from the cache; prepare: build the AIT-ADS "
+        "look-back cache",
+    )
+    p.add_argument(
+        "--mining-cache-dir",
+        type=Path,
+        default=None,
+        help="cache of mined candidates (needed for --stage mine/train); "
+        f"e.g. {_REPO / 'artifacts/cache/mining_comparison'}",
+    )
+    p.add_argument(
+        "--no-lookback-cache",
+        action="store_true",
+        help="AIT-ADS: build look-back steps from the raw alerts every time",
+    )
     ait = p.add_argument_group("AIT-ADS")
     ait.add_argument(
         "--ait-protocol",
@@ -142,6 +162,9 @@ def main() -> None:
         token_arm=a.token_arm,
         phase_gap_seconds=a.phase_gap_seconds,
         ait_ads_protocol=a.ait_protocol,
+        stage=a.stage,
+        mining_cache_dir=a.mining_cache_dir,
+        use_lookback_cache=not a.no_lookback_cache,
         test_scenarios=tuple(a.test_scenarios) if a.test_scenarios else None,
     )
     run_comparison(config)

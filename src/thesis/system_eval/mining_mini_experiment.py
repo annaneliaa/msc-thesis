@@ -525,12 +525,26 @@ class FeatureSelection:
     counts: dict  # n_raw, n_raw_attack, n_gated_conditions, n_gated, n_budget
 
 
-def select_features(
+@dataclass
+class MinedCandidates:
+    """Stage 1 of feature selection: a method's patterns on one mining window
+    after mining, the precision gate, condition dedupe and firing dedupe,
+    ranked by score. Independent of the budget K, so it can be cached and
+    budgeted at any K later (apply_budget)."""
+
+    stats: pd.DataFrame | None  # every mined pattern (None when loaded from cache)
+    stages: dict  # pattern_id sets: gated, distinct_condition, distinct_firing
+    candidates: pd.DataFrame  # gated + deduped patterns, the budget's input
+    mine_seconds: float
+    counts: dict  # n_raw, n_raw_attack, n_gated_conditions, n_gated
+
+
+def mine_candidates(
     method: str, window: MiniWindow, config: MiniConfig, table: ItemTable | None
-) -> FeatureSelection:
+) -> MinedCandidates:
     """Mine `window.train` with `method`, then apply the shared treatment
-    every method gets: precision gate, condition dedupe, near-duplicate
-    firing dedupe and budget K."""
+    every method gets before the budget: precision gate, condition dedupe and
+    near-duplicate firing dedupe."""
     y_tr = _labels(window.train)
     n_attack, n_benign = int(y_tr.sum()), int((~y_tr).sum())
     base_rate = n_attack / len(y_tr)
@@ -546,22 +560,50 @@ def select_features(
     distinct_condition = set(gated["pattern_id"])
     if config.dedupe_identical_firing:
         gated = dedupe_firing(gated, table, window.train, config.dedupe_jaccard)
-    budget = select_budget(gated, config.k, per_class=config.per_class_budget)
     stages = {
         "gated": set(passed["pattern_id"]),
         "distinct_condition": distinct_condition,
         "distinct_firing": set(gated["pattern_id"]),
-        "budget": set(budget["pattern_id"]),
-        "budget_order": list(budget["pattern_id"]),
     }
     counts = dict(
         n_raw=len(stats),
         n_raw_attack=int((stats["source_label"] == "attack").sum()),
         n_gated_conditions=n_gated_conditions,  # distinct conditions passing
         n_gated=len(gated),  # ...and distinct firing patterns among those
-        n_budget=len(budget),
     )
-    return FeatureSelection(stats, stages, budget, mine_seconds, counts)
+    return MinedCandidates(stats, stages, gated, mine_seconds, counts)
+
+
+def apply_budget(
+    mined: MinedCandidates, k: int, per_class: bool = True
+) -> FeatureSelection:
+    """Stage 2: the budget K over the mined candidates."""
+    budget = select_budget(mined.candidates, k, per_class=per_class)
+    stages = {
+        **mined.stages,
+        "budget": set(budget["pattern_id"]),
+        "budget_order": list(budget["pattern_id"]),
+    }
+    return FeatureSelection(
+        mined.stats,
+        stages,
+        budget,
+        mined.mine_seconds,
+        {**mined.counts, "n_budget": len(budget)},
+    )
+
+
+def select_features(
+    method: str, window: MiniWindow, config: MiniConfig, table: ItemTable | None
+) -> FeatureSelection:
+    """Mine `window.train` with `method`, then apply the shared treatment
+    every method gets: precision gate, condition dedupe, near-duplicate
+    firing dedupe and budget K."""
+    return apply_budget(
+        mine_candidates(method, window, config, table),
+        config.k,
+        per_class=config.per_class_budget,
+    )
 
 
 def evaluate(

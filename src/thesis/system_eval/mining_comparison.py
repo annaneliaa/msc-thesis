@@ -16,7 +16,7 @@ Shared treatment, the same for every method (plan section 3):
   - the same item table, built on Wi (numerics as quantile bins, the
     scenario's leaky fields excluded),
   - the precision gate (g = 2 on Wi), condition dedupe, near-duplicate firing
-    dedupe (Jaccard >= 0.95) and budget K -- `select_features`, the same code
+    dedupe (Jaccard >= 0.95) and budget K -- `mine_candidates` + `apply_budget`, the same code
     path as the mini experiment,
   - class-weighted RF at a fixed 0.5 threshold, one fit per seed.
 
@@ -54,13 +54,26 @@ arm T2 for every method. Two protocols:
     1-3 attack phases per scenario are < ~4 h each, so its windows almost
     never hold attacks on both sides (the collapsed cells of thesis §5.6).
 
+Two stages (optional, with a mining cache dir): mining is split from
+training. Stage 1 ("mine") runs mine -> gate -> condition dedupe -> firing
+dedupe per (step, method, mining seed) and caches the ranked candidates,
+keyed by the exact training rows and every mining setting except the budget.
+Stage 2 ("train") loads them, applies the budget K, encodes and fits the RF.
+So heavy miners can run as separate jobs, a crashed run resumes from what
+was mined, and K / model variants are training-only reruns. "all" (the
+default) does both, mining only what isn't cached. On AIT-ADS the per-scenario
+look-back steps are cached on disk as well (CACHE_DIR/<scenario>/lookback/).
+
 Method settings are the mini experiment's documented defaults, not tuned
 (the tuning criterion is still open, see FINDINGS.md).
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
+import pickle
 import time
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
@@ -95,14 +108,17 @@ from thesis.system_eval.mining_mini_experiment import (
     METHODS,
     TEMPORAL,
     TOKEN_ARMS,
+    MinedCandidates,
     MiniConfig,
     MiniWindow,
     _ait_signature,
     _labels,
     _repo_commit,
+    apply_budget,
     labelled,
     lookback_attacher,
-    select_features,
+    lookback_token_fields,
+    mine_candidates,
 )
 
 ATEMPORAL_METHODS = ("eclat", "contrast_tree", "ripper")
@@ -160,6 +176,16 @@ class ComparisonConfig:
     # LOSO: the held-out scenarios to run folds for (None = every scenario in
     # `scenarios`); training always pools all the other `scenarios`.
     test_scenarios: tuple[str, ...] | None = None
+    # Two-stage runs (see run_comparison): "all" mines what isn't cached and
+    # trains; "mine" only mines and caches; "train" only loads cached mining
+    # output (error if missing) and trains; "prepare" only builds the
+    # look-back cache (AIT-ADS).
+    stage: str = "all"
+    # Cache of each (step, method, mining seed)'s gated + deduped candidates,
+    # before the budget K. None = no cache (mine in memory, as before).
+    mining_cache_dir: Path | None = None
+    # AIT-ADS: load look-back steps from CACHE_DIR/<scenario>/lookback/.
+    use_lookback_cache: bool = True
 
 
 @dataclass
@@ -275,10 +301,117 @@ class MinedArm:
     features: pd.DataFrame
 
 
+# Bump when anything that changes a method's mined candidates changes in code
+# (miners, gate, dedupes, item table, look-back steps) -- the key below only
+# covers data and settings.
+MINING_CACHE_VERSION = 1
+# Budget-only settings: the cached candidates come before the budget, so these
+# don't enter the key (one cache serves every K).
+_BUDGET_FIELDS = {"k", "per_class_budget", "methods", "mining_settings_path"}
+
+
+def _sha1(obj) -> str:
+    return hashlib.sha1(
+        json.dumps(obj, sort_keys=True, default=str).encode()
+    ).hexdigest()
+
+
+def mining_cache_key(
+    method: str, step: Step, spec: DatasetSpec, mini: MiniConfig, token_arm: str
+) -> str:
+    """What a method's mined candidates depend on: the exact training rows
+    (in order), the method and its settings (incl. the mining seed), the
+    item-table fields, the gate and the token arm. Not the budget K."""
+    settings = {k: v for k, v in asdict(mini).items() if k not in _BUDGET_FIELDS}
+    settings_file = Path(mini.mining_settings_path)
+    return _sha1(
+        {
+            "version": MINING_CACHE_VERSION,
+            "dataset": spec.dataset,
+            "train": _sha1([g.group_id for g in step.train]),
+            "n_train": len(step.train),
+            "method": method,
+            "settings": settings,
+            "settings_file": (
+                hashlib.sha1(settings_file.read_bytes()).hexdigest()
+                if settings_file.exists()
+                else None
+            ),
+            "exclude": sorted(spec.exclude_fields),
+            "include": sorted(spec.include_fields),
+            "benign_gate_g": spec.benign_gate_g,
+            "token_arm": token_arm if spec.dataset == "ait_ads" else None,
+        }
+    )
+
+
+def get_candidates(
+    config: ComparisonConfig,
+    spec: DatasetSpec,
+    step: Step,
+    window: MiniWindow,
+    method: str,
+    mini: MiniConfig,
+    table,
+) -> tuple[MinedCandidates, bool]:
+    """The method's mined candidates for this step and mining seed: from the
+    mining cache when present, else mined (and cached when a cache dir is
+    set). stage "train" refuses to mine. Returns (candidates, cache hit)."""
+    path = None
+    if config.mining_cache_dir is not None:
+        key = mining_cache_key(method, step, spec, mini, config.token_arm)
+        path = Path(config.mining_cache_dir) / method / f"{key}.pkl"
+        if path.exists():
+            with path.open("rb") as f:
+                payload = pickle.load(f)
+            return (
+                MinedCandidates(
+                    None,
+                    payload["stages"],
+                    payload["candidates"],
+                    payload["mine_seconds"],
+                    payload["counts"],
+                ),
+                True,
+            )
+    if config.stage == "train":
+        raise FileNotFoundError(
+            f"stage 'train': no cached mining output for {method} on "
+            f"{step.scenario} step {step.i} (seed {mini.seed}) at {path}; "
+            "run --stage mine first"
+        )
+    mined = mine_candidates(method, window, mini, table)
+    if path is not None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(f".tmp{os.getpid()}")
+        with tmp.open("wb") as f:
+            pickle.dump(
+                {
+                    "candidates": mined.candidates,
+                    "stages": mined.stages,
+                    "counts": mined.counts,
+                    "mine_seconds": mined.mine_seconds,
+                    "meta": {
+                        "method": method,
+                        "scenario": step.scenario,
+                        "step_i": step.i,
+                        "mining_seed": mini.seed,
+                        "repo_commit": _repo_commit(),
+                        "written_at": datetime.now(timezone.utc).isoformat(),
+                    },
+                },
+                f,
+                protocol=pickle.HIGHEST_PROTOCOL,
+            )
+        tmp.replace(path)
+    return mined, False
+
+
 def mine_arm(
-    method: str, step: Step, window: MiniWindow, mini: MiniConfig, table
+    method: str, step: Step, mined: MinedCandidates, mini: MiniConfig, table
 ) -> MinedArm:
-    sel = select_features(method, window, mini, table)
+    """Budget K over the method's candidates, then encode its features."""
+    sel = apply_budget(mined, mini.k, per_class=mini.per_class_budget)
     info = {
         **sel.counts,
         "mine_seconds": sel.mine_seconds,
@@ -361,7 +494,7 @@ def run_step(
     rows: list[dict] = []
     feats: list[pd.DataFrame] = []
 
-    if config.include_no_mining:
+    if config.include_no_mining and config.stage != "mine":
         for seed in config.seeds:
             rows.append(
                 {
@@ -404,14 +537,37 @@ def run_step(
         spec.attach_steps(step.train + step.test)
         print(f"  look-back steps in {time.perf_counter() - t0:.1f}s")
 
+    if config.stage == "mine":
+        for method in config.methods:
+            reseed = config.reseed_stochastic_miners and method in STOCHASTIC_MINERS
+            for seed in config.seeds if reseed else config.seeds[:1]:
+                cand, hit = get_candidates(
+                    config,
+                    spec,
+                    step,
+                    window,
+                    method,
+                    replace(config.mining, seed=seed),
+                    table,
+                )
+                print(
+                    f"  step {step.i:2d} {method:<13} seed {seed}: "
+                    f"{'cached' if hit else 'mined'}, {len(cand.candidates)} "
+                    f"candidates, {cand.mine_seconds:.1f}s",
+                    flush=True,
+                )
+        return [], []
+
     for method in config.methods:
         reseed = config.reseed_stochastic_miners and method in STOCHASTIC_MINERS
         mined: MinedArm | None = None
         for seed in config.seeds:
             if mined is None or reseed:
-                mined = mine_arm(
-                    method, step, window, replace(config.mining, seed=seed), table
+                mini = replace(config.mining, seed=seed)
+                cand, _ = get_candidates(
+                    config, spec, step, window, method, mini, table
                 )
+                mined = mine_arm(method, step, cand, mini, table)
                 if not mined.features.empty:
                     f = mined.features.copy()
                     f.insert(0, "arm", method)
@@ -609,15 +765,58 @@ def loso_folds(
     ]
 
 
+def attach_lookback(
+    config: ComparisonConfig, scenario: str, groups: list[AlertGroup]
+) -> None:
+    """Look-back steps on one scenario's groups: from the on-disk cache when
+    use_lookback_cache (building and writing it on a miss), else built from
+    the raw alerts. Frees the raw alerts and host index afterwards."""
+    from thesis.mining.temporal.lookback import (
+        attach_cached_lookback_steps,
+        load_ait_ads_raw_alerts,
+        lookback_cache_path,
+    )
+    from thesis.paths import CACHE_DIR
+    from thesis.system_eval import mining_mini_experiment as mme
+
+    t0 = time.perf_counter()
+    build = lookback_attacher(
+        scenario, config.token_arm, config.mining.lookback_minutes
+    )
+    hit = False
+    if config.use_lookback_cache:
+        path = lookback_cache_path(
+            CACHE_DIR,
+            scenario,
+            config.grouping,
+            lookback_token_fields(config.token_arm),
+            config.mining.lookback_minutes,
+        )
+        hit = attach_cached_lookback_steps(groups, scenario, path, build)
+    else:
+        build(groups)
+    mme._LOOKBACK_INDEX.clear()
+    load_ait_ads_raw_alerts.cache_clear()
+    print(
+        f"  look-back steps {scenario} {'from cache' if hit else 'built'} "
+        f"in {time.perf_counter() - t0:.1f}s",
+        flush=True,
+    )
+
+
+def prepare_lookback(config: ComparisonConfig) -> None:
+    """Stage "prepare": build the look-back cache for every scenario, so
+    parallel jobs only ever read it."""
+    for s in config.scenarios:
+        attach_lookback(config, s, _load_ait_ads_groups(config, s))
+
+
 def ait_ads_loso_steps(
     config: ComparisonConfig,
 ) -> tuple[Callable[[], Iterator[tuple[Step, DatasetSpec]]], pd.DataFrame]:
     """Leave-one-scenario-out folds over config.scenarios. Every scenario's
     groups stay in memory; their look-back steps are attached once up front,
     one scenario's raw alerts at a time, so folds share them."""
-    from thesis.mining.temporal.lookback import load_ait_ads_raw_alerts
-    from thesis.system_eval import mining_mini_experiment as mme
-
     groups_by_scenario = {s: _load_ait_ads_groups(config, s) for s in config.scenarios}
     folds = loso_folds(groups_by_scenario, config.test_scenarios)
     if config.max_steps is not None:
@@ -641,13 +840,7 @@ def ait_ads_loso_steps(
     def steps():
         if any(m in TEMPORAL for m in config.methods):
             for s, groups in groups_by_scenario.items():
-                t0 = time.perf_counter()
-                lookback_attacher(s, config.token_arm, config.mining.lookback_minutes)(
-                    groups
-                )
-                mme._LOOKBACK_INDEX.clear()
-                load_ait_ads_raw_alerts.cache_clear()
-                print(f"  look-back steps {s} in {time.perf_counter() - t0:.1f}s")
+                attach_lookback(config, s, groups)
         # Steps are already on every group; run_step's attach call is a no-op.
         spec = _ait_ads_spec(config, groups_by_scenario, lambda groups: None)
         for i, (s, tr, te) in enumerate(folds):
@@ -746,6 +939,17 @@ def run_comparison(config: ComparisonConfig) -> Path:
         raise ValueError(
             f"{config.dataset} runs {list(allowed)}; got {sorted(unknown)}"
         )
+    if config.stage not in ("all", "mine", "train", "prepare"):
+        raise ValueError(f"unknown stage {config.stage!r}")
+    if config.stage in ("mine", "train") and config.mining_cache_dir is None:
+        raise ValueError(f"stage {config.stage!r} needs a mining_cache_dir")
+    if config.stage == "prepare":
+        if config.dataset != "ait_ads":
+            raise ValueError("stage 'prepare' builds the AIT-ADS look-back cache")
+        from thesis.paths import CACHE_DIR
+
+        prepare_lookback(config)
+        return Path(CACHE_DIR)
     out_dir = (
         Path(config.out_dir) if config.out_dir else default_out_dir(config.experiment)
     )
@@ -782,12 +986,17 @@ def run_comparison(config: ComparisonConfig) -> Path:
         r, f = run_step(config, step, spec)
         rows += r
         feats += f
+        if config.stage == "mine":
+            continue
         pd.DataFrame(rows).to_csv(out_dir / "per_step_results.csv", index=False)
         if feats:
             pd.concat(feats, ignore_index=True).to_csv(
                 out_dir / "features.csv", index=False
             )
 
+    if config.stage == "mine":
+        print(f"Mining cached → {config.mining_cache_dir}")
+        return out_dir
     write_summary(out_dir, pd.DataFrame(rows), pd.concat(feats) if feats else None)
     return out_dir
 

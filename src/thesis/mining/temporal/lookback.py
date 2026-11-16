@@ -23,6 +23,8 @@ w is fixed once for the comparison and not tuned (plan section 4).
 from __future__ import annotations
 
 import json
+import os
+import pickle
 from functools import lru_cache
 from bisect import bisect_left, bisect_right
 from collections import defaultdict
@@ -208,3 +210,73 @@ def attach_lookback_steps(
         index = HostAlertIndex(alerts, token_fields)
     for tx in alert_groups:
         tx.context_steps = lookback_steps(tx, index, window_minutes, bucket_seconds)
+
+
+# --- On-disk cache ------------------------------------------------------------
+
+# Bump when lookback_steps / alert_tokens change what a step holds.
+LOOKBACK_CACHE_VERSION = 1
+
+
+def lookback_cache_path(
+    cache_root: Path,
+    scenario: str,
+    grouping: str,
+    token_fields: frozenset[str],
+    window_minutes: int = DEFAULT_WINDOW_MINUTES,
+    bucket_seconds: int = DEFAULT_BUCKET_SECONDS,
+) -> Path:
+    fields = "-".join(sorted(token_fields))
+    name = (
+        f"{grouping}__{fields}__w{window_minutes}__b{bucket_seconds}"
+        f"__v{LOOKBACK_CACHE_VERSION}.pkl"
+    )
+    return Path(cache_root) / scenario / "lookback" / name
+
+
+def _alerts_source_stamp(scenario: str) -> dict:
+    """Size and mtime of the raw alerts the steps are built from, so a cache
+    built from an older alerts file is rebuilt."""
+    path = ARTIFACTS_DIR / "processed-data" / scenario / "alerts.json"
+    if not path.exists():
+        path = ARTIFACTS_DIR.parent / "data" / "alerts_csv" / f"{scenario}_alerts.txt"
+    st = path.stat()
+    return {"path": str(path.name), "size": st.st_size, "mtime": int(st.st_mtime)}
+
+
+def attach_cached_lookback_steps(
+    alert_groups: Sequence[AlertGroup],
+    scenario: str,
+    cache_path: Path,
+    build,
+) -> bool:
+    """Set `context_steps` on every group from `cache_path`, keyed by group_id.
+    If the file is missing, stale (raw alerts changed) or lacks any of these
+    groups, call `build(alert_groups)` to attach them the slow way and write
+    the cache (atomically). Returns True on a cache hit."""
+    stamp = _alerts_source_stamp(scenario)
+    cache_path = Path(cache_path)
+    if cache_path.exists():
+        with cache_path.open("rb") as f:
+            payload = pickle.load(f)
+        steps = payload.get("steps", {})
+        if payload.get("source") == stamp and all(
+            tx.group_id in steps for tx in alert_groups
+        ):
+            for tx in alert_groups:
+                tx.context_steps = [set(s) for s in steps[tx.group_id]]
+            return True
+    build(alert_groups)
+    payload = {
+        "source": stamp,
+        "steps": {
+            tx.group_id: [frozenset(s) for s in (tx.context_steps or [])]
+            for tx in alert_groups
+        },
+    }
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = cache_path.with_suffix(f".tmp{os.getpid()}")
+    with tmp.open("wb") as f:
+        pickle.dump(payload, f, protocol=pickle.HIGHEST_PROTOCOL)
+    tmp.replace(cache_path)
+    return False
