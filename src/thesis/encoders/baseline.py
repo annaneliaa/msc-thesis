@@ -4,9 +4,11 @@ import pandas as pd
 
 from thesis.schemas.groups import AlertGroup
 
-# AlertGroup.method values produced by CSCAS grouping (group_alerts.py); every
-# other method comes from the AIT-ADS alert-level grouping phase.
-_CSCAS_METHOD_PREFIX = "cscas"
+# AlertGroup.method of CSCAS's pre-grouped rows (group_alerts.py
+# CSCAS_PREGROUPED_METHOD); every other method comes from the AIT-ADS
+# alert-level grouping phase. Not just "cscas": AIT-ADS's "cscas_grouping"
+# (CSCAS-style grouping of AIT-ADS alerts) must get the AIT-ADS features.
+_CSCAS_METHOD_PREFIX = "cscas_pregrouped"
 
 
 def _count_items_with_prefix(items: set[str], prefix: str) -> int:
