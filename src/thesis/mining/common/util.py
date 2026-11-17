@@ -1,6 +1,4 @@
 import math
-import os
-from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import pandas as pd
@@ -31,21 +29,63 @@ def cleanup_run_intermediates(run_dir: Path) -> None:
             p.unlink()
 
 
-# Worker-process state; populated once per child process by _init_parallel_workers
-_worker_seqs: list | None = None
+def token_index(
+    sequences: list[list[set[str]]], tokens: set[str] | None = None
+) -> dict[str, set[int]]:
+    """token -> indices of the sequences with that token in any step. With
+    `tokens`, only those tokens are indexed (keeps the index small)."""
+    index: dict[str, set[int]] = {}
+    for i, seq in enumerate(sequences):
+        present = set().union(*seq) if seq else set()
+        if tokens is not None:
+            present &= tokens
+        for t in present:
+            index.setdefault(t, set()).add(i)
+    return index
 
 
-def _init_parallel_workers(seqs):
-    global _worker_seqs
-    _worker_seqs = seqs
+def indexed_pattern_matches(
+    sequences: list[list[set[str]]],
+    patterns: list,
+    contains,
+    tokens_of,
+) -> list[set[int]]:
+    """For each pattern, the indices of the sequences that contain it.
+
+    Exactly what `contains(seq, pattern)` over every sequence gives, but in
+    one process and without scanning every sequence: a sequence can only
+    contain a pattern if every token of the pattern occurs somewhere in it, so
+    `contains` only runs on the intersection of the patterns' tokens' posting
+    sets (usually a small fraction). Replaced a process pool that gave each of
+    os.cpu_count() workers its own copy of the sequences (~54 GB on the
+    20-core DGX for one fold, 2026-11-17)."""
+    needed = [set(tokens_of(p)) for p in patterns]
+    index = token_index(sequences, set().union(*needed) if needed else set())
+    everyone = None
+    out: list[set[int]] = []
+    for pattern, tokens in zip(patterns, needed):
+        if not tokens:  # the empty pattern is in every sequence
+            if everyone is None:
+                everyone = set(range(len(sequences)))
+            candidates = everyone
+        else:
+            postings = sorted((index.get(t, set()) for t in tokens), key=len)
+            candidates = set(postings[0]).intersection(*postings[1:])
+        out.append({i for i in candidates if contains(sequences[i], pattern)})
+    return out
 
 
-def _itemset_pattern_support_worker(pattern):
-    return itemset_sequence_support_in_group(_worker_seqs, pattern)
-
-
-def _sequence_pattern_support_worker(pattern):
-    return sequence_support_in_group(_worker_seqs, pattern)
+def indexed_pattern_counts(
+    sequences: list[list[set[str]]],
+    patterns: list,
+    contains,
+    tokens_of,
+) -> list[int]:
+    """Per pattern, how many sequences contain it (see indexed_pattern_matches)."""
+    return [
+        len(m)
+        for m in indexed_pattern_matches(sequences, patterns, contains, tokens_of)
+    ]
 
 
 def support_in_group(
@@ -528,21 +568,11 @@ def add_cross_label_sequence_supports(
     target_counts = out["support_count"].tolist()
     target_supports = [c / n_target for c in target_counts]
 
-    n_workers = min(os.cpu_count() or 1, max(1, len(patterns)))
-    chunksize = max(1, len(patterns) // (n_workers * 4))
-    with ProcessPoolExecutor(
-        max_workers=n_workers,
-        initializer=_init_parallel_workers,
-        initargs=(other_sequences,),
-    ) as executor:
-        other_results = list(
-            executor.map(
-                _sequence_pattern_support_worker, patterns, chunksize=chunksize
-            )
-        )
-
-    other_counts = [r[0] for r in other_results]
-    other_supports = [r[1] for r in other_results]
+    other_counts = indexed_pattern_counts(
+        other_sequences, patterns, sequence_contains_pattern, set
+    )
+    n_other = len(other_sequences)
+    other_supports = [c / n_other if n_other else 0.0 for c in other_counts]
 
     out[f"count_{target_label}"] = target_counts
     out[f"support_{target_label}"] = target_supports
@@ -727,19 +757,14 @@ def add_cross_label_itemset_sequence_supports(
     target_counts = out["support_count"].tolist()
     target_supports = [c / n_target for c in target_counts]
 
-    n_workers = min(os.cpu_count() or 1, max(1, len(patterns)))
-    chunksize = max(1, len(patterns) // (n_workers * 4))
-    with ProcessPoolExecutor(
-        max_workers=n_workers,
-        initializer=_init_parallel_workers,
-        initargs=(other_sequences,),
-    ) as executor:
-        other_results = list(
-            executor.map(_itemset_pattern_support_worker, patterns, chunksize=chunksize)
-        )
-
-    other_counts = [r[0] for r in other_results]
-    other_supports = [r[1] for r in other_results]
+    other_counts = indexed_pattern_counts(
+        other_sequences,
+        patterns,
+        itemset_sequence_contains_pattern,
+        lambda pattern: set().union(*pattern),
+    )
+    n_other = len(other_sequences)
+    other_supports = [c / n_other if n_other else 0.0 for c in other_counts]
 
     out[f"count_{target_label}"] = target_counts
     out[f"support_{target_label}"] = target_supports

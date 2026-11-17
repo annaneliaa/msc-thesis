@@ -1,4 +1,6 @@
 from collections.abc import Iterable
+
+import numpy as np
 import pandas as pd
 
 from thesis.schemas.groups import AlertGroup
@@ -14,7 +16,10 @@ from thesis.mining.temporal.prefixspan.repeat_encoding import (
     encode_sequence_of_itemsets,
 )
 from thesis.mining.common.token_abstraction import abstract_mail_hosts
-from thesis.mining.common.util import itemset_sequence_contains_pattern
+from thesis.mining.common.util import (
+    indexed_pattern_matches,
+    itemset_sequence_contains_pattern,
+)
 from thesis.monitor.predicate_eval import evaluate_condition
 
 
@@ -118,4 +123,35 @@ class SymbolicFeatureEncoder:
         return pd.DataFrame([self._row(tx)])
 
     def transform(self, alert_groups: Iterable[AlertGroup]) -> pd.DataFrame:
-        return pd.DataFrame([self._row(tx) for tx in alert_groups])
+        """Same values as one _row per group, computed per column. Sequence
+        features go through an item index (indexed_pattern_matches), so each
+        pattern is only checked on the groups that hold all its tokens: the
+        row-by-row loop spent ~94% of a PrefixSpan mining job here (2026-11-17)."""
+        groups = list(alert_groups)
+        n = len(groups)
+        if n == 0:
+            return pd.DataFrame([])
+        columns: dict[str, np.ndarray] = {}
+        if self.compiled_features:
+            items = [self._items_for(tx) for tx in groups]
+            for name, clauses in self.compiled_features:
+                columns[name] = np.fromiter(
+                    (any(c.issubset(it) for c in clauses) for it in items),
+                    dtype=np.int64,
+                    count=n,
+                )
+        if self.compiled_sequences:
+            steps = [_alert_group_steps(tx) for tx in groups]
+            matches = indexed_pattern_matches(
+                steps,
+                [pattern for _, pattern in self.compiled_sequences],
+                itemset_sequence_contains_pattern,
+                lambda pattern: set().union(*pattern),
+            )
+            for (name, _), hit in zip(self.compiled_sequences, matches):
+                col = np.zeros(n, dtype=np.int64)
+                col[list(hit)] = 1
+                columns[name] = col
+        return pd.DataFrame(
+            {name: columns[name] for name in self._column_order if name in columns}
+        )

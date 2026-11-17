@@ -550,7 +550,7 @@ def mine_candidates(
     base_rate = n_attack / len(y_tr)
     t0 = time.perf_counter()
     frame = mine(method, window, table, config)
-    mine_seconds = round(time.perf_counter() - t0, 2)
+    miner_seconds = round(time.perf_counter() - t0, 2)
 
     stats = add_pattern_stats(frame, n_attack, n_benign)
     stats.insert(0, "pattern_id", range(len(stats)))
@@ -565,11 +565,16 @@ def mine_candidates(
         "distinct_condition": distinct_condition,
         "distinct_firing": set(gated["pattern_id"]),
     }
+    # The cost of a method is everything up to its candidates: the miner plus
+    # scoring its patterns for the gate and the dedupes (for PrefixSpan most
+    # of the time is the latter). miner_seconds is the miner alone.
+    mine_seconds = round(time.perf_counter() - t0, 2)
     counts = dict(
         n_raw=len(stats),
         n_raw_attack=int((stats["source_label"] == "attack").sum()),
         n_gated_conditions=n_gated_conditions,  # distinct conditions passing
         n_gated=len(gated),  # ...and distinct firing patterns among those
+        miner_seconds=miner_seconds,
     )
     return MinedCandidates(stats, stages, gated, mine_seconds, counts)
 

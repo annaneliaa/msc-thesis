@@ -304,7 +304,7 @@ class MinedArm:
 # Bump when anything that changes a method's mined candidates changes in code
 # (miners, gate, dedupes, item table, look-back steps) -- the key below only
 # covers data and settings.
-MINING_CACHE_VERSION = 1
+MINING_CACHE_VERSION = 2  # 2: mine_seconds covers mine + gate + dedupes
 # Budget-only settings: the cached candidates come before the budget, so these
 # don't enter the key (one cache serves every K).
 _BUDGET_FIELDS = {"k", "per_class_budget", "methods", "mining_settings_path"}
@@ -1015,6 +1015,7 @@ SUMMARY_METRICS = (
     "overlap",
     "redundancy_share",
     "mine_seconds",
+    "miner_seconds",
 )
 
 

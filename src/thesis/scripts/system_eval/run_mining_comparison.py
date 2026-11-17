@@ -24,6 +24,8 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import atexit
+import resource
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -51,7 +53,17 @@ from thesis.system_eval.mining_mini_experiment import (  # noqa: E402
 )
 
 
+def _report_peak_memory() -> None:
+    """Print this process's peak RSS in GNU time's format, so the launcher's
+    peak_memory.txt works where /usr/bin/time -v isn't installed (the DGX
+    container). ru_maxrss is kB on Linux, bytes on macOS."""
+    rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    kb = rss // 1024 if sys.platform == "darwin" else rss
+    print(f"\tMaximum resident set size (kbytes): {kb}", flush=True)
+
+
 def main() -> None:
+    atexit.register(_report_peak_memory)
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
