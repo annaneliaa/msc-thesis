@@ -46,6 +46,10 @@ from thesis.system_eval.mining_comparison import (  # noqa: E402
     ComparisonConfig,
     run_comparison,
 )
+from thesis.system_eval.mining_settings_sweep import (  # noqa: E402
+    VARIANTS,
+    apply_variant,
+)
 from thesis.system_eval.mining_mini_experiment import (  # noqa: E402
     COMPARISON_TOKEN_ARM,
     TOKEN_ARMS,
@@ -109,6 +113,13 @@ def main() -> None:
         f"e.g. {_REPO / 'artifacts/cache/mining_comparison'}",
     )
     p.add_argument(
+        "--settings-variant",
+        choices=VARIANTS,
+        default="default",
+        help="mining settings grid point (settings-sensitivity check): every "
+        "method's main knob at its low / default / high value",
+    )
+    p.add_argument(
         "--no-lookback-cache",
         action="store_true",
         help="AIT-ADS: build look-back steps from the raw alerts every time",
@@ -153,13 +164,18 @@ def main() -> None:
         experiment += "_ait_ads" + ("_phase" if a.ait_protocol == "phase" else "")
     if a.no_signature_items:
         experiment += "_no_sig"
+    if a.settings_variant != "default":
+        experiment += f"_settings_{a.settings_variant}"
 
     config = ComparisonConfig(
         dataset=a.dataset,
         gran=a.gran,
         seeds=tuple(a.seeds),
         methods=tuple(methods),
-        mining=replace(MiniConfig(), k=a.k, per_class_budget=not a.pooled_budget),
+        mining=apply_variant(
+            replace(MiniConfig(), k=a.k, per_class_budget=not a.pooled_budget),
+            a.settings_variant,
+        ),
         reseed_stochastic_miners=not a.mine_once,
         extra_exclude_fields=(
             frozenset(CSCAS_SIGNATURE_DERIVED_FIELDS)

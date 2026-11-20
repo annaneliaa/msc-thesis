@@ -43,6 +43,9 @@
 #
 # Usage (on the DGX):
 #   src/thesis/shell-scripts/paper/run_mining_comparison_ait_ads.sh
+# Settings-sensitivity variants (output under mining_comparison_ait_ads_settings_<v>/):
+#   SETTINGS_VARIANT=low  src/thesis/shell-scripts/paper/run_mining_comparison_ait_ads.sh
+#   SETTINGS_VARIANT=high src/thesis/shell-scripts/paper/run_mining_comparison_ait_ads.sh
 # Smoke test:
 #   SCENARIOS="fox wilson" SEEDS="0" METHODS="eclat prefixspan" \
 #     src/thesis/shell-scripts/paper/run_mining_comparison_ait_ads.sh
@@ -82,6 +85,8 @@ SEEDS="${SEEDS:-0 1 2 3 4}"
 METHODS="${METHODS:-mctsextent ripper prefixspan eclat contrast_tree}"
 K="${K:-}"               # empty = COMPARISON_K
 TRAIN_ONLY="${TRAIN_ONLY:-0}"   # 1 = skip prepare + mine (everything must be cached)
+# Mining settings grid point (settings-sensitivity check): low | default | high.
+SETTINGS_VARIANT="${SETTINGS_VARIANT:-default}"
 MAX_PARALLEL="${MAX_PARALLEL:-3}"
 MINE_PARALLEL="${MINE_PARALLEL:-$MAX_PARALLEL}"
 TRAIN_PARALLEL="${TRAIN_PARALLEL:-$MAX_PARALLEL}"
@@ -92,7 +97,9 @@ POLL_SECONDS="${POLL_SECONDS:-15}"
 MINING_CACHE_DIR="${MINING_CACHE_DIR:-$REPO_ROOT/artifacts/cache/mining_comparison}"
 
 TS="$(date -u +%Y%m%d_%H%M%S)"
-OUT_ROOT="${OUT_ROOT:-$REPO_ROOT/artifacts/experiments/mining_comparison_ait_ads}"
+_suffix=""
+[[ "$SETTINGS_VARIANT" != default ]] && _suffix="_settings_$SETTINGS_VARIANT"
+OUT_ROOT="${OUT_ROOT:-$REPO_ROOT/artifacts/experiments/mining_comparison_ait_ads$_suffix}"
 LOG_ROOT="${LOG_ROOT:-$REPO_ROOT/artifacts/logs/mining_comparison_ait_ads}"
 OUT_DIR="$OUT_ROOT/$TS"
 LOG_DIR="$LOG_ROOT/$TS"
@@ -104,7 +111,7 @@ KILLED_FILE="$LOG_DIR/killed.txt"
 RUNNER="$REPO_ROOT/src/thesis/scripts/system_eval/run_mining_comparison.py"
 # shellcheck disable=SC2206
 COMMON=(--dataset ait_ads --scenarios $SCENARIOS --seeds $SEEDS
-  --mining-cache-dir "$MINING_CACHE_DIR")
+  --mining-cache-dir "$MINING_CACHE_DIR" --settings-variant "$SETTINGS_VARIANT")
 
 # --- memory -----------------------------------------------------------------
 
@@ -234,7 +241,7 @@ queue() { JOB_NAMES+=("$1"); JOB_ARGS+=("$2"); }
 echo "Output: $OUT_DIR"
 echo "Logs:   $LOG_DIR"
 echo "Folds:  $TEST_SCENARIOS (pool: $SCENARIOS) | methods: $METHODS | seeds: $SEEDS"
-echo "Mining cache: $MINING_CACHE_DIR"
+echo "Mining cache: $MINING_CACHE_DIR | settings variant: $SETTINGS_VARIANT"
 echo "Safety: mine $MINE_PARALLEL / train $TRAIN_PARALLEL at once, ${STAGGER_SECONDS}s stagger," \
      "start at >= ${START_FREE_GB}G free, kill newest at < ${CRIT_FREE_GB}G free"
 

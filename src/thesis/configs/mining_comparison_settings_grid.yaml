@@ -1,0 +1,51 @@
+# Contrast-tree grid for the mining comparison's settings-sensitivity check
+# (HANDOFF "Deferred" item 2): the thesis setting gr3_md1_mda4_rounds2 and its
+# neighbours on max_diverse_rounds (1 and 3), all other values identical.
+# Entries copied verbatim from screening_mining_settings.yaml (gr3_md1_mda4,
+# whose rounds default to 1 with round_min_coverage 0.05 / growth 3) and
+# temporal_decay_two_tree_grid.yaml (rounds2, rounds3).
+#
+# Only the sweep's low / high variants point at this file. The default
+# variant keeps monitor_eda_mining_setting.yaml, so its mining-cache keys (which
+# hash the settings file) match the main comparison runs and nothing is
+# re-mined for it.
+
+settings:
+  - name: gr3_md1_mda4
+    contrast:
+      min_growth_rate: 3
+      min_attack_coverage: 0.05
+      min_benign_coverage: 0.05
+    tree:
+      max_depth: 1
+      max_depth_attack: 4
+      class_weight: "balanced"
+      min_samples_leaf: 10
+
+  - name: gr3_md1_mda4_rounds2
+    contrast:
+      min_growth_rate: 3
+      min_attack_coverage: 0.05
+      min_benign_coverage: 0.05
+    tree:
+      max_depth: 1
+      max_depth_attack: 4
+      class_weight: "balanced"
+      min_samples_leaf: 10
+      max_diverse_rounds: 2
+      round_min_coverage: 0.05
+      round_min_growth_rate: 3
+
+  - name: gr3_md1_mda4_rounds3
+    contrast:
+      min_growth_rate: 3
+      min_attack_coverage: 0.05
+      min_benign_coverage: 0.05
+    tree:
+      max_depth: 1
+      max_depth_attack: 4
+      class_weight: "balanced"
+      min_samples_leaf: 10
+      max_diverse_rounds: 3
+      round_min_coverage: 0.05
+      round_min_growth_rate: 3

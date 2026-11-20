@@ -308,6 +308,14 @@ MINING_CACHE_VERSION = 2  # 2: mine_seconds covers mine + gate + dedupes
 # Budget-only settings: the cached candidates come before the budget, so these
 # don't enter the key (one cache serves every K).
 _BUDGET_FIELDS = {"k", "per_class_budget", "methods", "mining_settings_path"}
+# MiniConfig fields added after the cache existed: they enter the key only when
+# set away from their default, so adding one doesn't change (and invalidate)
+# every existing key. Add new fields here with their default.
+_LATE_FIELDS = {
+    "ripper_prune_size": 0.33,
+    "eclat_min_support_diff": 0.05,
+    "prefixspan_min_support_diff": 0.05,
+}
 
 
 def _sha1(obj) -> str:
@@ -322,7 +330,11 @@ def mining_cache_key(
     """What a method's mined candidates depend on: the exact training rows
     (in order), the method and its settings (incl. the mining seed), the
     item-table fields, the gate and the token arm. Not the budget K."""
-    settings = {k: v for k, v in asdict(mini).items() if k not in _BUDGET_FIELDS}
+    settings = {
+        k: v
+        for k, v in asdict(mini).items()
+        if k not in _BUDGET_FIELDS and not (k in _LATE_FIELDS and v == _LATE_FIELDS[k])
+    }
     settings_file = Path(mini.mining_settings_path)
     return _sha1(
         {

@@ -125,6 +125,16 @@ class MiniConfig:
     prefixspan_min_k: int = 2  # >= 2 so patterns actually use order
     mctsextent_top_k: int = 25
     mctsextent_iterations: int = 1000
+    # RIPPER's prune-set share (wittgenstein default 0.33). Added 2026-11-20 for
+    # the settings-sensitivity check: listed in mining_comparison's
+    # _LATE_FIELDS, so it only enters the mining-cache key when changed.
+    ripper_prune_size: float = 0.33
+    # The frequency miners' second threshold: a pattern's support in its own
+    # class must beat the other class's by this much, so it also floors the
+    # support at this value (a min support below it changes nothing). The
+    # settings check moves it together with the min support. Late fields too.
+    eclat_min_support_diff: float = 0.05
+    prefixspan_min_support_diff: float = 0.05
     # Eclat's absolute floor on a pattern's count in its own class
     # (ItemsetFilterConfig.min_support_count). An int is used as is (10 = the
     # existing filter configs); "relative" tunes it to the mining window:
@@ -166,6 +176,7 @@ def mine(
             table,
             min_support=config.eclat_min_support,
             max_len=config.eclat_max_len,
+            min_support_diff=config.eclat_min_support_diff,
             filters=ItemsetFilterConfig(
                 min_support_count=eclat_count_floor(config, table)
             ),
@@ -173,12 +184,15 @@ def mine(
     if method == "contrast_tree":
         return mine_contrast_tree(table, contrast_tree_config(config))
     if method == "ripper":
-        return mine_ripper(table, random_state=config.seed)
+        return mine_ripper(
+            table, random_state=config.seed, prune_size=config.ripper_prune_size
+        )
     if method == "prefixspan":
         return mine_prefixspan(
             window.train,
             min_support=config.prefixspan_min_support,
             max_len=config.prefixspan_max_len,
+            min_support_diff=config.prefixspan_min_support_diff,
             filters=SequenceFilterConfig(min_k=config.prefixspan_min_k),
         )
     if method == "mctsextent":
