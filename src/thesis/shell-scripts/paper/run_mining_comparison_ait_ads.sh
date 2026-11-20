@@ -46,6 +46,8 @@
 # Settings-sensitivity variants (output under mining_comparison_ait_ads_settings_<v>/):
 #   SETTINGS_VARIANT=low  src/thesis/shell-scripts/paper/run_mining_comparison_ait_ads.sh
 #   SETTINGS_VARIANT=high src/thesis/shell-scripts/paper/run_mining_comparison_ait_ads.sh
+# Other groupings (output under mining_comparison_ait_ads_grouping_<g>/):
+#   GROUPING=fixed_window src/thesis/shell-scripts/paper/run_mining_comparison_ait_ads.sh
 # Smoke test:
 #   SCENARIOS="fox wilson" SEEDS="0" METHODS="eclat prefixspan" \
 #     src/thesis/shell-scripts/paper/run_mining_comparison_ait_ads.sh
@@ -87,6 +89,9 @@ K="${K:-}"               # empty = COMPARISON_K
 TRAIN_ONLY="${TRAIN_ONLY:-0}"   # 1 = skip prepare + mine (everything must be cached)
 # Mining settings grid point (settings-sensitivity check): low | default | high.
 SETTINGS_VARIANT="${SETTINGS_VARIANT:-default}"
+# Grouping of the alert groups (grouping x mining, GM_PLAN.md): cscas_grouping
+# (the main comparison), fixed_window, time_delta, ...
+GROUPING="${GROUPING:-cscas_grouping}"
 MAX_PARALLEL="${MAX_PARALLEL:-3}"
 MINE_PARALLEL="${MINE_PARALLEL:-$MAX_PARALLEL}"
 TRAIN_PARALLEL="${TRAIN_PARALLEL:-$MAX_PARALLEL}"
@@ -98,7 +103,8 @@ MINING_CACHE_DIR="${MINING_CACHE_DIR:-$REPO_ROOT/artifacts/cache/mining_comparis
 
 TS="$(date -u +%Y%m%d_%H%M%S)"
 _suffix=""
-[[ "$SETTINGS_VARIANT" != default ]] && _suffix="_settings_$SETTINGS_VARIANT"
+[[ "$GROUPING" != cscas_grouping ]] && _suffix="_grouping_$GROUPING"
+[[ "$SETTINGS_VARIANT" != default ]] && _suffix="${_suffix}_settings_$SETTINGS_VARIANT"
 OUT_ROOT="${OUT_ROOT:-$REPO_ROOT/artifacts/experiments/mining_comparison_ait_ads$_suffix}"
 LOG_ROOT="${LOG_ROOT:-$REPO_ROOT/artifacts/logs/mining_comparison_ait_ads}"
 OUT_DIR="$OUT_ROOT/$TS"
@@ -111,7 +117,8 @@ KILLED_FILE="$LOG_DIR/killed.txt"
 RUNNER="$REPO_ROOT/src/thesis/scripts/system_eval/run_mining_comparison.py"
 # shellcheck disable=SC2206
 COMMON=(--dataset ait_ads --scenarios $SCENARIOS --seeds $SEEDS
-  --mining-cache-dir "$MINING_CACHE_DIR" --settings-variant "$SETTINGS_VARIANT")
+  --mining-cache-dir "$MINING_CACHE_DIR" --settings-variant "$SETTINGS_VARIANT"
+  --grouping "$GROUPING")
 
 # --- memory -----------------------------------------------------------------
 
@@ -241,7 +248,7 @@ queue() { JOB_NAMES+=("$1"); JOB_ARGS+=("$2"); }
 echo "Output: $OUT_DIR"
 echo "Logs:   $LOG_DIR"
 echo "Folds:  $TEST_SCENARIOS (pool: $SCENARIOS) | methods: $METHODS | seeds: $SEEDS"
-echo "Mining cache: $MINING_CACHE_DIR | settings variant: $SETTINGS_VARIANT"
+echo "Mining cache: $MINING_CACHE_DIR | settings variant: $SETTINGS_VARIANT | grouping: $GROUPING"
 echo "Safety: mine $MINE_PARALLEL / train $TRAIN_PARALLEL at once, ${STAGGER_SECONDS}s stagger," \
      "start at >= ${START_FREE_GB}G free, kill newest at < ${CRIT_FREE_GB}G free"
 
