@@ -120,6 +120,12 @@ def main() -> None:
         "method's main knob at its low / default / high value",
     )
     p.add_argument(
+        "--mixed-as-attack",
+        action="store_true",
+        help="AIT-ADS: label groups mixing benign and attack alerts as attack "
+        "instead of dropping them (label-purity runs)",
+    )
+    p.add_argument(
         "--no-lookback-cache",
         action="store_true",
         help="AIT-ADS: build look-back steps from the raw alerts every time",
@@ -193,6 +199,7 @@ def main() -> None:
         stage=a.stage,
         mining_cache_dir=a.mining_cache_dir,
         use_lookback_cache=not a.no_lookback_cache,
+        mixed_as_attack=a.mixed_as_attack,
         test_scenarios=tuple(a.test_scenarios) if a.test_scenarios else None,
     )
     run_comparison(config)

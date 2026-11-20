@@ -92,6 +92,9 @@ SETTINGS_VARIANT="${SETTINGS_VARIANT:-default}"
 # Grouping of the alert groups (grouping x mining, GM_PLAN.md): cscas_grouping
 # (the main comparison), fixed_window, time_delta, ...
 GROUPING="${GROUPING:-cscas_grouping}"
+# 1 = label mixed (benign + attack) groups attack instead of dropping them
+# (label-purity runs, GM_PLAN.md).
+MIXED_AS_ATTACK="${MIXED_AS_ATTACK:-0}"
 MAX_PARALLEL="${MAX_PARALLEL:-3}"
 MINE_PARALLEL="${MINE_PARALLEL:-$MAX_PARALLEL}"
 TRAIN_PARALLEL="${TRAIN_PARALLEL:-$MAX_PARALLEL}"
@@ -105,6 +108,7 @@ TS="$(date -u +%Y%m%d_%H%M%S)"
 _suffix=""
 [[ "$GROUPING" != cscas_grouping ]] && _suffix="_grouping_$GROUPING"
 [[ "$SETTINGS_VARIANT" != default ]] && _suffix="${_suffix}_settings_$SETTINGS_VARIANT"
+[[ "$MIXED_AS_ATTACK" == 1 ]] && _suffix="${_suffix}_mixed_attack"
 OUT_ROOT="${OUT_ROOT:-$REPO_ROOT/artifacts/experiments/mining_comparison_ait_ads$_suffix}"
 LOG_ROOT="${LOG_ROOT:-$REPO_ROOT/artifacts/logs/mining_comparison_ait_ads}"
 OUT_DIR="$OUT_ROOT/$TS"
@@ -119,6 +123,7 @@ RUNNER="$REPO_ROOT/src/thesis/scripts/system_eval/run_mining_comparison.py"
 COMMON=(--dataset ait_ads --scenarios $SCENARIOS --seeds $SEEDS
   --mining-cache-dir "$MINING_CACHE_DIR" --settings-variant "$SETTINGS_VARIANT"
   --grouping "$GROUPING")
+[[ "$MIXED_AS_ATTACK" == 1 ]] && COMMON+=(--mixed-as-attack)
 
 # --- memory -----------------------------------------------------------------
 
@@ -248,7 +253,7 @@ queue() { JOB_NAMES+=("$1"); JOB_ARGS+=("$2"); }
 echo "Output: $OUT_DIR"
 echo "Logs:   $LOG_DIR"
 echo "Folds:  $TEST_SCENARIOS (pool: $SCENARIOS) | methods: $METHODS | seeds: $SEEDS"
-echo "Mining cache: $MINING_CACHE_DIR | settings variant: $SETTINGS_VARIANT | grouping: $GROUPING"
+echo "Mining cache: $MINING_CACHE_DIR | settings variant: $SETTINGS_VARIANT | grouping: $GROUPING | mixed as attack: $MIXED_AS_ATTACK"
 echo "Safety: mine $MINE_PARALLEL / train $TRAIN_PARALLEL at once, ${STAGGER_SECONDS}s stagger," \
      "start at >= ${START_FREE_GB}G free, kill newest at < ${CRIT_FREE_GB}G free"
 

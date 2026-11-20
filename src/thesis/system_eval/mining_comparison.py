@@ -186,6 +186,11 @@ class ComparisonConfig:
     mining_cache_dir: Path | None = None
     # AIT-ADS: load look-back steps from CACHE_DIR/<scenario>/lookback/.
     use_lookback_cache: bool = True
+    # AIT-ADS: label groups that mix benign and attack alerts as attack (any
+    # attack alert -> attack; GM_PLAN.md, decided 2026-11-20) instead of
+    # dropping them from mining, training and evaluation. For the label-purity
+    # (H1) runs; off for the main comparison.
+    mixed_as_attack: bool = False
 
 
 @dataclass
@@ -754,7 +759,21 @@ def _load_ait_ads_groups(config: ComparisonConfig, scenario: str) -> list[AlertG
     groups = load_or_build_alert_groups(
         scenario, CACHE_DIR / scenario / "groups" / config.grouping
     )
+    if config.mixed_as_attack:
+        n = relabel_mixed_as_attack(groups)
+        print(f"  {scenario}: {n} mixed group(s) labelled attack", flush=True)
     return labelled(sorted(groups, key=lambda g: g.start_ts))
+
+
+def relabel_mixed_as_attack(groups: list[AlertGroup]) -> int:
+    """Label every "mixed" group (benign + attack alerts) attack, in place.
+    Returns how many were relabelled."""
+    n = 0
+    for g in groups:
+        if g.group_label == "mixed":
+            g.group_label = "attack"
+            n += 1
+    return n
 
 
 def loso_folds(

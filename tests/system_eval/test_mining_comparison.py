@@ -416,3 +416,28 @@ def test_mining_cache_key_tracks_data_and_settings_not_budget():
     assert key != mining_cache_key("ripper", step, spec, mini, "T2")
     shorter = Step(0, step.train[:-1], step.test, 1.0)
     assert key != mining_cache_key("eclat", shorter, spec, mini, "T2")
+
+
+# --- Mixed groups as attack (H1 runs) ---------------------------------------
+
+
+def test_relabel_mixed_as_attack_and_cache_key():
+    from thesis.system_eval.mining_comparison import relabel_mixed_as_attack
+    from thesis.system_eval.mining_mini_experiment import labelled
+
+    groups = _timed([(0, 0), (1, 1), (2, 0)])
+    groups[2].group_label = "mixed"
+    spec, _ = _cscas_spec_and_step()
+    mini = MiniConfig()
+    dropped = Step(0, labelled(groups), [], 1.0)
+    assert [g.group_id for g in dropped.train] == ["g0", "g1"]
+
+    assert relabel_mixed_as_attack(groups) == 1
+    assert [g.group_label for g in groups] == ["benign", "attack", "attack"]
+    kept = Step(0, labelled(groups), [], 1.0)
+    assert len(kept.train) == 3
+    # the mixed group now enters the training rows, so the mined candidates
+    # are cached under a different key: the two rules never share a cache entry
+    assert mining_cache_key("eclat", kept, spec, mini, "T2") != mining_cache_key(
+        "eclat", dropped, spec, mini, "T2"
+    )
