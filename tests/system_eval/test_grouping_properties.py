@@ -41,7 +41,11 @@ def test_properties_on_small_example():
     ]
     r = group_properties(groups, other_attack_codes={"A"})
     assert r["n_groups"] == 4 and r["n_attack"] == 2 and r["base_rate"] == 0.5
-    assert r["mixed_label_share"] == 0.25
+    # purity is over all 5 groups: only g4 is labelled "mixed"
+    assert r["mixed_group_share"] == 0.2
+    assert r["n_groups_all"] == 5 and r["n_alerts"] == 8
+    assert r["reduction"] == pytest.approx(1 - 5 / 8)
+    assert r["mixed_alert_share"] == pytest.approx(1 / 8)
     assert r["ambiguous_attack_share"] == 0.5
     assert r["single_code_share"] == 0.5
     assert r["multi_host_share"] == 0.25

@@ -5,10 +5,16 @@ differ in one property at a time.
 
 Per (scenario, grouping), over the labelled (attack / benign) groups:
 
-  counts       n_groups, n_attack, base_rate
-  label purity mixed_label_share: groups whose alert labels mix benign
-               ("false_positive") and attack labels. AIT-ADS alert labels are
-               time-window labels, so this is ~0 for every grouping.
+  counts       n_groups, n_attack, base_rate (over the labelled groups)
+  reduction    1 - groups / alerts (all groups), to place each grouping
+               setting on the thesis's reduction-vs-purity curve (Fig. 5.6)
+  label purity mixed_group_share / mixed_alert_share: groups (and the alerts
+               in them) whose alert labels mix benign ("false_positive") and
+               attack, over ALL groups -- these are labelled "mixed" and
+               dropped from mining and training. Grouping can't remove the
+               label noise already in the time-window alert labels, but it
+               decides how many mixed groups that noise produces; coarser
+               groupings (higher reduction) produce more (thesis §5.2).
   content      ambiguous_attack_share: attack groups whose alert codes all
   ambiguity    also occur in benign groups of the same scenario -- the
                attack groups no content-based feature can separate (the
@@ -67,16 +73,25 @@ def group_properties(
     durations = np.array(
         [(g.end_ts - g.start_ts) if g.end_ts is not None else 0 for g in gs]
     )
-    mixed = [
-        BENIGN_ALERT_LABEL in (g.alert_labels or ())
-        and len(set(g.alert_labels or ()) - {BENIGN_ALERT_LABEL}) > 0
-        for g in gs
-    ]
+    # Purity over ALL groups: a group whose alerts mix benign and attack labels
+    # is labelled "mixed" and dropped by labelled_groups (and by the
+    # comparison's labelled()), so it must be counted before that filter.
+    all_gs = list(groups)
+    mixed = [g.group_label == "mixed" for g in all_gs]
+    alerts_all = sum(g.n_alerts for g in all_gs)
     row = {
+        "n_groups_all": len(all_gs),
+        "n_alerts": alerts_all,
+        "reduction": 1 - len(all_gs) / alerts_all if alerts_all else np.nan,
+        "mixed_group_share": float(np.mean(mixed)),
+        "mixed_alert_share": (
+            sum(g.n_alerts for g in all_gs if g.group_label == "mixed") / alerts_all
+            if alerts_all
+            else np.nan
+        ),
         "n_groups": len(gs),
         "n_attack": len(attack),
         "base_rate": len(attack) / len(gs),
-        "mixed_label_share": float(np.mean(mixed)),
         "ambiguous_attack_share": (
             float(
                 np.mean([bool(_codes(g)) and _codes(g) <= benign_codes for g in attack])
