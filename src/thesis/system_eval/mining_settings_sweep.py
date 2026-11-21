@@ -142,6 +142,9 @@ def stress_contrasts(
     piv = long.pivot_table(index="step_i", columns=["arm", "variant"], values=metric)
     rows = []
     for name, a, b in contrasts:
+        # CSCAS has no temporal methods: skip contrasts the runs don't cover.
+        if a not in spread.index or b not in spread.index:
+            continue
         cases = [
             ("default vs default", (b, "default"), (a, "default")),
             (

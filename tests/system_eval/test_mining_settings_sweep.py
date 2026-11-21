@@ -180,3 +180,7 @@ def test_spread_and_stress(tmp_path):
     assert worst_vs_best["mean Δ (x−y)"] == pytest.approx(-0.05)
     assert worst_vs_best["x wins"] == "0/4"
     assert by_case.loc["default vs default", "mean Δ (x−y)"] == pytest.approx(0.2)
+
+    # Contrasts naming methods the runs lack (temporal ones on CSCAS) are skipped.
+    full = stress_contrasts(runs)
+    assert set(full["contrast"]) == {"label after → during (atemporal)"}
