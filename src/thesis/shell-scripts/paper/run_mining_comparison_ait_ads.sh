@@ -1,15 +1,21 @@
 #!/usr/bin/env bash
 #
-# Mining comparison, AIT-ADS arm (paper plan 7.6): leave-one-scenario-out
-# over the AIT-ADS scenarios (cscas_grouping, token arm T2), all five methods
-# + "none" x SEEDS, run in two stages so mining and training are separate jobs:
+# Mining comparison, AIT-ADS arm (paper plan 7.6): one step per AIT-ADS
+# scenario (cscas_grouping, token arm T2), all five methods + "none" x SEEDS,
+# run in two stages so mining and training are separate jobs.
+#
+# AIT_PROTOCOL (default split): split = the thesis's within-scenario
+# chronological 70/30 split (scenarios with no attack in their first 70% are
+# skipped: their job writes skipped.csv and the merge lists them); loso =
+# leave-one-scenario-out (train on the other scenarios, test on the held-out
+# one's whole timeline; the earlier main runs).
 #
 #   0. prepare  one job: build the per-scenario look-back cache
 #               (artifacts/cache/<scenario>/lookback/), so later jobs only read it.
-#   1. mine     one job per (held-out fold, method): mine -> gate -> dedupes,
+#   1. mine     one job per (scenario, method): mine -> gate -> dedupes,
 #               cached per (fold, method, mining seed) before the budget K in
 #               MINING_CACHE_DIR. Slowest methods are queued first.
-#   2. train    one job per fold: load the cached candidates, budget K, encode,
+#   2. train    one job per scenario: load the cached candidates, budget K, encode,
 #               fit + score the RF for every arm and seed.
 #   3. merge    the per-fold runs into one run + summary and statistics.
 #
@@ -33,8 +39,9 @@
 #   TEST_SCENARIOS=fox SEEDS=0 MINE_PARALLEL=1 TRAIN_PARALLEL=1 \
 #     src/thesis/shell-scripts/paper/run_mining_comparison_ait_ads.sh
 #
-# Output: artifacts/experiments/mining_comparison_ait_ads/<ts>/
-#   folds/<scenario>/   one trained run per held-out scenario
+# Output: artifacts/experiments/mining_comparison_ait_ads_split/<ts>/
+#   (loso: mining_comparison_ait_ads/<ts>/)
+#   folds/<scenario>/   one trained run per scenario (split) / held-out scenario (loso)
 #   per_step_results.csv, features.csv, summary.csv, helps_hurts.csv,
 #   stats.json, ...   the merged run (written once every fold has finished)
 # Logs: artifacts/logs/mining_comparison_ait_ads/<ts>/: prepare.log,
@@ -78,8 +85,10 @@ if [[ -z "$FOLD_CMD" ]]; then
   fi
 fi
 
-# The scenario pool every fold trains on; held-out folds run for all of them
-# unless TEST_SCENARIOS narrows it.
+# split | loso (see the header).
+AIT_PROTOCOL="${AIT_PROTOCOL:-split}"
+# The scenarios to run (split) / the pool every fold trains on (loso); jobs
+# run for all of them unless TEST_SCENARIOS narrows it.
 SCENARIOS="${SCENARIOS:-fox harrison russellmitchell santos shaw wardbeck wheeler wilson}"
 TEST_SCENARIOS="${TEST_SCENARIOS:-$SCENARIOS}"
 SEEDS="${SEEDS:-0 1 2 3 4}"
@@ -109,8 +118,13 @@ _suffix=""
 [[ "$GROUPING" != cscas_grouping ]] && _suffix="_grouping_$GROUPING"
 [[ "$SETTINGS_VARIANT" != default ]] && _suffix="${_suffix}_settings_$SETTINGS_VARIANT"
 [[ "$MIXED_AS_ATTACK" == 1 ]] && _suffix="${_suffix}_mixed_attack"
-OUT_ROOT="${OUT_ROOT:-$REPO_ROOT/artifacts/experiments/mining_comparison_ait_ads$_suffix}"
-LOG_ROOT="${LOG_ROOT:-$REPO_ROOT/artifacts/logs/mining_comparison_ait_ads}"
+case "$AIT_PROTOCOL" in
+  split) _base=mining_comparison_ait_ads_split ;;
+  loso)  _base=mining_comparison_ait_ads ;;
+  *) echo "FATAL: AIT_PROTOCOL must be split or loso, got '$AIT_PROTOCOL'" >&2; exit 1 ;;
+esac
+OUT_ROOT="${OUT_ROOT:-$REPO_ROOT/artifacts/experiments/$_base$_suffix}"
+LOG_ROOT="${LOG_ROOT:-$REPO_ROOT/artifacts/logs/$_base}"
 OUT_DIR="$OUT_ROOT/$TS"
 LOG_DIR="$LOG_ROOT/$TS"
 mkdir -p "$OUT_DIR/folds" "$LOG_DIR"
@@ -120,7 +134,7 @@ KILLED_FILE="$LOG_DIR/killed.txt"
 
 RUNNER="$REPO_ROOT/src/thesis/scripts/system_eval/run_mining_comparison.py"
 # shellcheck disable=SC2206
-COMMON=(--dataset ait_ads --scenarios $SCENARIOS --seeds $SEEDS
+COMMON=(--dataset ait_ads --ait-protocol "$AIT_PROTOCOL" --scenarios $SCENARIOS --seeds $SEEDS
   --mining-cache-dir "$MINING_CACHE_DIR" --settings-variant "$SETTINGS_VARIANT"
   --grouping "$GROUPING")
 [[ "$MIXED_AS_ATTACK" == 1 ]] && COMMON+=(--mixed-as-attack)
@@ -252,7 +266,7 @@ queue() { JOB_NAMES+=("$1"); JOB_ARGS+=("$2"); }
 
 echo "Output: $OUT_DIR"
 echo "Logs:   $LOG_DIR"
-echo "Folds:  $TEST_SCENARIOS (pool: $SCENARIOS) | methods: $METHODS | seeds: $SEEDS"
+echo "Protocol: $AIT_PROTOCOL | scenarios: $TEST_SCENARIOS (pool: $SCENARIOS) | methods: $METHODS | seeds: $SEEDS"
 echo "Mining cache: $MINING_CACHE_DIR | settings variant: $SETTINGS_VARIANT | grouping: $GROUPING | mixed as attack: $MIXED_AS_ATTACK"
 echo "Safety: mine $MINE_PARALLEL / train $TRAIN_PARALLEL at once, ${STAGGER_SECONDS}s stagger," \
      "start at >= ${START_FREE_GB}G free, kill newest at < ${CRIT_FREE_GB}G free"

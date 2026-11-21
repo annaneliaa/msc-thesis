@@ -133,9 +133,10 @@ def main() -> None:
     ait = p.add_argument_group("AIT-ADS")
     ait.add_argument(
         "--ait-protocol",
-        choices=("loso", "phase"),
-        default="loso",
-        help="leave-one-scenario-out (default) or the within-scenario phase walk",
+        choices=("split", "loso", "phase"),
+        default="split",
+        help="within-scenario chronological 70/30 split (default, the thesis "
+        "setup), leave-one-scenario-out, or the within-scenario phase walk",
     )
     ait.add_argument(
         "--scenarios",
@@ -149,7 +150,8 @@ def main() -> None:
         nargs="+",
         default=None,
         metavar="S",
-        help="LOSO: only run the folds holding out these (default: all)",
+        help="split: only run these scenarios; LOSO: only the folds holding "
+        "out these (default: all)",
     )
     ait.add_argument("--grouping", default="cscas_grouping")
     ait.add_argument(
@@ -167,7 +169,11 @@ def main() -> None:
         p.error("--no-signature-items is the CSCAS Check 3 condition only")
     experiment = "mining_comparison"
     if a.dataset == "ait_ads":
-        experiment += "_ait_ads" + ("_phase" if a.ait_protocol == "phase" else "")
+        # LOSO keeps the plain name its earlier runs used.
+        experiment += (
+            "_ait_ads"
+            + {"split": "_split", "loso": "", "phase": "_phase"}[a.ait_protocol]
+        )
     if a.no_signature_items:
         experiment += "_no_sig"
     if a.settings_variant != "default":
@@ -196,6 +202,8 @@ def main() -> None:
         token_arm=a.token_arm,
         phase_gap_seconds=a.phase_gap_seconds,
         ait_ads_protocol=a.ait_protocol,
+        # AIT-ADS has 5 steps: test with a bootstrap over test groups.
+        save_test_scores=a.dataset == "ait_ads",
         stage=a.stage,
         mining_cache_dir=a.mining_cache_dir,
         use_lookback_cache=not a.no_lookback_cache,

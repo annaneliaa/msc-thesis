@@ -39,9 +39,17 @@ difference over the steps.
 
 AIT-ADS (temporal arm: prefixspan, mctsextent, plus the atemporal methods on
 the same steps, so Eclat vs. PrefixSpan isolates order): cscas_grouping, token
-arm T2 for every method. Two protocols:
+arm T2 for every method. Three protocols:
 
-  - "loso" (default, decided 2026-11-16): leave-one-scenario-out. Fold i
+  - "split" (default, decided 2026-11-21): within each scenario, the thesis's
+    chronological 70/30 split (baselines/_ait_ads_data.py: labelled groups in
+    time order, the first int(0.7 n) train, the rest test). One step per
+    scenario; scenarios with no attack in their training part are skipped
+    (thesis: harrison, santos, russellmitchell -- their attacks all fall in
+    the last 30%). Same kind of test as the CSCAS walk-forward (train on the
+    past of the same network), unlike LOSO.
+  - "loso" (decided 2026-11-16, replaced 2026-11-21 as the harder test the
+    thesis never ran): leave-one-scenario-out. Fold i
     trains on the other scenarios' labelled groups and tests on scenario i's
     whole timeline. The scenarios run the same multi-step attack chain on
     different networks, so every stage of the held-out chain has been seen as
@@ -172,7 +180,8 @@ class ComparisonConfig:
     grouping: str = "cscas_grouping"
     token_arm: str = COMPARISON_TOKEN_ARM
     phase_gap_seconds: int = PHASE_GAP_SECONDS
-    ait_ads_protocol: str = "loso"  # "loso" | "phase"
+    ait_ads_protocol: str = "split"  # "split" | "loso" | "phase"
+    # split: the scenarios to run (None = every scenario in `scenarios`).
     # LOSO: the held-out scenarios to run folds for (None = every scenario in
     # `scenarios`); training always pools all the other `scenarios`.
     test_scenarios: tuple[str, ...] | None = None
@@ -191,6 +200,11 @@ class ComparisonConfig:
     # dropping them from mining, training and evaluation. For the label-purity
     # (H1) runs; off for the main comparison.
     mixed_as_attack: bool = False
+    # Save every (arm, seed)'s per-group test scores (test_scores.csv.gz) and
+    # run the paired bootstrap over test groups (bootstrap.csv; see
+    # score_bootstrap.py). On for AIT-ADS runs: 5 steps are too few for a
+    # test across steps.
+    save_test_scores: bool = False
 
 
 @dataclass
@@ -480,13 +494,40 @@ def fit_and_score(
         model=model,
     )
     proba = model.predict_proba(X_te)[:, 1]
-    return {"threshold": thr, **metric_row(y_te, proba, thr, seen, n_days)}
+    # "_proba" is taken out by run_step (saved test scores), never a column.
+    return {
+        "threshold": thr,
+        **metric_row(y_te, proba, thr, seen, n_days),
+        "_proba": proba,
+    }
+
+
+def _scores_frame(step: Step, row: dict, y_te: np.ndarray) -> pd.DataFrame | None:
+    proba = row.get("_proba")
+    if proba is None:
+        return None
+    return pd.DataFrame(
+        {
+            "step_i": step.i,
+            "scenario": step.scenario,
+            "arm": row["arm"],
+            "seed": row["seed"],
+            "test_idx": np.arange(len(y_te)),
+            "y": y_te,
+            "proba": proba.astype(np.float32),
+            "pred": proba >= row["threshold"],
+        }
+    )
 
 
 def run_step(
-    config: ComparisonConfig, step: Step, spec: DatasetSpec
+    config: ComparisonConfig,
+    step: Step,
+    spec: DatasetSpec,
+    scores: list[pd.DataFrame] | None = None,
 ) -> tuple[list[dict], list[pd.DataFrame]]:
-    """All arms x seeds on one step."""
+    """All arms x seeds on one step. With `scores`, each (arm, seed)'s
+    per-group test scores are appended to it."""
     base_schema, signature_of = spec.base_schema, spec.signature_of
     y_tr = _labels(step.train).astype(int)
     y_te = _labels(step.test).astype(int)
@@ -614,6 +655,11 @@ def run_step(
             f"redundancy {last.get('redundancy_share', np.nan):.2f}, "
             f"{last.get('mine_seconds', 0):.1f}s"
         )
+    for row in rows:
+        frame = _scores_frame(step, row, y_te)
+        row.pop("_proba", None)
+        if frame is not None and scores is not None:
+            scores.append(frame)
     return rows, feats
 
 
@@ -842,6 +888,69 @@ def prepare_lookback(config: ComparisonConfig) -> None:
         attach_lookback(config, s, _load_ait_ads_groups(config, s))
 
 
+SPLIT_TEST_FRAC = 0.3
+
+
+def scenario_split(
+    groups: list[AlertGroup], test_frac: float = SPLIT_TEST_FRAC
+) -> tuple[list[AlertGroup], list[AlertGroup]]:
+    """The thesis's within-scenario split (baselines/_ait_ads_data.py):
+    `groups` are one scenario's labelled groups in time order; the first
+    int((1 - test_frac) * n) train, the rest test."""
+    cut = int(len(groups) * (1 - test_frac))
+    return groups[:cut], groups[cut:]
+
+
+def ait_ads_split_steps(
+    config: ComparisonConfig,
+) -> tuple[
+    Callable[[], Iterator[tuple[Step, DatasetSpec]]], pd.DataFrame, pd.DataFrame
+]:
+    """One step per scenario (config.test_scenarios, else config.scenarios):
+    train on its first 70%, test on its last 30% (scenario_split). Scenarios
+    with no attack in the training part are skipped (no rule or model can
+    learn the attack class); they're returned in the third frame with the
+    reason, the steps' window table in the second."""
+    selected = config.test_scenarios or config.scenarios
+    plan: list[dict] = []
+    skipped: list[dict] = []
+    data: dict[str, tuple[list, list, list]] = {}
+    for s in selected:
+        groups = _load_ait_ads_groups(config, s)
+        tr, te = scenario_split(groups)
+        row = {
+            "scenario": s,
+            "train_end_ts": te[0].start_ts if te else np.nan,
+            "n_train": len(tr),
+            "n_train_attack": int(_labels(tr).sum()) if tr else 0,
+            "n_test": len(te),
+            "n_test_attack": int(_labels(te).sum()) if te else 0,
+            "test_days": _window_days(te),
+        }
+        if row["n_train_attack"] == 0:
+            print(f"  [skip] {s}: no attack in the training 70%", flush=True)
+            skipped.append({**row, "reason": "no training attacks"})
+            continue
+        if row["n_test_attack"] == 0:
+            print(f"  [warn] {s}: no attack in the test 30%", flush=True)
+        data[s] = (groups, tr, te)
+        plan.append({"step_i": len(plan), **row})
+    if config.max_steps is not None:
+        plan = plan[: config.max_steps]
+
+    def steps():
+        for r in plan:
+            s = r["scenario"]
+            groups, tr, te = data[s]
+            if any(m in TEMPORAL for m in config.methods):
+                attach_lookback(config, s, groups)
+            # Steps are already on the groups; run_step's attach is a no-op.
+            spec = _ait_ads_spec(config, [s], lambda groups: None)
+            yield Step(r["step_i"], tr, te, _window_days(te), scenario=s), spec
+
+    return steps, pd.DataFrame(plan), pd.DataFrame(skipped)
+
+
 def ait_ads_loso_steps(
     config: ComparisonConfig,
 ) -> tuple[Callable[[], Iterator[tuple[Step, DatasetSpec]]], pd.DataFrame]:
@@ -990,14 +1099,25 @@ def run_comparison(config: ComparisonConfig) -> Path:
             {**asdict(config), "repo_commit": _repo_commit()}, indent=2, default=str
         )
     )
-    steps, windows = (
-        cscas_steps(config)
-        if config.dataset == "cscas"
-        else ait_ads_loso_steps(config)
-        if config.ait_ads_protocol == "loso"
-        else ait_ads_steps(config)
-    )
+    skipped = pd.DataFrame()
+    if config.dataset == "cscas":
+        steps, windows = cscas_steps(config)
+    elif config.ait_ads_protocol == "split":
+        steps, windows, skipped = ait_ads_split_steps(config)
+    elif config.ait_ads_protocol == "loso":
+        steps, windows = ait_ads_loso_steps(config)
+    elif config.ait_ads_protocol == "phase":
+        steps, windows = ait_ads_steps(config)
+    else:
+        raise ValueError(f"unknown AIT-ADS protocol {config.ait_ads_protocol!r}")
     windows.to_csv(out_dir / "windows.csv", index=False)
+    if not skipped.empty:
+        skipped.to_csv(out_dir / "skipped.csv", index=False)
+    if windows.empty:
+        # Every selected scenario skipped (e.g. one split job per scenario):
+        # no results, only windows.csv / skipped.csv; merge_runs lists it.
+        print(f"No steps to run → {out_dir}")
+        return out_dir
     print(
         f"Output → {out_dir}  ({len(windows)} steps x "
         f"{len(config.methods) + config.include_no_mining} arms x "
@@ -1006,6 +1126,7 @@ def run_comparison(config: ComparisonConfig) -> Path:
 
     rows: list[dict] = []
     feats: list[pd.DataFrame] = []
+    scores: list[pd.DataFrame] | None = [] if config.save_test_scores else None
     for step, spec in steps():
         print(
             f"[step {step.i} {step.scenario}] train {len(step.train)} "
@@ -1014,12 +1135,16 @@ def run_comparison(config: ComparisonConfig) -> Path:
         if len(set(_labels(step.train))) < 2:
             print("  [warn] single-class training window -- skipped")
             continue
-        r, f = run_step(config, step, spec)
+        r, f = run_step(config, step, spec, scores)
         rows += r
         feats += f
         if config.stage == "mine":
             continue
         pd.DataFrame(rows).to_csv(out_dir / "per_step_results.csv", index=False)
+        if scores:
+            pd.concat(scores, ignore_index=True).to_csv(
+                out_dir / SCORES_FILE, index=False
+            )
         if feats:
             pd.concat(feats, ignore_index=True).to_csv(
                 out_dir / "features.csv", index=False
@@ -1029,6 +1154,8 @@ def run_comparison(config: ComparisonConfig) -> Path:
         print(f"Mining cached → {config.mining_cache_dir}")
         return out_dir
     write_summary(out_dir, pd.DataFrame(rows), pd.concat(feats) if feats else None)
+    if scores:
+        write_bootstrap_summary(out_dir, pd.concat(scores, ignore_index=True))
     return out_dir
 
 
@@ -1190,6 +1317,23 @@ def write_summary(
     print(text)
 
 
+SCORES_FILE = "test_scores.csv.gz"
+
+
+def write_bootstrap_summary(out_dir: Path, scores: pd.DataFrame) -> None:
+    """bootstrap.csv (score_bootstrap.paired_bootstrap) plus a readable
+    bootstrap.txt: every method vs "none", and each method pair, per
+    scenario and averaged over scenarios ("all")."""
+    from thesis.system_eval.score_bootstrap import write_bootstrap
+
+    t0 = time.perf_counter()
+    boot = write_bootstrap(out_dir, scores)
+    with pd.option_context("display.width", 200, "display.max_columns", 20):
+        text = boot.round(4).to_string(index=False)
+    (Path(out_dir) / "bootstrap.txt").write_text(text + "\n")
+    print(f"Bootstrap ({time.perf_counter() - t0:.0f}s) → {out_dir / 'bootstrap.csv'}")
+
+
 # --- Merging per-fold runs --------------------------------------------------
 
 
@@ -1201,12 +1345,20 @@ def merge_runs(run_dirs: list[Path], out_dir: Path) -> Path:
     features.csv, windows.csv, sources.json and the summary files."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    per_step, feats, windows, sources = [], [], [], []
+    per_step, feats, windows, sources, skipped = [], [], [], [], []
+    scores: list[pd.DataFrame] = []
     offset = 0
     for d in map(Path, run_dirs):
         ps_path = d / "per_step_results.csv"
+        if not ps_path.exists() and (d / "skipped.csv").exists():
+            # A run whose every scenario was skipped (split protocol).
+            skipped.append(pd.read_csv(d / "skipped.csv").assign(source_run=d.name))
+            sources.append({"run": str(d), "steps": {}, "skipped": True})
+            continue
         if not ps_path.exists():
             raise FileNotFoundError(f"{d}: no per_step_results.csv (run unfinished?)")
+        if (d / "skipped.csv").exists():
+            skipped.append(pd.read_csv(d / "skipped.csv").assign(source_run=d.name))
         ps = pd.read_csv(ps_path)
         steps = sorted(ps["step_i"].unique())
         remap = {s: offset + k for k, s in enumerate(steps)}
@@ -1214,6 +1366,9 @@ def merge_runs(run_dirs: list[Path], out_dir: Path) -> Path:
         if (d / "features.csv").exists():
             f = pd.read_csv(d / "features.csv")
             feats.append(f.assign(step_i=f["step_i"].map(remap)))
+        if (d / SCORES_FILE).exists():
+            sc = pd.read_csv(d / SCORES_FILE)
+            scores.append(sc.assign(step_i=sc["step_i"].map(remap)))
         if (d / "windows.csv").exists():
             w = pd.read_csv(d / "windows.csv")
             windows.append(w.assign(step_i=w["step_i"].map(remap), source_run=d.name))
@@ -1235,6 +1390,14 @@ def merge_runs(run_dirs: list[Path], out_dir: Path) -> Path:
         pd.concat(windows, ignore_index=True).to_csv(
             out_dir / "windows.csv", index=False
         )
+    if skipped:
+        pd.concat(skipped, ignore_index=True).to_csv(
+            out_dir / "skipped.csv", index=False
+        )
     (out_dir / "sources.json").write_text(json.dumps(sources, indent=2, default=str))
     write_summary(out_dir, per_step_df, feats_df)
+    if scores:
+        merged_scores = pd.concat(scores, ignore_index=True)
+        merged_scores.to_csv(out_dir / SCORES_FILE, index=False)
+        write_bootstrap_summary(out_dir, merged_scores)
     return out_dir

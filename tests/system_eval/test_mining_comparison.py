@@ -17,6 +17,7 @@ from thesis.system_eval.mining_comparison import (
     DatasetSpec,
     Step,
     ait_ads_base_schema,
+    ait_ads_split_steps,
     attack_phases,
     loso_folds,
     merge_runs,
@@ -27,7 +28,9 @@ from thesis.system_eval.mining_comparison import (
     friedman_nemenyi,
     helps_hurts,
     redundancy_share,
+    run_comparison,
     run_step,
+    scenario_split,
     stability,
     summarize_comparison,
 )
@@ -37,7 +40,7 @@ from test_mining_mini_experiment import _ait_groups, _cscas_group, _methods
 
 
 @pytest.fixture(scope="module")
-def step_rows():
+def step_run():
     rng = random.Random(0)
     groups = [_cscas_group(i, rng) for i in range(900)]
     cols = list(BaselineFeatureEncoder().transform(groups[:5]).columns)
@@ -48,8 +51,34 @@ def step_rows():
     )
     step = Step(0, groups[:600], groups[600:], test_days=1.0)
     spec = DatasetSpec("cscas", base, lambda g: (g.category, g.ruleset))
-    rows, feats = run_step(config, step, spec)
-    return pd.DataFrame(rows), pd.concat(feats, ignore_index=True)
+    scores: list[pd.DataFrame] = []
+    rows, feats = run_step(config, step, spec, scores)
+    return (
+        pd.DataFrame(rows),
+        pd.concat(feats, ignore_index=True),
+        pd.concat(scores, ignore_index=True),
+    )
+
+
+@pytest.fixture(scope="module")
+def step_rows(step_run):
+    rows, feats, _ = step_run
+    return rows, feats
+
+
+def test_run_step_saves_test_scores_matching_the_rows(step_run):
+    from sklearn.metrics import average_precision_score
+
+    rows, _, scores = step_run
+    assert "_proba" not in rows.columns
+    assert len(scores) == len(rows) * 300  # every (arm, seed) x 300 test groups
+    for _, r in rows.iterrows():
+        sc = scores[(scores["arm"] == r["arm"]) & (scores["seed"] == r["seed"])]
+        assert sc["test_idx"].tolist() == list(range(300))
+        assert average_precision_score(sc["y"], sc["proba"]) == pytest.approx(
+            r["pr_auc"], abs=1e-6
+        )
+        assert int((sc["pred"] & (sc["y"] == 1)).sum()) == r["tp"]
 
 
 def test_every_arm_and_seed_scored(step_rows):
@@ -274,6 +303,101 @@ def test_loso_folds_subset_of_held_out_scenarios():
         loso_folds(pool, ("zzz",))
 
 
+def test_scenario_split_is_the_thesis_70_30_cut():
+    groups = _timed([(t, t >= 6) for t in range(10)])
+    train, test = scenario_split(groups)
+    assert [g.start_ts for g in train] == list(range(7))  # int(10 * 0.7)
+    assert [g.start_ts for g in test] == [7, 8, 9]
+    train, test = scenario_split(groups[:9])
+    assert len(train) == 6 and len(test) == 3  # int(9 * 0.7) = 6
+
+
+def _split_pool(monkeypatch):
+    from thesis.system_eval import mining_comparison as mc
+
+    pool = {
+        # attacks in both parts
+        "a": _timed([(t, t in (2, 8)) for t in range(10)]),
+        # attacks only in the last 30%: skipped
+        "b": _timed([(t, t >= 8) for t in range(10)]),
+        # attacks only in the first 70%: kept, with a warning
+        "c": _timed([(t, t == 1) for t in range(10)]),
+    }
+    monkeypatch.setattr(mc, "_load_ait_ads_groups", lambda config, s: pool[s])
+    return pool
+
+
+def test_split_steps_skip_scenarios_without_training_attacks(monkeypatch):
+    pool = _split_pool(monkeypatch)
+    config = ComparisonConfig(
+        dataset="ait_ads", scenarios=("a", "b", "c"), methods=("eclat",)
+    )
+    assert config.ait_ads_protocol == "split"  # the default
+    steps, windows, skipped = ait_ads_split_steps(config)
+    assert list(windows["scenario"]) == ["a", "c"]
+    assert list(windows["step_i"]) == [0, 1]
+    assert list(windows["n_train"]) == [7, 7] and list(windows["n_test"]) == [3, 3]
+    assert list(windows["n_test_attack"]) == [1, 0]
+    assert list(skipped["scenario"]) == ["b"]
+    assert skipped["reason"].iloc[0] == "no training attacks"
+    got = [(st.scenario, st.i, len(st.train), len(st.test)) for st, _ in steps()]
+    assert got == [("a", 0, 7, 3), ("c", 1, 7, 3)]
+    step, _ = next(iter(steps()))
+    assert step.train == pool["a"][:7] and step.test == pool["a"][7:]
+
+    # test_scenarios narrows the run to those scenarios only
+    one = ComparisonConfig(
+        dataset="ait_ads",
+        scenarios=("a", "b", "c"),
+        test_scenarios=("c",),
+        methods=("eclat",),
+    )
+    _, windows, skipped = ait_ads_split_steps(one)
+    assert list(windows["scenario"]) == ["c"] and skipped.empty
+
+
+def test_split_run_of_a_skipped_scenario_and_its_merge(monkeypatch, tmp_path):
+    _split_pool(monkeypatch)
+    config = ComparisonConfig(
+        dataset="ait_ads",
+        scenarios=("a", "b", "c"),
+        test_scenarios=("b",),
+        methods=("eclat",),
+        out_dir=tmp_path / "folds" / "b",
+    )
+    out = run_comparison(config)
+    assert pd.read_csv(out / "skipped.csv")["scenario"].tolist() == ["b"]
+    assert not (out / "per_step_results.csv").exists()
+
+    # merge: the skipped run is listed, not an error
+    done = tmp_path / "folds" / "a"
+    done.mkdir(parents=True)
+    pd.DataFrame(
+        [
+            {
+                "arm": arm,
+                "seed": 0,
+                "scenario": "a",
+                "step_i": 0,
+                "f1": f,
+                "pr_auc": f,
+                "tp_seen": 1,
+                "n_attack_seen": 2,
+                "tp_unseen": 0,
+                "n_attack_unseen": 0,
+            }
+            for arm, f in ((NO_MINING, 0.2), ("m1", 0.4))
+        ]
+    ).to_csv(done / "per_step_results.csv", index=False)
+    merged = merge_runs([done, out], tmp_path / "merged")
+    assert pd.read_csv(merged / "skipped.csv")["scenario"].tolist() == ["b"]
+    assert pd.read_csv(merged / "per_step_results.csv")[
+        "scenario"
+    ].unique().tolist() == ["a"]
+    sources = json.loads((merged / "sources.json").read_text())
+    assert [x.get("skipped", False) for x in sources] == [False, True]
+
+
 def test_merge_runs_renumbers_steps_and_recomputes_stats(tmp_path):
     runs = []
     for k, scen in enumerate(["a", "b", "c"]):
@@ -441,3 +565,56 @@ def test_relabel_mixed_as_attack_and_cache_key():
     assert mining_cache_key("eclat", kept, spec, mini, "T2") != mining_cache_key(
         "eclat", dropped, spec, mini, "T2"
     )
+
+
+def test_merge_runs_combines_test_scores_and_bootstraps(tmp_path):
+    from thesis.system_eval.mining_comparison import SCORES_FILE
+
+    rng = np.random.default_rng(0)
+    runs = []
+    for scen in ("a", "b"):
+        d = tmp_path / "folds" / scen
+        d.mkdir(parents=True)
+        y = np.r_[np.ones(10, int), np.zeros(40, int)]
+        rows, frames = [], []
+        for arm, signal in ((NO_MINING, 0.0), ("m1", 0.8)):
+            proba = signal * y + rng.random(50) * (1 - signal)
+            rows.append(
+                {
+                    "arm": arm,
+                    "seed": 0,
+                    "scenario": scen,
+                    "step_i": 0,
+                    "f1": signal,
+                    "pr_auc": signal,
+                    "tp_seen": 1,
+                    "n_attack_seen": 2,
+                    "tp_unseen": 0,
+                    "n_attack_unseen": 0,
+                }
+            )
+            frames.append(
+                pd.DataFrame(
+                    {
+                        "step_i": 0,
+                        "scenario": scen,
+                        "arm": arm,
+                        "seed": 0,
+                        "test_idx": np.arange(50),
+                        "y": y,
+                        "proba": proba,
+                        "pred": proba >= 0.5,
+                    }
+                )
+            )
+        pd.DataFrame(rows).to_csv(d / "per_step_results.csv", index=False)
+        pd.concat(frames).to_csv(d / SCORES_FILE, index=False)
+        runs.append(d)
+    out = merge_runs(runs, tmp_path / "merged")
+    sc = pd.read_csv(out / SCORES_FILE)
+    assert dict(sc.groupby("scenario")["step_i"].first()) == {"a": 0, "b": 1}
+    boot = pd.read_csv(out / "bootstrap.csv")
+    assert set(boot["scenario"]) == {"a", "b", "all"}
+    row = boot[(boot["scenario"] == "all") & (boot["metric"] == "pr_auc")].iloc[0]
+    assert {row["a"], row["b"]} == {NO_MINING, "m1"} and row["n_steps"] == 2
+    assert (out / "bootstrap.txt").exists()
