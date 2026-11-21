@@ -44,6 +44,30 @@ def token_index(
     return index
 
 
+def iter_pattern_matches(
+    sequences: list[list[set[str]]],
+    patterns: list,
+    contains,
+    tokens_of,
+):
+    """Lazy indexed_pattern_matches: yields one pattern's match set at a time,
+    so a caller that only needs counts (or one block of columns) never holds
+    every pattern's matches at once -- ~30k patterns x ~120k fixed_window
+    sequences ran a PrefixSpan job to ~100 GB (2026-11-21)."""
+    needed = [set(tokens_of(p)) for p in patterns]
+    index = token_index(sequences, set().union(*needed) if needed else set())
+    everyone = None
+    for pattern, tokens in zip(patterns, needed):
+        if not tokens:  # the empty pattern is in every sequence
+            if everyone is None:
+                everyone = set(range(len(sequences)))
+            candidates = everyone
+        else:
+            postings = sorted((index.get(t, set()) for t in tokens), key=len)
+            candidates = set(postings[0]).intersection(*postings[1:])
+        yield {i for i in candidates if contains(sequences[i], pattern)}
+
+
 def indexed_pattern_matches(
     sequences: list[list[set[str]]],
     patterns: list,
@@ -59,20 +83,7 @@ def indexed_pattern_matches(
     sets (usually a small fraction). Replaced a process pool that gave each of
     os.cpu_count() workers its own copy of the sequences (~54 GB on the
     20-core DGX for one fold, 2026-11-17)."""
-    needed = [set(tokens_of(p)) for p in patterns]
-    index = token_index(sequences, set().union(*needed) if needed else set())
-    everyone = None
-    out: list[set[int]] = []
-    for pattern, tokens in zip(patterns, needed):
-        if not tokens:  # the empty pattern is in every sequence
-            if everyone is None:
-                everyone = set(range(len(sequences)))
-            candidates = everyone
-        else:
-            postings = sorted((index.get(t, set()) for t in tokens), key=len)
-            candidates = set(postings[0]).intersection(*postings[1:])
-        out.append({i for i in candidates if contains(sequences[i], pattern)})
-    return out
+    return list(iter_pattern_matches(sequences, patterns, contains, tokens_of))
 
 
 def indexed_pattern_counts(
@@ -83,8 +94,7 @@ def indexed_pattern_counts(
 ) -> list[int]:
     """Per pattern, how many sequences contain it (see indexed_pattern_matches)."""
     return [
-        len(m)
-        for m in indexed_pattern_matches(sequences, patterns, contains, tokens_of)
+        len(m) for m in iter_pattern_matches(sequences, patterns, contains, tokens_of)
     ]
 
 

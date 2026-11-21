@@ -312,6 +312,7 @@ def dedupe_firing(
     table: ItemTable | None,
     train: list[AlertGroup],
     jaccard: float = 0.95,
+    block_size: int = 512,
 ) -> pd.DataFrame:
     """Drop near-duplicate features before the budget: walking `gated` in
     score order, a feature is dropped if its mining-window firing has
@@ -327,17 +328,41 @@ def dedupe_firing(
     schema = patterns_to_schema(gated, "dedupe", "0", item_table=table)
     if len(schema.features) != len(gated):
         raise AssertionError("gated rows and schema features are not 1:1")
-    X = SymbolicFeatureEncoder(schema).transform(train)
-    F = X[[f.feature_name for f in schema.features]].to_numpy(dtype=np.float32)
-    inter = F.T @ F  # pairwise co-firing counts
-    size = np.diag(inter)
-    union = size[:, None] + size[None, :] - inter
-    jac = np.divide(inter, union, out=np.zeros_like(inter), where=union > 0)
+    names = [f.feature_name for f in schema.features]
+    if len(set(names)) != len(names):
+        raise AssertionError("dedupe_firing needs distinct feature names")
+    # Greedy over blocks of features, each compared only with the features
+    # already kept: the same decisions (same float32 arithmetic) as the full
+    # pairwise Jaccard matrix, but memory is one block plus the kept columns
+    # instead of the whole (groups x features) firing matrix -- ~30k
+    # PrefixSpan features on ~120k fixed_window groups took ~100 GB.
+    n = len(train)
+    kept_cols = np.zeros((n, 0), dtype=np.float32)
+    kept_size = np.zeros(0, dtype=np.float32)
     keep: list[int] = []
-    for i in range(len(schema.features)):
-        if keep and jac[i, keep].max() >= jaccard:
-            continue
-        keep.append(i)
+    start = 0
+    encoder = SymbolicFeatureEncoder(schema)
+    for block in encoder.iter_column_blocks(train, block_size=block_size):
+        block_names = list(block)
+        Fb = np.column_stack([block[c] for c in block_names]).astype(np.float32)
+        inter_bb = Fb.T @ Fb  # co-firing within the block
+        size_b = np.diag(inter_bb)
+        inter_bk = Fb.T @ kept_cols  # co-firing with earlier kept features
+        local: list[int] = []
+        for j in range(len(block_names)):
+            inter = np.concatenate([inter_bk[j], inter_bb[j, local]])
+            other = np.concatenate([kept_size, size_b[local]])
+            union = size_b[j] + other - inter
+            jac = np.divide(inter, union, out=np.zeros_like(inter), where=union > 0)
+            if len(jac) and jac.max() >= jaccard:
+                continue
+            local.append(j)
+        keep.extend(start + j for j in local)
+        kept_cols = np.concatenate([kept_cols, Fb[:, local]], axis=1)
+        kept_size = np.concatenate([kept_size, size_b[local]])
+        start += len(block_names)
+    if start != len(names):
+        raise AssertionError("encoder blocks did not cover every feature")
     return gated.iloc[keep].reset_index(drop=True)
 
 

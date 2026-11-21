@@ -17,7 +17,7 @@ from thesis.mining.temporal.prefixspan.repeat_encoding import (
 )
 from thesis.mining.common.token_abstraction import abstract_mail_hosts
 from thesis.mining.common.util import (
-    indexed_pattern_matches,
+    iter_pattern_matches,
     itemset_sequence_contains_pattern,
 )
 from thesis.monitor.predicate_eval import evaluate_condition
@@ -128,30 +128,52 @@ class SymbolicFeatureEncoder:
         pattern is only checked on the groups that hold all its tokens: the
         row-by-row loop spent ~94% of a PrefixSpan mining job here (2026-11-17)."""
         groups = list(alert_groups)
-        n = len(groups)
-        if n == 0:
+        if not groups:
             return pd.DataFrame([])
         columns: dict[str, np.ndarray] = {}
-        if self.compiled_features:
-            items = [self._items_for(tx) for tx in groups]
-            for name, clauses in self.compiled_features:
-                columns[name] = np.fromiter(
-                    (any(c.issubset(it) for c in clauses) for it in items),
-                    dtype=np.int64,
-                    count=n,
+        for block in self.iter_column_blocks(groups, block_size=None):
+            columns.update(block)
+        return pd.DataFrame(columns)
+
+    def iter_column_blocks(
+        self, alert_groups: Iterable[AlertGroup], block_size: int | None = 512
+    ):
+        """The transform's columns, `block_size` features at a time, in column
+        order: dicts name -> int64 column (same values as transform). Each
+        group's items / steps are built once; only one block's columns (and
+        sequence matches) are in memory at a time, so firing over tens of
+        thousands of features stays small (dedupe_firing). None: one block."""
+        groups = list(alert_groups)
+        n = len(groups)
+        if n == 0:
+            return
+        sets = dict(self.compiled_features)
+        seqs = dict(self.compiled_sequences)
+        items = [self._items_for(tx) for tx in groups] if sets else None
+        steps = [_alert_group_steps(tx) for tx in groups] if seqs else None
+        order = self._column_order
+        size = block_size or max(len(order), 1)
+        for start in range(0, len(order), size):
+            names = order[start : start + size]
+            columns: dict[str, np.ndarray] = {}
+            seq_names = [name for name in names if name in seqs]
+            if seq_names:
+                matches = iter_pattern_matches(
+                    steps,
+                    [seqs[name] for name in seq_names],
+                    itemset_sequence_contains_pattern,
+                    lambda pattern: set().union(*pattern),
                 )
-        if self.compiled_sequences:
-            steps = [_alert_group_steps(tx) for tx in groups]
-            matches = indexed_pattern_matches(
-                steps,
-                [pattern for _, pattern in self.compiled_sequences],
-                itemset_sequence_contains_pattern,
-                lambda pattern: set().union(*pattern),
-            )
-            for (name, _), hit in zip(self.compiled_sequences, matches):
-                col = np.zeros(n, dtype=np.int64)
-                col[list(hit)] = 1
-                columns[name] = col
-        return pd.DataFrame(
-            {name: columns[name] for name in self._column_order if name in columns}
-        )
+                for name, hit in zip(seq_names, matches):
+                    col = np.zeros(n, dtype=np.int64)
+                    col[list(hit)] = 1
+                    columns[name] = col
+            for name in names:
+                if name in sets:
+                    clauses = sets[name]
+                    columns[name] = np.fromiter(
+                        (any(c.issubset(it) for c in clauses) for it in items),
+                        dtype=np.int64,
+                        count=n,
+                    )
+            yield {name: columns[name] for name in names if name in columns}
