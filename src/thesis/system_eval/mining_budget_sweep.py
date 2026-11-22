@@ -21,6 +21,11 @@ usual per_step_results.csv, summary.csv, stats.json, ...), and
   budget_agreement.csv  per variant x metric: Kendall tau of its average-rank
                         order with the reference's, and whether the top-ranked
                         arm is the same
+  budget_bootstrap.csv  (runs with saved test scores, e.g. AIT-ADS) per variant
+                        x metric x method: the paired bootstrap's mean Δ vs.
+                        "none" over the scenarios ("all" row of each variant's
+                        bootstrap.csv) with its 95% CI; the test across steps
+                        has little power with 5 AIT-ADS scenarios
   budget_summary.txt    all of the above as text
 """
 
@@ -37,6 +42,7 @@ from scipy import stats as sps
 
 from thesis.paths import ROOT
 from thesis.system_eval.mining_comparison import (
+    NO_MINING,
     COMPARISON_K,
     ComparisonConfig,
     friedman_nemenyi,
@@ -184,6 +190,34 @@ def summarize_budget_sweep(
     )
 
 
+def bootstrap_vs_none(run_dirs: dict[str, Path]) -> pd.DataFrame:
+    """Per variant with a bootstrap.csv: each method's mean Δ vs. "none" over
+    the scenarios ("all" rows), oriented as method − none."""
+    rows = []
+    for variant, d in run_dirs.items():
+        path = Path(d) / "bootstrap.csv"
+        if not path.exists():
+            continue
+        b = pd.read_csv(path)
+        b = b[
+            (b["scenario"] == "all") & ((b["a"] == NO_MINING) | (b["b"] == NO_MINING))
+        ]
+        for _, r in b.iterrows():
+            flip = r["a"] == NO_MINING
+            rows.append(
+                {
+                    "variant": variant,
+                    "metric": r["metric"],
+                    "arm": r["b"] if flip else r["a"],
+                    "delta_vs_none": -r["delta"] if flip else r["delta"],
+                    "ci_low": -r["ci_high"] if flip else r["ci_low"],
+                    "ci_high": -r["ci_low"] if flip else r["ci_high"],
+                    "significant": bool(r["significant"]),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
 def write_budget_summary(
     out_root: Path, run_dirs: dict[str, Path], reference: str = f"k{COMPARISON_K}"
 ) -> None:
@@ -192,6 +226,9 @@ def write_budget_summary(
     summary.to_csv(out_root / "budget_summary.csv", index=False)
     ranks.to_csv(out_root / "budget_ranks.csv", index=False)
     agreement.to_csv(out_root / "budget_agreement.csv", index=False)
+    boot = bootstrap_vs_none(run_dirs)
+    if not boot.empty:
+        boot.to_csv(out_root / "budget_bootstrap.csv", index=False)
     with pd.option_context("display.width", 200, "display.max_columns", 30):
         text = "\n\n".join(
             [
@@ -208,6 +245,21 @@ def write_budget_summary(
                 if not ranks.empty
                 else "",
                 agreement.to_string(index=False),
+                boot.assign(
+                    cell=lambda d: (
+                        d["delta_vs_none"].map("{:+.3f}".format)
+                        + np.where(d["significant"], "★", "")
+                    )
+                )
+                .pivot_table(
+                    index="arm",
+                    columns=["metric", "variant"],
+                    values="cell",
+                    aggfunc="first",
+                )
+                .to_string()
+                if not boot.empty
+                else "",
             ]
         )
     (out_root / "budget_summary.txt").write_text(text + "\n")

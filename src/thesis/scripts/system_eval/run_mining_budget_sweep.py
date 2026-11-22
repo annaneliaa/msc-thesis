@@ -115,6 +115,8 @@ def main() -> None:
         scenarios=tuple(a.scenarios),
         mining_cache_dir=a.mining_cache_dir,
         experiment=f"mining_budget_sweep_{a.dataset}",
+        # AIT-ADS has 5 steps: each variant gets the test-group bootstrap.
+        save_test_scores=a.dataset == "ait_ads",
     )
     out_root = a.output_dir or default_out_root(a.dataset)
     print(f"Output → {out_root} | variants: {[v.label for v in variants]}")

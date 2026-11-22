@@ -135,3 +135,46 @@ def test_sweep_mines_once_then_trains_each_variant(tmp_path, monkeypatch):
 def test_sweep_needs_a_mining_cache(tmp_path):
     with pytest.raises(ValueError, match="mining_cache_dir"):
         mbs.run_budget_sweep(ComparisonConfig(), budget_variants(), tmp_path)
+
+
+def test_budget_bootstrap_vs_none_from_variant_bootstraps(tmp_path):
+    def boot(d: Path, rows):
+        pd.DataFrame(
+            [
+                {
+                    "scenario": s,
+                    "metric": "pr_auc",
+                    "a": a,
+                    "b": b,
+                    "delta": dl,
+                    "ci_low": lo,
+                    "ci_high": hi,
+                    "significant": lo > 0 or hi < 0,
+                }
+                for s, a, b, dl, lo, hi in rows
+            ]
+        ).to_csv(d / "bootstrap.csv", index=False)
+
+    ref = _fake_run(tmp_path / "k60", {"none": [0.1, 0.2], "m1": [0.3, 0.4]})
+    k10 = _fake_run(tmp_path / "k10", {"none": [0.1, 0.2], "m1": [0.15, 0.2]})
+    # stored as a - b with "none" first in one and last in the other
+    boot(
+        ref,
+        [
+            ("all", "none", "m1", -0.2, -0.3, -0.1),
+            ("fox", "none", "m1", -0.2, -0.3, -0.1),
+        ],
+    )
+    boot(k10, [("all", "m1", "none", 0.02, -0.01, 0.05)])
+    out = mbs.bootstrap_vs_none({"k60": ref, "k10": k10}).set_index("variant")
+    assert out.loc["k60", "arm"] == "m1"
+    assert out.loc["k60", "delta_vs_none"] == pytest.approx(0.2)
+    assert (out.loc["k60", "ci_low"], out.loc["k60", "ci_high"]) == pytest.approx(
+        (0.1, 0.3)
+    )
+    assert out.loc["k60", "significant"] and not out.loc["k10", "significant"]
+    assert len(out) == 2  # only the "all" rows
+
+    mbs.write_budget_summary(tmp_path, {"k60": ref, "k10": k10}, reference="k60")
+    assert (tmp_path / "budget_bootstrap.csv").exists()
+    assert "+0.200★" in (tmp_path / "budget_summary.txt").read_text()
