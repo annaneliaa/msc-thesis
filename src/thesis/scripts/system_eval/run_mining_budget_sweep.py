@@ -11,6 +11,8 @@ cached every fold's candidates, so the mine stage is a quick no-op.
 Usage:
     python src/thesis/scripts/system_eval/run_mining_budget_sweep.py --dataset cscas
     python src/thesis/scripts/system_eval/run_mining_budget_sweep.py --dataset ait_ads
+    # AIT-ADS main protocol (without hour_of_day in the base features)
+    python src/thesis/scripts/system_eval/run_mining_budget_sweep.py --dataset ait_ads --no-hour
     # smoke test
     python src/thesis/scripts/system_eval/run_mining_budget_sweep.py --dataset cscas \\
         --max-steps 2 --seeds 0 --ks 10 60 --pooled-at
@@ -78,6 +80,11 @@ def main() -> None:
         action="store_true",
         help="don't run the mine stage (everything must already be cached)",
     )
+    p.add_argument(
+        "--no-hour",
+        action="store_true",
+        help="AIT-ADS: drop hour_of_day from the base features (the main protocol)",
+    )
     p.add_argument("--output-dir", type=Path, default=None)
     p.add_argument(
         "--summarize-only",
@@ -103,6 +110,9 @@ def main() -> None:
     )
     if a.dataset == "cscas" and set(methods) - set(ATEMPORAL_METHODS):
         p.error(f"CSCAS runs {list(ATEMPORAL_METHODS)} only")
+    if a.dataset == "cscas" and a.no_hour:
+        p.error("--no-hour is an AIT-ADS option")
+    tag = a.dataset + ("_no_hour" if a.no_hour else "")
     variants = budget_variants(tuple(a.ks), tuple(a.pooled_at))
     if a.reference not in {v.label for v in variants}:
         p.error(f"reference {a.reference} is not one of the variants")
@@ -114,11 +124,14 @@ def main() -> None:
         max_steps=a.max_steps,
         scenarios=tuple(a.scenarios),
         mining_cache_dir=a.mining_cache_dir,
-        experiment=f"mining_budget_sweep_{a.dataset}",
+        experiment=f"mining_budget_sweep_{tag}",
+        base_exclude_features=(
+            frozenset({"hour_of_day"}) if a.no_hour else frozenset()
+        ),
         # AIT-ADS has 5 steps: each variant gets the test-group bootstrap.
         save_test_scores=a.dataset == "ait_ads",
     )
-    out_root = a.output_dir or default_out_root(a.dataset)
+    out_root = a.output_dir or default_out_root(tag)
     print(f"Output → {out_root} | variants: {[v.label for v in variants]}")
     run_budget_sweep(
         base, variants, out_root, mine=not a.skip_mine, reference=a.reference

@@ -11,6 +11,8 @@
 #   DATASET=cscas src/thesis/shell-scripts/paper/run_mining_budget_sweep.sh
 #   DATASET=ait_ads src/thesis/shell-scripts/paper/run_mining_budget_sweep.sh
 #     (after the full AIT-ADS comparison run, so its mining is cached)
+#   DATASET=ait_ads NO_HOUR=1 src/thesis/shell-scripts/paper/run_mining_budget_sweep.sh
+#     (the AIT-ADS main protocol: hour_of_day left out of the base features)
 # Smoke test:
 #   DATASET=cscas MAX_STEPS=2 SEEDS=0 KS="10 60" POOLED_AT="" \
 #     src/thesis/shell-scripts/paper/run_mining_budget_sweep.sh
@@ -38,16 +40,19 @@ POOLED_AT="${POOLED_AT-60}"   # empty = no pooled variant
 SEEDS="${SEEDS:-0 1 2 3 4}"
 MAX_STEPS="${MAX_STEPS:-}"
 SKIP_MINE="${SKIP_MINE:-0}"
+NO_HOUR="${NO_HOUR:-0}"
 
 LOG_DIR="$REPO_ROOT/artifacts/logs/mining_budget_sweep"
 mkdir -p "$LOG_DIR"
-log_file="$LOG_DIR/${DATASET}_$(date -u +%Y%m%d_%H%M%S).log"
+tag="$DATASET"; [[ "$NO_HOUR" == 1 ]] && tag+="_no_hour"
+log_file="$LOG_DIR/${tag}_$(date -u +%Y%m%d_%H%M%S).log"
 
 # shellcheck disable=SC2206
 cmd=(python -u "$REPO_ROOT/src/thesis/scripts/system_eval/run_mining_budget_sweep.py"
   --dataset "$DATASET" --ks $KS --pooled-at $POOLED_AT --seeds $SEEDS)
 [[ -n "$MAX_STEPS" ]] && cmd+=(--max-steps "$MAX_STEPS")
 [[ "$SKIP_MINE" == 1 ]] && cmd+=(--skip-mine)
+[[ "$NO_HOUR" == 1 ]] && cmd+=(--no-hour)
 
 echo "Running: ${cmd[*]}"
 echo "Log: $log_file"
