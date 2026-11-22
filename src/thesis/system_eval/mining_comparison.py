@@ -168,6 +168,9 @@ class ComparisonConfig:
     # Extra fields left out of the item table (e.g. the signature-derived
     # items, for the "no signature items" condition of Check 3).
     extra_exclude_fields: frozenset[str] = frozenset()
+    # Base features left out of the base schema, for every arm incl. "none"
+    # (AIT-ADS shortcut check: hour_of_day, FINDINGS.md 2026-11-22).
+    base_exclude_features: frozenset[str] = frozenset()
     model: str = "rf"
     threshold_mode: str = "fixed"
     calibrated_recall_target: float = 0.9
@@ -768,13 +771,17 @@ def phase_split(
     return out
 
 
-def ait_ads_base_schema() -> FeatureSchema:
+def ait_ads_base_schema(exclude: frozenset[str] = frozenset()) -> FeatureSchema:
     from thesis.configs import load_base_features
 
+    features = load_base_features("ait-ads")
+    unknown = set(exclude) - set(features)
+    if unknown:
+        raise ValueError(f"not AIT-ADS base features: {sorted(unknown)}")
     return FeatureSchema(
         schema_name="base",
         schema_version="0.1.0",
-        base=BaseFeatureSchema(load_base_features("ait-ads")),
+        base=BaseFeatureSchema([f for f in features if f not in exclude]),
         symbolic=None,
     )
 
@@ -784,7 +791,7 @@ def _ait_ads_spec(config: ComparisonConfig, scenarios, attach_steps) -> DatasetS
     leaky = set().union(*(default_leaky_attribute_fields(s) for s in scenarios))
     return DatasetSpec(
         dataset="ait_ads",
-        base_schema=ait_ads_base_schema(),
+        base_schema=ait_ads_base_schema(config.base_exclude_features),
         # cscas_grouping groups hold one alert name, like a CSCAS
         # SignatureID; other groupings fall back to the group id.
         signature_of=_ait_signature,

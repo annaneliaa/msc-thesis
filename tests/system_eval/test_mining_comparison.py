@@ -618,3 +618,54 @@ def test_merge_runs_combines_test_scores_and_bootstraps(tmp_path):
     row = boot[(boot["scenario"] == "all") & (boot["metric"] == "pr_auc")].iloc[0]
     assert {row["a"], row["b"]} == {NO_MINING, "m1"} and row["n_steps"] == 2
     assert (out / "bootstrap.txt").exists()
+
+
+# --- AIT-ADS shortcut checks (no host item, no hour_of_day) ------------------
+
+
+def test_base_schema_can_drop_hour_of_day():
+    full = ait_ads_base_schema()
+    assert "hour_of_day" in full.base.features
+    no_hour = ait_ads_base_schema(frozenset({"hour_of_day"}))
+    assert no_hour.base.features == [
+        f for f in full.base.features if f != "hour_of_day"
+    ]
+    with pytest.raises(ValueError, match="not AIT-ADS base features"):
+        ait_ads_base_schema(frozenset({"hour"}))
+
+
+def test_shortcut_options_reach_the_spec_and_the_cache_key():
+    from dataclasses import replace as dc_replace
+
+    from thesis.mining.common.item_table import build_item_table
+    from thesis.system_eval.mining_comparison import _ait_ads_spec
+
+    from test_mining_mini_experiment import _ait_groups
+
+    groups = _ait_groups()
+    base = ComparisonConfig(dataset="ait_ads", methods=("eclat",))
+    no_host = dc_replace(base, extra_exclude_fields=frozenset({"host"}))
+    no_hour = dc_replace(base, base_exclude_features=frozenset({"hour_of_day"}))
+    attach = lambda gs: None  # noqa: E731
+    spec, spec_nh, spec_nhr = (
+        _ait_ads_spec(c, ["fox"], attach) for c in (base, no_host, no_hour)
+    )
+    assert "host" in spec_nh.exclude_fields and "host" not in spec.exclude_fields
+    assert "hour_of_day" not in spec_nhr.base_schema.base.features
+    assert "hour_of_day" in spec.base_schema.base.features
+
+    fields = lambda s: {  # noqa: E731
+        c.split("=")[0]
+        for c in build_item_table(
+            groups, exclude_fields=s.exclude_fields, include_fields=s.include_fields
+        )
+        .items()
+        .columns
+    }
+    assert "host" in fields(spec) and "host" not in fields(spec_nh)
+
+    step = Step(0, groups[:100], groups[100:], 1.0, scenario="fox")
+    mini = MiniConfig(k=10, n_bins=4)
+    key = mining_cache_key("eclat", step, spec, mini, "T2")
+    assert key != mining_cache_key("eclat", step, spec_nh, mini, "T2")  # re-mine
+    assert key == mining_cache_key("eclat", step, spec_nhr, mini, "T2")  # reuse

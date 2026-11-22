@@ -92,6 +92,16 @@ def main() -> None:
         help="leave the signature-derived fields out of the item table (Check 3)",
     )
     p.add_argument(
+        "--no-host",
+        action="store_true",
+        help="AIT-ADS shortcut check: leave the host field out of the item table",
+    )
+    p.add_argument(
+        "--no-hour",
+        action="store_true",
+        help="AIT-ADS shortcut check: leave hour_of_day out of the base schema",
+    )
+    p.add_argument(
         "--mine-once",
         action="store_true",
         help="mine RIPPER once per step instead of once per seed",
@@ -167,6 +177,8 @@ def main() -> None:
         p.error(f"CSCAS runs {list(ATEMPORAL_METHODS)} only")
     if a.dataset == "ait_ads" and a.no_signature_items:
         p.error("--no-signature-items is the CSCAS Check 3 condition only")
+    if a.dataset == "cscas" and (a.no_host or a.no_hour):
+        p.error("--no-host / --no-hour are AIT-ADS shortcut checks")
     experiment = "mining_comparison"
     if a.dataset == "ait_ads":
         # LOSO keeps the plain name its earlier runs used.
@@ -176,6 +188,10 @@ def main() -> None:
         )
     if a.no_signature_items:
         experiment += "_no_sig"
+    if a.no_host:
+        experiment += "_no_host"
+    if a.no_hour:
+        experiment += "_no_hour"
     if a.settings_variant != "default":
         experiment += f"_settings_{a.settings_variant}"
 
@@ -193,6 +209,10 @@ def main() -> None:
             frozenset(CSCAS_SIGNATURE_DERIVED_FIELDS)
             if a.no_signature_items
             else frozenset()
+        )
+        | (frozenset({"host"}) if a.no_host else frozenset()),
+        base_exclude_features=(
+            frozenset({"hour_of_day"}) if a.no_hour else frozenset()
         ),
         max_steps=a.max_steps,
         out_dir=a.output_dir,

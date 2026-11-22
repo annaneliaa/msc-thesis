@@ -104,6 +104,10 @@ GROUPING="${GROUPING:-cscas_grouping}"
 # 1 = label mixed (benign + attack) groups attack instead of dropping them
 # (label-purity runs, GM_PLAN.md).
 MIXED_AS_ATTACK="${MIXED_AS_ATTACK:-0}"
+# Shortcut checks (FINDINGS.md 2026-11-22): 1 = leave the host item out of
+# the item table (NO_HOST) / hour_of_day out of the base schema (NO_HOUR).
+NO_HOST="${NO_HOST:-0}"
+NO_HOUR="${NO_HOUR:-0}"
 MAX_PARALLEL="${MAX_PARALLEL:-3}"
 MINE_PARALLEL="${MINE_PARALLEL:-$MAX_PARALLEL}"
 TRAIN_PARALLEL="${TRAIN_PARALLEL:-$MAX_PARALLEL}"
@@ -118,6 +122,8 @@ _suffix=""
 [[ "$GROUPING" != cscas_grouping ]] && _suffix="_grouping_$GROUPING"
 [[ "$SETTINGS_VARIANT" != default ]] && _suffix="${_suffix}_settings_$SETTINGS_VARIANT"
 [[ "$MIXED_AS_ATTACK" == 1 ]] && _suffix="${_suffix}_mixed_attack"
+[[ "$NO_HOST" == 1 ]] && _suffix="${_suffix}_no_host"
+[[ "$NO_HOUR" == 1 ]] && _suffix="${_suffix}_no_hour"
 case "$AIT_PROTOCOL" in
   split) _base=mining_comparison_ait_ads_split ;;
   loso)  _base=mining_comparison_ait_ads ;;
@@ -138,6 +144,8 @@ COMMON=(--dataset ait_ads --ait-protocol "$AIT_PROTOCOL" --scenarios $SCENARIOS 
   --mining-cache-dir "$MINING_CACHE_DIR" --settings-variant "$SETTINGS_VARIANT"
   --grouping "$GROUPING")
 [[ "$MIXED_AS_ATTACK" == 1 ]] && COMMON+=(--mixed-as-attack)
+[[ "$NO_HOST" == 1 ]] && COMMON+=(--no-host)
+[[ "$NO_HOUR" == 1 ]] && COMMON+=(--no-hour)
 
 # --- memory -----------------------------------------------------------------
 
@@ -267,7 +275,7 @@ queue() { JOB_NAMES+=("$1"); JOB_ARGS+=("$2"); }
 echo "Output: $OUT_DIR"
 echo "Logs:   $LOG_DIR"
 echo "Protocol: $AIT_PROTOCOL | scenarios: $TEST_SCENARIOS (pool: $SCENARIOS) | methods: $METHODS | seeds: $SEEDS"
-echo "Mining cache: $MINING_CACHE_DIR | settings variant: $SETTINGS_VARIANT | grouping: $GROUPING | mixed as attack: $MIXED_AS_ATTACK"
+echo "Mining cache: $MINING_CACHE_DIR | settings variant: $SETTINGS_VARIANT | grouping: $GROUPING | mixed as attack: $MIXED_AS_ATTACK | no host: $NO_HOST | no hour: $NO_HOUR"
 echo "Safety: mine $MINE_PARALLEL / train $TRAIN_PARALLEL at once, ${STAGGER_SECONDS}s stagger," \
      "start at >= ${START_FREE_GB}G free, kill newest at < ${CRIT_FREE_GB}G free"
 
