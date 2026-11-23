@@ -412,12 +412,13 @@ class MonitorAttachedConfig:
     n_jobs: int = 4
     # Monitor sensitivity -- passed straight through to run_monitor_window
     # at every horizon. The threshold pair defaults to the signals module's
-    # own untuned starting values (PSI>0.1, drift>0.10); a real run should
-    # override both with the values Drift Signal EDA's sweep selected.
+    # own values (PSI>0.1, drift>0.05, re-derived 2026-11-23 after the
+    # Signal 2 precision fix); a real run should pass the values Drift
+    # Signal EDA's sweep selected.
     monitor_consecutive_windows: int = 3
     monitor_min_samples_signal_2: int = 30
     psi_threshold: float = 0.1
-    cal_threshold: float = 0.10
+    cal_threshold: float = 0.05
     # System-operationality instrumentation. Per-horizon fast-route timing
     # is a single batched encode+predict call over that horizon's incoming
     # groups (cheap, always on) -- it gives a *mean* per-group cost, not a

@@ -152,10 +152,10 @@ def main() -> None:
     parser.add_argument(
         "--cal-threshold",
         type=float,
-        default=0.10,
+        default=0.05,
         dest="cal_threshold",
         metavar="DRIFT",
-        help="Signal-2 elevation cutoff -- pass the value Drift Signal EDA's sweep selected. Default: 0.10 (untuned)",
+        help="Signal-2 elevation cutoff -- pass the value Drift Signal EDA's sweep selected. Default: 0.05 (re-derived 2026-11-23)",
     )
     parser.add_argument(
         "--monitor-consecutive-windows",

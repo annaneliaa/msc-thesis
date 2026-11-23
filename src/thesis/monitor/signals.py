@@ -12,7 +12,11 @@ from thesis.schemas.groups import AlertGroup
 
 PSI_ELEVATED_THRESHOLD = 0.1
 PSI_SIGNIFICANT_THRESHOLD = 0.2
-CALIBRATION_DRIFT_THRESHOLD = 0.10
+# Re-derived 2026-11-23 from the fixed-code monitor_drift rerun
+# (20261123_204614) with notebook 03's Analysis 3 sweep: 0.05 is the highest
+# value that still detects decay in all 4 configs; >= 0.06 never triggers at
+# gran 0.1. The old 0.10 predates the Signal 2 recall->precision fix.
+CALIBRATION_DRIFT_THRESHOLD = 0.05
 DEFAULT_MIN_SAMPLES_SIGNAL_2 = 30
 
 
