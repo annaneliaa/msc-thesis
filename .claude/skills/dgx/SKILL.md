@@ -10,7 +10,7 @@ description: Work with the DGX Spark remote machine — git pull the thesis repo
 - SSH alias: `dgx-spark` (defined in `~/.ssh/config`: user `anna`, Tailscale IP `100.105.71.16`).
 - If `ssh` hangs or times out, Tailscale is probably down on the Mac. Tell the user; don't retry in a loop.
 - Use non-interactive one-shot commands: `ssh dgx-spark '<cmd>'`. Add `-o ConnectTimeout=10` so failures are fast.
-- Other users share this machine. Never kill, renice or touch processes you didn't start, and never touch anything outside `~/Desktop/msc-thesis`.
+- Other users share this machine. Never kill, renice or touch processes you didn't start, and never touch anything outside `~/Desktop/msc-thesis`. See section 2b: leaving other users' work alone outranks getting our run done.
 
 ## Paths
 
@@ -90,12 +90,58 @@ docker exec -it thesis-run bash src/thesis/shell-scripts/baselines/grouping/setu
 
 Re-run `setup_container.sh` (it's idempotent) after a pull that changed `pyproject.toml` dependencies. Never `pip install torch` or `numpy` in the container's base env, because that would replace the GPU-matched build. Starting, rebuilding or re-running setup needs the user's OK; `docker start` of a stopped container is fine to suggest, but ask first.
 
+## 2b. Sharing the DGX with other users
+
+The DGX is shared (other accounts seen: `manya`, `ebardhi`; there may be others). **Their work always comes first: never do anything that stops, slows down, or changes the environment of someone else's work, even if it blocks our run.** If our run and theirs conflict, our run waits or shrinks; theirs is never touched.
+
+### Hard rules (no exceptions, even if the user asks in passing; if the user explicitly insists, tell them to contact that person instead)
+
+- Never `kill`/`pkill`/`killall`/`renice`/`ionice` a process that isn't ours. Any `pkill`/`pgrep -f` pattern runs **inside `thesis-run`** (`docker exec thesis-run pkill …`) or on the host with `-u anna`, never as a bare host pattern that could match someone else's process.
+- Never stop, restart, remove, `exec` into, or `docker update` any container other than `thesis-run`. Never run `docker system prune`, `docker image prune`, `docker container prune`, `docker volume prune`, `docker builder prune` or `docker rmi` of images we didn't build (`thesis-dgx` is ours; `nvcr.io/nvidia/pytorch` is its base, leave it). These are machine-wide and can delete other people's images and stopped containers.
+- Never use `sudo`, and never restart or reconfigure shared services: the Docker daemon, `ollama` (system service, shared), the NVIDIA dashboard, drivers, `nvidia-smi -r`/clock settings, package installs, or reboots.
+- Never read, write, or `du` other users' home directories, and don't touch shared locations like `/tmp` beyond our own files.
+- No GPU/CPU-hogging "test" commands on the host (benchmarks, stress tests).
+
+### Before launching anything: interference check
+
+Run the read-only snapshot (script next to this skill) from the local repo root:
+
+```bash
+ssh dgx-spark 'bash -s' < .claude/skills/dgx/check_shared_usage.sh
+```
+
+It reports who's logged in, other users' busy processes (CPU ≥10% or RAM ≥1 GB), every running container, GPU use and which process holds it, models loaded in the shared `ollama`, and free RAM, load and disk. Then judge our planned run against it. On the DGX Spark, **CPU and GPU share one 121 GB unified memory pool**, so memory is the main way two jobs hurt each other (one OOM can kill either job).
+
+| Resource | Our run's typical footprint | Interferes if… |
+|---|---|---|
+| RAM (unified) | Mining / temporal decay / walk-forward / signature leakage: several GB to tens of GB. AlertBERT/DeepCASE/BERT baselines: GPU tensors also come out of this pool. | available RAM minus our expected peak leaves < ~20 GB headroom |
+| CPU (20 cores) | Most models use `n_jobs=-1` = all 20 cores | another user's processes keep load ≳ 4 or use ≳ 100% CPU |
+| GPU (one GB10) | AlertBERT, DeepCASE, BERT/SecureBERT baselines, zero-shot | GPU util > ~10% or any compute process that isn't ours |
+| `ollama` | zero-shot baselines (`run_zeroshot.sh`, `run_ait_ads_zeroshot.sh`) send it a constant stream of requests | `ollama ps` shows a model we didn't load, or someone else's process is using it |
+| Disk | caches up to a few GB | free space < ~100 GB |
+
+Report to the user in a few lines: who's active, what they're running (process name + resources, not their file paths or arguments beyond what's needed), and a verdict:
+- **Clear**: nobody else is using meaningful resources. Go ahead.
+- **Shared but fine**: others are active but our run fits alongside. Go ahead, optionally at lower priority (below).
+- **Would interfere**: say which resource clashes and offer options: wait and re-check later, run a smaller variant (smoke test, fewer seeds), or run at reduced priority/cores. **Don't launch until the user picks one.**
+
+Without the user's say-so, never launch on "Would interfere", and never treat an idle-looking process of someone else's as abandoned.
+
+### Being a good neighbour while running (ours only)
+
+When others are active, prefer these. All of them affect only our own processes or container:
+- Lower our priority: put `nice -n 10` in front of the script inside the container (`… bash -lc "cd /workspace && nice -n 10 <script> > <log> 2>&1"`).
+- Cap our container's cores: `ssh dgx-spark 'docker update --cpus=10 thesis-run'`, and undo with `--cpus=0`. This only touches `thesis-run`, but it does change our container, so ask first.
+- Run smaller (fewer seeds or steps) or later (evening/weekend).
+
+While watching a run (section 3), if another user's job appears and memory gets tight (< ~10 GB available), tell the user right away and suggest pausing or stopping **our** run, never theirs.
+
 ## 3. Launching and watching a run (only when the user asks)
 
 By default the user launches runs themselves. Only launch one when the user explicitly asks for that specific script in this conversation. Before launching:
 
 1. Make sure the DGX is on the latest pushed code (section 1) and the container is up (`docker start thesis-run` if it's stopped).
-2. Check nothing else of the user's is already running (`pgrep` below). If something is, ask before starting a second run.
+2. Check nothing else of the user's is already running (`pgrep` below). If something is, ask before starting a second run. **Then run the other-users interference check (section 2b)** and include its verdict when confirming the command.
 3. Confirm the exact command (script and any env overrides like `MAX_STEPS`, `SEEDS`, `FORCE`) back to the user in one line, then launch. Offer a smoke test first when the script has one.
 
 Launch detached inside the container, with the launcher's own stdout in a timestamped log so it survives the SSH session closing:
@@ -352,6 +398,16 @@ ssh dgx-spark 'docker exec thesis-run ps -eo pid,etime,%cpu,%mem,cmd --sort=-%cp
 ssh -t dgx-spark 'docker exec -it thesis-run top'
 # stop one run — WARNING: the run is lost, partial outputs may be half-written
 ssh dgx-spark 'docker exec thesis-run pkill -f run_signature_leakage.py'
+```
+
+### Other users
+```bash
+# full read-only snapshot of other users' activity + free resources (run from the local repo root)
+ssh dgx-spark 'bash -s' < .claude/skills/dgx/check_shared_usage.sh
+# who is logged in
+ssh dgx-spark 'who'
+# every process of one user (read-only)
+ssh dgx-spark 'ps -u <user> -o pid,etime,%cpu,rss,comm --sort=-%cpu | head'
 ```
 
 ### GPU and machine
