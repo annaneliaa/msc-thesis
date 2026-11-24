@@ -95,6 +95,7 @@ SIGNAL_VALUES = (
     *(f"na_{s}" for s in STATISTICS),
     "novelty_pattern_novelty_rate",
     "fb_precision",
+    "fpsi_max",
 )
 
 KINDS = (
@@ -132,6 +133,8 @@ SIGNAL_FLAGS = (
     ("signal_2", "signal_2_elevated"),
     *((f"na_{s}", f"na_{s}_elevated") for s in STATISTICS),
     ("feedback_precision", "fb_precision_elevated"),
+    ("feature_psi", "fpsi_elevated"),
+    ("feature_psi_fixed", "fpsi_fixed_elevated"),
 )
 
 

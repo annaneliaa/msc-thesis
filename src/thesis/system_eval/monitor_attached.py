@@ -262,6 +262,8 @@ def _run_one_config(
         heldout_scores=heldout_scores,
         threshold=fit.threshold,
         min_samples=config.monitor_min_samples_signal_2,
+        train_X=fit.X_train,
+        heldout_X=fit.X_test,
     )
     print(f"    [signals] {signal_log.baseline_note}")
 
@@ -390,7 +392,11 @@ def _run_one_config(
                 # Logged against the deployment active in this window,
                 # before any redeploy this window may trigger.
                 **signal_log.log_window(
-                    dynamic_schema, raw_groups_h, proba_full, current_threshold
+                    dynamic_schema,
+                    raw_groups_h,
+                    proba_full,
+                    current_threshold,
+                    X=encoded_full,
                 ),
             }
         )

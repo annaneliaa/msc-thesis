@@ -514,6 +514,8 @@ def _run_one_monitor_config(
             heldout_scores=_scores_for(fit.X_test, fit.test_groups_raw),
             threshold=fit.threshold,
             min_samples=config.monitor_min_samples_signal_2,
+            train_X=fit.X_train,
+            heldout_X=fit.X_test,
         )
         print(f"    [signals] {signal_log.baseline_note}")
 
@@ -594,6 +596,7 @@ def _run_one_monitor_config(
                     raw_groups_h,
                     _scores_for(X_h, raw_groups_h),
                     fit.threshold,
+                    X=X_h,
                 )
             )
             signal_rows.extend(

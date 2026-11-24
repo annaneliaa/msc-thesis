@@ -6,7 +6,9 @@ system_eval.monitor_drift (one deployment for the whole walk) and
 system_eval.monitor_attached (redeploys on trigger), so both log exactly the
 same columns under the same baseline rules.
 
-Also logs analyst-feedback precision (thesis.monitor.feedback): precision
+Also logs per-feature PSI over every model input (thesis.monitor.feature_psi)
+when the caller passes the encoded model inputs, and analyst-feedback
+precision (thesis.monitor.feedback): precision
 of the escalated, labelled groups vs the reference rows' precision.
 
 Baselines per deployment:
@@ -27,7 +29,10 @@ from typing import Sequence
 
 import numpy as np
 
+import pandas as pd
+
 from thesis.mining.common.attribute_features import compute_candidate_attribute_features
+from thesis.monitor.feature_psi import FEATURE_PSI_COLUMNS, FeaturePsiMonitor
 from thesis.monitor.feedback import (
     FEEDBACK_COLUMNS,
     FeedbackCounts,
@@ -64,6 +69,7 @@ LOGGED_COLUMNS = (
     + tuple(f"na_{k}{s}" for k in STATISTICS for s in ("", "_thr", "_elevated"))
     + tuple(f"na_share_{r}{s}" for r in REGIONS for s in ("", "_ref"))
     + FEEDBACK_COLUMNS
+    + FEATURE_PSI_COLUMNS
 )
 
 
@@ -98,8 +104,27 @@ class SignalLog:
         heldout_scores: np.ndarray | None,
         threshold: float,
         min_samples: int,
+        train_X: pd.DataFrame | None = None,
+        heldout_X: pd.DataFrame | None = None,
     ) -> None:
+        """train_X/heldout_X: encoded model inputs aligned row-for-row with
+        train_groups/heldout_groups (skipped if they don't align). Reference
+        for per-feature PSI: all of W_src (train + held-out), 24h blocks."""
         self.min_samples = min_samples
+        self.feature_monitor: FeaturePsiMonitor | None = None
+        if (
+            train_X is not None
+            and heldout_X is not None
+            and len(train_X) == len(train_groups)
+            and len(heldout_X) == len(heldout_groups)
+            and len(train_X) + len(heldout_X) > 0
+        ):
+            ts = np.array(
+                [g.start_ts or 0 for g in list(train_groups) + list(heldout_groups)]
+            )
+            self.feature_monitor = FeaturePsiMonitor(
+                pd.concat([train_X, heldout_X], ignore_index=True), ts
+            )
         self.novelty_ref: NoveltyReference = build_novelty_reference(
             schema, train_groups
         )
@@ -129,6 +154,13 @@ class SignalLog:
     def _describe(self) -> str:
         m = self.monitor
         fb = self.feedback_ref
+        fp = self.feature_monitor
+        fp_note = (
+            f"; feature PSI thr {fp.threshold:.4f} ({fp.n_blocks} blocks, "
+            f"{len(fp.columns)} features)"
+            if fp is not None
+            else ""
+        )
         fb_note = (
             f"; feedback precision ref {fb.precision:.3f} (n={fb.n_escalated})"
             if fb is not None and fb.n_escalated
@@ -138,6 +170,7 @@ class SignalLog:
             f"baseline blocks: input {m.input.n_blocks}, output {m.output.n_blocks}; "
             + ", ".join(f"{k}={v:.4f}" for k, v in m.thresholds.items())
             + fb_note
+            + fp_note
         )
 
     def redeploy(
@@ -149,6 +182,7 @@ class SignalLog:
         self.novelty_ref = build_novelty_reference(schema, training_groups)
         self.monitor = None
         self.feedback_ref = None
+        self.feature_monitor = None
         self._reference_groups = None
 
     def log_window(
@@ -157,8 +191,11 @@ class SignalLog:
         groups: Sequence[AlertGroup],
         scores: np.ndarray | None,
         threshold: float,
+        X: pd.DataFrame | None = None,
     ) -> dict:
-        """All logged signal columns for one window (LOGGED_COLUMNS keys)."""
+        """All logged signal columns for one window (LOGGED_COLUMNS keys).
+        X: the window's encoded model inputs, aligned with `groups` (optional;
+        per-feature PSI is skipped without it)."""
         out: dict = dict.fromkeys(LOGGED_COLUMNS)
         if not groups:
             return out
@@ -166,6 +203,11 @@ class SignalLog:
             schema, groups, self.novelty_ref.patterns, scores, threshold
         )
         is_reference = groups is self._reference_groups
+        if X is not None and len(X) != len(groups):
+            X = None
+        if self.monitor is None and X is not None:
+            ts = np.array([g.start_ts or 0 for g in groups])
+            self.feature_monitor = FeaturePsiMonitor(X, ts)
         if self.monitor is None:
             # Warm-up after a redeploy: this window is the new baseline.
             self.monitor = NoiseAwareMonitor(rows, rows, min_samples=self.min_samples)
@@ -178,4 +220,6 @@ class SignalLog:
         out.update({f"novelty_{k}": getattr(novelty, k) for k in NOVELTY_FIELDS})
         out.update(self.monitor.evaluate(rows))
         out.update(feedback_signal(_counts(rows), self.feedback_ref))
+        if self.feature_monitor is not None and X is not None:
+            out.update(self.feature_monitor.evaluate(X))
         return out

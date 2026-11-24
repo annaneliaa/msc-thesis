@@ -154,6 +154,9 @@ def test_end_to_end_logs_injection_and_summarises(monkeypatch, tmp_path):
     assert row.d_precision_vs_clean < 0  # benign groups that look like attacks
     assert "signal_1_detect" in summ.columns
     assert "feedback_precision_false_alarm" in summ.columns
+    # Per-feature PSI over the model inputs is logged on every walked window.
+    assert ph[ph.horizon_window_index > 0].fpsi_max.notna().all()
+    assert "feature_psi_detect" in summ.columns
 
 
 def test_detection_summary_rates():
