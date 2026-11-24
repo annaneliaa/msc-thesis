@@ -16,11 +16,16 @@ Binning (fixed from the reference rows only):
 NaN is binned as its own value (sentinel).
 
 Decisions (two variants, both logged):
-* fpsi_elevated: max-over-features PSI above a day-by-day baseline threshold,
-  same rule as thesis.monitor.noise_aware: the largest leave-one-out
-  max-feature PSI over 24h blocks of the reference period;
+* fpsi_elevated: any feature's PSI above ITS OWN day-by-day threshold, same
+  rule as thesis.monitor.noise_aware: the largest leave-one-out PSI of that
+  feature over 24h blocks of the reference period, floored at MIN_THRESHOLD
+  (so a feature that is constant in the reference doesn't fire on a handful
+  of new values). Per feature, because on CSCAS a few features swing
+  hugely from day to day (a single max-over-features threshold came out at
+  5.7 and could never fire);
 * fpsi_fixed_elevated: any feature PSI > FIXED_PSI (0.2, the common "major
   shift" rule of thumb), no baseline.
+fpsi_max_ratio = max over features of PSI / own threshold (> 1 = elevated).
 """
 
 from __future__ import annotations
@@ -35,6 +40,7 @@ from thesis.monitor.noise_aware import INPUT_BLOCK_SECONDS, time_blocks
 N_BINS = 10
 MAX_CATEGORIES = 12
 FIXED_PSI = 0.2
+MIN_THRESHOLD = 0.01
 _NAN = -9.87654321e12
 _EPS = 1e-6
 
@@ -43,7 +49,9 @@ FEATURE_PSI_COLUMNS = (
     "fpsi_top_feature",
     "fpsi_n_features",
     "fpsi_n_over_fixed",
-    "fpsi_thr",
+    "fpsi_max_ratio",
+    "fpsi_top_ratio_feature",
+    "fpsi_n_elevated",
     "fpsi_elevated",
     "fpsi_fixed_elevated",
 )
@@ -104,22 +112,24 @@ class FeaturePsiMonitor:
         self.ref_counts = self._counts(codes, np.ones(len(v), dtype=bool))
         self.ref_hist = [c / c.sum() for c in self.ref_counts]
 
-        block_values: list[float] = []
         blocks = time_blocks(np.asarray(ts_ref), block_seconds)
+        block_psi = np.full((len(blocks), len(self.binners)), np.nan)
         if len(blocks) >= 2:
-            for m in blocks:
+            for b, m in enumerate(blocks):
                 inside = self._counts(codes, m)
-                psis = [
+                block_psi[b] = [
                     _psi(_norm(r - i), _norm(i))
                     for r, i in zip(self.ref_counts, inside)
                 ]
-                block_values.append(max(psis) if psis else np.nan)
         self.n_blocks = len(blocks)
-        self.block_values = block_values
-        self.threshold = (
-            float(np.nanmax(block_values))
-            if block_values and np.isfinite(block_values).any()
-            else np.nan
+        self.block_psi = block_psi
+        self.thresholds = (
+            pd.Series(
+                np.maximum(np.nanmax(block_psi, axis=0), MIN_THRESHOLD),
+                index=self.columns,
+            )
+            if len(blocks) >= 2
+            else None
         )
 
     def _codes(self, v: np.ndarray) -> np.ndarray:
@@ -154,12 +164,16 @@ class FeaturePsiMonitor:
             fpsi_top_feature=str(psi.idxmax()),
             fpsi_n_features=len(psi),
             fpsi_n_over_fixed=int((psi > self.fixed_psi).sum()),
-            fpsi_thr=self.threshold,
-            fpsi_elevated=bool(top > self.threshold)
-            if np.isfinite(self.threshold)
-            else None,
             fpsi_fixed_elevated=bool(top > self.fixed_psi),
         )
+        if self.thresholds is not None:
+            ratio = psi / self.thresholds
+            out.update(
+                fpsi_max_ratio=float(ratio.max()),
+                fpsi_top_ratio_feature=str(ratio.idxmax()),
+                fpsi_n_elevated=int((ratio > 1).sum()),
+                fpsi_elevated=bool((ratio > 1).any()),
+            )
         return out
 
 

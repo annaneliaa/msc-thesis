@@ -156,9 +156,10 @@ class SignalLog:
         fb = self.feedback_ref
         fp = self.feature_monitor
         fp_note = (
-            f"; feature PSI thr {fp.threshold:.4f} ({fp.n_blocks} blocks, "
-            f"{len(fp.columns)} features)"
-            if fp is not None
+            f"; feature PSI: {fp.n_blocks} blocks, {len(fp.columns)} features, "
+            f"per-feature thr median {fp.thresholds.median():.4f} max "
+            f"{fp.thresholds.max():.4f} ({fp.thresholds.idxmax()})"
+            if fp is not None and fp.thresholds is not None
             else ""
         )
         fb_note = (
