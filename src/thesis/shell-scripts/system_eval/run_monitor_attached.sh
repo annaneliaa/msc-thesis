@@ -34,8 +34,13 @@
 # Example:
 #   src/thesis/shell-scripts/system_eval/run_monitor_attached.sh 0.15 0.12 3 30
 #
-# Edit SCENARIOS/MINING_SETTINGS/GRANULARITIES/MODELS below to change what
-# else runs.
+# TRIGGER (env, default "feedback") picks what acts: analyst-feedback
+# precision (FEEDBACK_CONSECUTIVE_WINDOWS in a row -> FEEDBACK_ACTION) or
+# "thesis" (the Signal 1/2 table, gated by the positional thresholds). The
+# other decision is still logged every window.
+#
+# Edit SCENARIOS/MINING_SETTINGS/MODELS below, or set GRANULARITIES
+# (space-separated) in the environment, to change what else runs.
 
 set -uo pipefail
 
@@ -55,7 +60,10 @@ conda activate thesis
 SCENARIOS=(cscas)
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 MINING_SETTINGS="$REPO_ROOT/src/thesis/configs/monitor_eda_mining_setting.yaml"
-GRANULARITIES=(0.1 0.05)
+read -r -a GRANULARITIES <<< "${GRANULARITIES:-0.1 0.05 0.02}"
+TRIGGER="${TRIGGER:-feedback}"
+FEEDBACK_CONSECUTIVE_WINDOWS="${FEEDBACK_CONSECUTIVE_WINDOWS:-1}"
+FEEDBACK_ACTION="${FEEDBACK_ACTION:-REMINE_AND_RETRAIN}"
 MODELS=(xgboost rf)
 SOURCE_SPLIT_MODE="baseline_split"  # anchors W_src to the CSCAS baseline's own train/test boundary
 THRESHOLD_MODE="fixed"  # or "calibrated_recall" -- keep in sync with the other experiment scripts
@@ -94,6 +102,9 @@ for scenario in "${SCENARIOS[@]}"; do
     --cal-threshold "$CAL_THRESHOLD" \
     --monitor-consecutive-windows "$MONITOR_CONSECUTIVE_WINDOWS" \
     --monitor-min-samples-signal-2 "$MONITOR_MIN_SAMPLES_SIGNAL_2" \
+    --trigger "$TRIGGER" \
+    --feedback-consecutive-windows "$FEEDBACK_CONSECUTIVE_WINDOWS" \
+    --feedback-action "$FEEDBACK_ACTION" \
     --latency-sample-n "$LATENCY_SAMPLE_N")
   if [[ "$THRESHOLD_MODE" == "calibrated_recall" ]]; then
     cmd+=(--calibrated-recall-target "$CALIBRATED_RECALL_TARGET")

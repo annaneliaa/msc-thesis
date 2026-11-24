@@ -419,6 +419,15 @@ class MonitorAttachedConfig:
     monitor_min_samples_signal_2: int = 30
     psi_threshold: float = 0.1
     cal_threshold: float = 0.05
+    # What acts: "feedback" = analyst-feedback precision (fb_precision_elevated
+    # for feedback_consecutive_windows windows -> feedback_action); "thesis" =
+    # the Signal 1/Signal 2 table (monitor/triggers.py). The other is still
+    # logged every window (thesis_action / fb_* columns).
+    trigger: Literal["feedback", "thesis"] = "feedback"
+    feedback_consecutive_windows: int = 1
+    feedback_action: Literal["RETRAIN_ONLY", "REMINE_AND_RETRAIN"] = (
+        "REMINE_AND_RETRAIN"
+    )
     # System-operationality instrumentation. Per-horizon fast-route timing
     # is a single batched encode+predict call over that horizon's incoming
     # groups (cheap, always on) -- it gives a *mean* per-group cost, not a

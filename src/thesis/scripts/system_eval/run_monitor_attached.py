@@ -166,6 +166,27 @@ def main() -> None:
         help="Consecutive elevated horizons before a soft-alerted signal hard-triggers. Default: 3",
     )
     parser.add_argument(
+        "--trigger",
+        choices=["feedback", "thesis"],
+        default="feedback",
+        help="What acts: analyst-feedback precision (default) or the thesis Signal 1/2 table. The other is still logged.",
+    )
+    parser.add_argument(
+        "--feedback-consecutive-windows",
+        type=int,
+        default=1,
+        dest="feedback_consecutive_windows",
+        metavar="N",
+        help="Consecutive windows with feedback precision significantly below reference before acting. Default: 1",
+    )
+    parser.add_argument(
+        "--feedback-action",
+        choices=["RETRAIN_ONLY", "REMINE_AND_RETRAIN"],
+        default="REMINE_AND_RETRAIN",
+        dest="feedback_action",
+        help="Update applied when the feedback trigger fires. Default: REMINE_AND_RETRAIN",
+    )
+    parser.add_argument(
         "--monitor-min-samples-signal-2",
         type=int,
         default=30,
@@ -282,6 +303,9 @@ def main() -> None:
         monitor_min_samples_signal_2=args.monitor_min_samples_signal_2,
         psi_threshold=args.psi_threshold,
         cal_threshold=args.cal_threshold,
+        trigger=args.trigger,
+        feedback_consecutive_windows=args.feedback_consecutive_windows,
+        feedback_action=args.feedback_action,
         latency_sample_n=args.latency_sample_n,
     )
     out_dir = run_monitor_attached_experiment(config)

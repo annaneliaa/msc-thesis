@@ -114,6 +114,7 @@ def _config(**overrides) -> MonitorAttachedConfig:
         monitor_consecutive_windows=3,
         monitor_min_samples_signal_2=3,
         latency_sample_n=6,
+        trigger="thesis",
     )
     defaults.update(overrides)
     return MonitorAttachedConfig(**defaults)
@@ -347,3 +348,50 @@ def test_monitor_state_is_independent_per_config_call():
     # A fresh call must start with fresh consecutive counters, same as
     # monitor_drift.py's equivalent regression test.
     assert by_h[1]["action"] == "SOFT_ALERT"
+
+
+def test_feedback_trigger_acts_on_precision_and_warms_up_after_redeploy(monkeypatch):
+    """trigger='feedback': fb_precision_elevated drives the action; the thesis
+    table's decision is still logged as thesis_action; after the redeploy the
+    next window is the new reference, so the streak restarts."""
+    alert_groups = _build_timeline(n_windows=6, per_window=40)
+    n_total = len(alert_groups)
+    cfg = ShortlistedConfig(
+        feature_set="symbolic",
+        mining_setting="test_setting",
+        granularity=1 / 6,
+        model="logreg",
+    )
+    elevated_by_call = {2: True, 3: True, 4: False, 5: True}
+    calls = {"n": 0}
+    real_log_window = ma.SignalLog.log_window
+
+    def fake_log_window(self, *args, **kwargs):
+        out = real_log_window(self, *args, **kwargs)
+        out["fb_precision_elevated"] = elevated_by_call.get(calls["n"], False)
+        calls["n"] += 1
+        return out
+
+    monkeypatch.setattr(ma.SignalLog, "log_window", fake_log_window)
+    config = _config(
+        trigger="feedback",
+        feedback_consecutive_windows=2,
+        feedback_action="RETRAIN_ONLY",
+    )
+    horizon_rows, event_rows, _ = _run(cfg, config, alert_groups, n_total)
+    by_h = {r["horizon_window_index"]: r for r in horizon_rows}
+
+    assert [by_h[h]["action"] for h in range(6)] == [
+        "NO_ACTION",
+        "NO_ACTION",
+        "SOFT_ALERT",
+        "RETRAIN_ONLY",
+        "NO_ACTION",
+        "SOFT_ALERT",
+    ]
+    assert all(r["thesis_action"] is not None for r in horizon_rows)
+    assert all(r["trigger"] == "feedback" for r in horizon_rows)
+    executed = [e for e in event_rows if e["executed"]]
+    assert [e["horizon_window_index"] for e in executed] == [3]
+    # Window after the redeploy is the new feedback/noise-aware reference.
+    assert by_h[4]["signals_reference_window"] is True

@@ -52,6 +52,17 @@ Design decisions:
   this cost" against the two baselines. This is a deliberate cooldown, not
   implied by monitor/triggers.py's classify_action alone.
 
+* Trigger (config.trigger): "feedback" (default, since 2026-11-24) acts on
+  analyst-feedback precision (thesis.monitor.feedback, logged by SignalLog
+  as fb_precision_elevated): precision of the escalated, labelled groups
+  significantly below the deployment's reference precision for
+  config.feedback_consecutive_windows windows in a row ->
+  config.feedback_action. After a redeploy the next window is the new
+  reference (warm-up), so it can never fire there. "thesis" acts on the
+  original Signal 1/Signal 2 table (monitor/triggers.py). Either way
+  run_monitor_window still runs every window and its decision is logged as
+  thesis_action, so both triggers stay comparable from one run.
+
 * Signal thresholds: config.psi_threshold/cal_threshold are passed
   straight through to run_monitor_window at every horizon -- deploy the
   values selected by Drift Signal EDA's sweep (03_monitor_signal_drift.ipynb,
@@ -233,6 +244,7 @@ def _run_one_config(
     dynamic_schema = fit.dynamic_schema
     schema_version = dynamic_schema.version
     state = MonitorState(scenario_name=scenario, deployed_schema_version=schema_version)
+    feedback_streak = 0
 
     # Every signal ever considered, logged per horizon and never acted on
     # (thesis.monitor.signal_log). Its baselines reset on every executed
@@ -264,6 +276,9 @@ def _run_one_config(
         "psi_threshold": config.psi_threshold,
         "cal_threshold": config.cal_threshold,
         "monitor_consecutive_windows": config.monitor_consecutive_windows,
+        "trigger": config.trigger,
+        "feedback_consecutive_windows": config.feedback_consecutive_windows,
+        "feedback_action": config.feedback_action,
     }
     n_per_horizon_latency = (
         max(1, config.latency_sample_n // max(fit.n_windows, 1))
@@ -279,7 +294,7 @@ def _run_one_config(
         horizon_window_index: int, raw_groups_h: list[AlertGroup]
     ) -> None:
         nonlocal current_schema, current_model, current_threshold
-        nonlocal dynamic_schema, schema_version, state
+        nonlocal dynamic_schema, schema_version, state, feedback_streak
 
         horizon_fraction = (
             horizon_window_index / (fit.n_windows - 1) if fit.n_windows > 1 else 0.0
@@ -308,6 +323,7 @@ def _run_one_config(
                     "fast_route_cpu_s": None,
                     "signal_1_elevated": None,
                     "signal_2_elevated": None,
+                    "thesis_action": None,
                     "action": None,
                     "trigger_remine": None,
                     **dict.fromkeys(LOGGED_SIGNAL_COLUMNS),
@@ -368,6 +384,7 @@ def _run_one_config(
                 "fast_route_cpu_s": fast_route_cpu_s,
                 "signal_1_elevated": None,
                 "signal_2_elevated": None,
+                "thesis_action": None,
                 "action": None,
                 "trigger_remine": None,
                 # Logged against the deployment active in this window,
@@ -405,10 +422,24 @@ def _run_one_config(
         row = horizon_rows[-1]
         row["signal_1_elevated"] = snapshot.signal_1_elevated
         row["signal_2_elevated"] = snapshot.signal_2_elevated
-        row["action"] = snapshot.action
-        row["trigger_remine"] = snapshot.trigger_remine
+        row["thesis_action"] = snapshot.action
+        if config.trigger == "feedback":
+            feedback_streak = (
+                feedback_streak + 1 if row.get("fb_precision_elevated") else 0
+            )
+            trigger_remine = feedback_streak >= config.feedback_consecutive_windows
+            if trigger_remine:
+                action = config.feedback_action
+            elif feedback_streak:
+                action = "SOFT_ALERT"
+            else:
+                action = "NO_ACTION"
+        else:
+            action, trigger_remine = snapshot.action, snapshot.trigger_remine
+        row["action"] = action
+        row["trigger_remine"] = trigger_remine
 
-        if not snapshot.trigger_remine:
+        if not trigger_remine:
             return
 
         train_rows_labeled = [tx for tx, keep in zip(raw_groups_h, mask_h) if keep]
@@ -417,7 +448,7 @@ def _run_one_config(
         event_base = {
             **base_row,
             "horizon_window_index": horizon_window_index,
-            "action": snapshot.action,
+            "action": action,
             "n_train_rows": n_train,
             "schema_version_before": schema_version,
         }
@@ -435,7 +466,7 @@ def _run_one_config(
             )
             return
 
-        if snapshot.action == "RETRAIN_ONLY":
+        if action == "RETRAIN_ONLY":
             X_train = encoded_full.loc[mask_h].reset_index(drop=True)
             y_train = y_h
             t0 = time.perf_counter()
@@ -478,6 +509,7 @@ def _run_one_config(
             state.consecutive_signal_2_elevated = 0
             t_deploy_s = time.perf_counter() - t0_deploy
             signal_log.redeploy(dynamic_schema, raw_groups_h)
+            feedback_streak = 0
 
             event_rows.append(
                 {
@@ -494,7 +526,7 @@ def _run_one_config(
                 }
             )
 
-        elif snapshot.action == "REMINE_AND_RETRAIN":
+        elif action == "REMINE_AND_RETRAIN":
             if spec is None:
                 event_rows.append(
                     {
@@ -571,6 +603,7 @@ def _run_one_config(
             )
             t_deploy_s = time.perf_counter() - t0_deploy
             signal_log.redeploy(dynamic_schema, raw_groups_h)
+            feedback_streak = 0
 
             event_rows.append(
                 {
@@ -694,6 +727,13 @@ def run_monitor_attached_experiment(config: MonitorAttachedConfig) -> Path:
         f"Monitor: psi_threshold={config.psi_threshold}, cal_threshold={config.cal_threshold}, "
         f"consecutive_windows={config.monitor_consecutive_windows}, "
         f"min_samples_signal_2={config.monitor_min_samples_signal_2}",
+        f"Trigger: {config.trigger}"
+        + (
+            f" (feedback precision, {config.feedback_consecutive_windows} window(s) "
+            f"-> {config.feedback_action})"
+            if config.trigger == "feedback"
+            else " (Signal 1/2 table)"
+        ),
         f"Rows: {len(per_horizon_df)} (per_horizon), {len(events_df)} (events, "
         f"{n_executed} executed), {len(latency_df)} (latency_sample)",
         "",
