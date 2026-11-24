@@ -1,0 +1,155 @@
+"""
+Logs every monitor signal ever considered (novelty + the noise-aware
+statistics with their day-by-day baselines), per window, for any monitor
+experiment -- observe-only: nothing here feeds classify_action. Shared by
+system_eval.monitor_drift (one deployment for the whole walk) and
+system_eval.monitor_attached (redeploys on trigger), so both log exactly the
+same columns under the same baseline rules.
+
+Baselines per deployment:
+* Initial deployment (mined/fit on W_src's train split): novelty reference =
+  the train split's firing patterns; noise-aware baseline = train + held-out
+  split for input statistics, held-out split for output statistics (see
+  thesis.monitor.noise_aware). The held-out split is horizon 0.
+* After a redeploy at window h (the new model/schema was fit on window h):
+  novelty reference = window h's groups; the noise-aware baseline is taken
+  from the NEXT window, the first data the new deployment hasn't seen
+  (leak-free warm-up). That window is logged against itself and flagged
+  signals_reference_window=True.
+"""
+
+from __future__ import annotations
+
+from typing import Sequence
+
+import numpy as np
+
+from thesis.mining.common.attribute_features import compute_candidate_attribute_features
+from thesis.monitor.noise_aware import (
+    REGIONS,
+    STATISTICS,
+    NoiseAwareMonitor,
+    WindowRows,
+    build_window_rows,
+)
+from thesis.monitor.novelty import (
+    NoveltyReference,
+    build_novelty_reference,
+    novelty_from_patterns,
+)
+from thesis.schemas.dynamic_schema import DynamicSchema
+from thesis.schemas.groups import AlertGroup
+
+NOVELTY_FIELDS = (
+    "pattern_novelty_rate",
+    "no_fire_rate",
+    "reference_no_fire_rate",
+    "n_reference_patterns",
+    "n_novel_patterns",
+    "pattern_novelty_rate_attack",
+    "pattern_novelty_rate_benign",
+)
+LOGGED_COLUMNS = (
+    ("signals_reference_window",)
+    + tuple(f"novelty_{k}" for k in NOVELTY_FIELDS)
+    + tuple(f"na_{k}{s}" for k in STATISTICS for s in ("", "_thr", "_elevated"))
+    + tuple(f"na_share_{r}{s}" for r in REGIONS for s in ("", "_ref"))
+)
+
+
+def rows_for_groups(
+    schema: DynamicSchema,
+    groups: Sequence[AlertGroup],
+    reference_patterns: frozenset[frozenset[str]],
+    scores: np.ndarray | None,
+    threshold: float,
+) -> WindowRows:
+    """One candidate-feature pass over `groups` -> every per-group indicator
+    the logged signals need. `scores` must align with `groups` (or be None:
+    score-based statistics are then NaN)."""
+    if scores is not None and len(scores) != len(groups):
+        scores = None
+    feats = [compute_candidate_attribute_features(g) for g in groups]
+    return build_window_rows(
+        schema, groups, feats, reference_patterns, scores, threshold
+    )
+
+
+class SignalLog:
+    def __init__(
+        self,
+        schema: DynamicSchema,
+        train_groups: Sequence[AlertGroup],
+        heldout_groups: Sequence[AlertGroup],
+        heldout_scores: np.ndarray | None,
+        threshold: float,
+        min_samples: int,
+    ) -> None:
+        self.min_samples = min_samples
+        self.novelty_ref: NoveltyReference = build_novelty_reference(
+            schema, train_groups
+        )
+        self.monitor: NoiseAwareMonitor | None = None
+        self._reference_groups = heldout_groups
+        self.baseline_note = "no held-out rows"
+        if train_groups and heldout_groups:
+            heldout = rows_for_groups(
+                schema,
+                heldout_groups,
+                self.novelty_ref.patterns,
+                heldout_scores,
+                threshold,
+            )
+            train = rows_for_groups(
+                schema, train_groups, self.novelty_ref.patterns, None, threshold
+            )
+            self.monitor = NoiseAwareMonitor(
+                input_reference=train.concat(heldout),
+                output_reference=heldout,
+                min_samples=min_samples,
+            )
+            self.baseline_note = self._describe()
+
+    def _describe(self) -> str:
+        m = self.monitor
+        return (
+            f"baseline blocks: input {m.input.n_blocks}, output {m.output.n_blocks}; "
+            + ", ".join(f"{k}={v:.4f}" for k, v in m.thresholds.items())
+        )
+
+    def redeploy(
+        self, schema: DynamicSchema, training_groups: Sequence[AlertGroup]
+    ) -> None:
+        """New model and/or schema fit on `training_groups`: reset the
+        novelty reference to them and take the noise-aware baseline from the
+        next logged window."""
+        self.novelty_ref = build_novelty_reference(schema, training_groups)
+        self.monitor = None
+        self._reference_groups = None
+
+    def log_window(
+        self,
+        schema: DynamicSchema,
+        groups: Sequence[AlertGroup],
+        scores: np.ndarray | None,
+        threshold: float,
+    ) -> dict:
+        """All logged signal columns for one window (LOGGED_COLUMNS keys)."""
+        out: dict = dict.fromkeys(LOGGED_COLUMNS)
+        if not groups:
+            return out
+        rows = rows_for_groups(
+            schema, groups, self.novelty_ref.patterns, scores, threshold
+        )
+        is_reference = groups is self._reference_groups
+        if self.monitor is None:
+            # Warm-up after a redeploy: this window is the new baseline.
+            self.monitor = NoiseAwareMonitor(rows, rows, min_samples=self.min_samples)
+            self._reference_groups = groups
+            self.baseline_note = self._describe()
+            is_reference = True
+        out["signals_reference_window"] = is_reference
+        novelty = novelty_from_patterns(self.novelty_ref, rows.patterns, groups)
+        out.update({f"novelty_{k}": getattr(novelty, k) for k in NOVELTY_FIELDS})
+        out.update(self.monitor.evaluate(rows))
+        return out

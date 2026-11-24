@@ -122,6 +122,8 @@ from thesis.system_eval.monitor_drift import (
 from thesis.system_eval.temporal_decay import WindowScheme, _build_window_scheme
 from thesis.metrics.shortlist import ShortlistedConfig, load_shortlist
 from thesis.monitor.monitor import run_monitor_window
+from thesis.monitor.signal_log import LOGGED_COLUMNS as LOGGED_SIGNAL_COLUMNS
+from thesis.monitor.signal_log import SignalLog
 from thesis.monitor.schema_diff import SchemaDiff, diff_dynamic_schemas, zero_diff
 from thesis.monitor.state import MonitorState
 from thesis.paths import ensure_artifact_dirs
@@ -232,6 +234,25 @@ def _run_one_config(
     schema_version = dynamic_schema.version
     state = MonitorState(scenario_name=scenario, deployed_schema_version=schema_version)
 
+    # Every signal ever considered, logged per horizon and never acted on
+    # (thesis.monitor.signal_log). Its baselines reset on every executed
+    # redeploy: novelty to the rows the new deployment was fit on, the
+    # noise-aware baseline to the next window (warm-up).
+    heldout_scores = (
+        fit.model.predict_proba(fit.X_test)[:, 1]
+        if len(fit.X_test) and len(fit.X_test) == len(fit.test_groups_raw)
+        else None
+    )
+    signal_log = SignalLog(
+        dynamic_schema,
+        train_groups=fit.train_groups_raw,
+        heldout_groups=fit.test_groups_raw,
+        heldout_scores=heldout_scores,
+        threshold=fit.threshold,
+        min_samples=config.monitor_min_samples_signal_2,
+    )
+    print(f"    [signals] {signal_log.baseline_note}")
+
     base_row = {
         "scenario": scenario,
         "feature_set": cfg.feature_set,
@@ -289,6 +310,7 @@ def _run_one_config(
                     "signal_2_elevated": None,
                     "action": None,
                     "trigger_remine": None,
+                    **dict.fromkeys(LOGGED_SIGNAL_COLUMNS),
                 }
             )
             return
@@ -348,6 +370,11 @@ def _run_one_config(
                 "signal_2_elevated": None,
                 "action": None,
                 "trigger_remine": None,
+                # Logged against the deployment active in this window,
+                # before any redeploy this window may trigger.
+                **signal_log.log_window(
+                    dynamic_schema, raw_groups_h, proba_full, current_threshold
+                ),
             }
         )
 
@@ -450,6 +477,7 @@ def _run_one_config(
             state.consecutive_signal_1_elevated = 0
             state.consecutive_signal_2_elevated = 0
             t_deploy_s = time.perf_counter() - t0_deploy
+            signal_log.redeploy(dynamic_schema, raw_groups_h)
 
             event_rows.append(
                 {
@@ -542,6 +570,7 @@ def _run_one_config(
                 scenario_name=scenario, deployed_schema_version=schema_version
             )
             t_deploy_s = time.perf_counter() - t0_deploy
+            signal_log.redeploy(dynamic_schema, raw_groups_h)
 
             event_rows.append(
                 {
