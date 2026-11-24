@@ -17,14 +17,14 @@ W_src's train split (traffic the deployment has already seen).
 Injections (fields refer to AlertGroup attributes):
 
 * attack_mimics_benign -- harmful, evasion: a fraction of attack groups copy
-  the fields the mined predicates read (MINED_FIELDS) from random benign
-  donors. Expect recall to drop. Attacks are ~1% of traffic, so input
+  their whole profile (PROFILE_FIELDS: the mined fields + the model's base
+  features) from random benign donors. Expect recall to drop. Attacks are ~1% of traffic, so input
   statistics barely move; precision-based feedback can't see missed attacks.
 * benign_mimics_attack -- harmful, false positives: a fraction of benign
-  groups copy MINED_FIELDS from attack donors. Expect precision to drop and
+  groups copy PROFILE_FIELDS from attack donors. Expect precision to drop and
   input statistics to move.
 * benign_mix_shift -- harmless covariate shift: a fraction of benign groups
-  copy MINED_FIELDS from benign donors of one minority benign category, so
+  copy PROFILE_FIELDS from benign donors of one minority benign category, so
   the benign mix changes but stays benign. Input signals should fire, F1
   should not drop.
 * unseen_field_shift -- control: fields neither the monitor nor the model
@@ -80,6 +80,21 @@ MINED_FIELDS = (
     "int_ip_is_multiple",
     "attr_similarities",
     "signature_id_similarity",
+)
+
+# The whole profile the model reads: mined fields + the base features.
+PROFILE_FIELDS = MINED_FIELDS + (
+    "signature_matches_per_day",
+    "similarity",
+    "n_alerts",
+)
+
+# Per-window statistic values compared with the clean run (post-injection
+# mean minus the clean run's mean on the same windows).
+SIGNAL_VALUES = (
+    *(f"na_{s}" for s in STATISTICS),
+    "novelty_pattern_novelty_rate",
+    "fb_precision",
 )
 
 KINDS = (
@@ -175,15 +190,15 @@ def perturb_group(
 ) -> AlertGroup:
     if kind == "attack_mimics_benign":
         return _copy_fields(
-            g, donors.benign[rng.integers(len(donors.benign))], MINED_FIELDS
+            g, donors.benign[rng.integers(len(donors.benign))], PROFILE_FIELDS
         )
     if kind == "benign_mimics_attack":
         return _copy_fields(
-            g, donors.attack[rng.integers(len(donors.attack))], MINED_FIELDS
+            g, donors.attack[rng.integers(len(donors.attack))], PROFILE_FIELDS
         )
     if kind == "benign_mix_shift":
         pool = donors.benign_minority
-        return _copy_fields(g, pool[rng.integers(len(pool))], MINED_FIELDS)
+        return _copy_fields(g, pool[rng.integers(len(pool))], PROFILE_FIELDS)
     if kind == "unseen_field_shift":
         return dataclasses.replace(
             g,
@@ -261,6 +276,13 @@ def build_detection_summary(per_horizon: pd.DataFrame) -> pd.DataFrame:
                 ref = clean.loc[clean.index.intersection(post_h), m]
                 row[f"d_{m}_vs_clean"] = (
                     post[m].mean() - ref.mean() if len(ref) else np.nan
+                )
+            for col in SIGNAL_VALUES:
+                if col not in run.columns:
+                    continue
+                ref = clean.loc[clean.index.intersection(post_h), col]
+                row[f"d_{col}_vs_clean"] = (
+                    post[col].mean() - ref.mean() if len(ref) else np.nan
                 )
             for label, col in SIGNAL_FLAGS:
                 if col not in run.columns:
