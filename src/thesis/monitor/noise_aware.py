@@ -99,6 +99,8 @@ class WindowRows:
     novel: np.ndarray  # (n,) firing pattern unseen at mining time
     patterns: list[frozenset[str]] = field(default_factory=list)
     regions: np.ndarray | None = None  # (n, 3) one-hot decision region (REGIONS)
+    labeled: np.ndarray | None = None  # (n,) group_label in {attack, benign}
+    is_attack: np.ndarray | None = None  # (n,) group_label == attack
 
     def __len__(self) -> int:
         return self.fires.shape[0]
@@ -120,6 +122,8 @@ class WindowRows:
             novel=np.concatenate([self.novel, other.novel]),
             patterns=self.patterns + other.patterns,
             regions=cat(self.regions, other.regions),
+            labeled=cat(self.labeled, other.labeled),
+            is_attack=cat(self.is_attack, other.is_attack),
         )
 
 
@@ -149,6 +153,10 @@ def build_window_rows(
                 match[i, j] = 1.0
                 correct[i, j] = float(g.group_label == r.prediction)
     novel = np.array([p not in reference_patterns for p in patterns], dtype=np.float32)
+    labeled = np.array(
+        [g.group_label in ("attack", "benign") for g in groups], dtype=np.float32
+    )
+    is_attack = np.array([g.group_label == "attack" for g in groups], dtype=np.float32)
     ts = np.array([g.start_ts or 0 for g in groups], dtype=np.int64)
 
     if scores is not None and len(scores) == n:
@@ -174,6 +182,8 @@ def build_window_rows(
         novel,
         patterns,
         regions,
+        labeled,
+        is_attack,
     )
 
 

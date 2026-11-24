@@ -6,6 +6,9 @@ system_eval.monitor_drift (one deployment for the whole walk) and
 system_eval.monitor_attached (redeploys on trigger), so both log exactly the
 same columns under the same baseline rules.
 
+Also logs analyst-feedback precision (thesis.monitor.feedback): precision
+of the escalated, labelled groups vs the reference rows' precision.
+
 Baselines per deployment:
 * Initial deployment (mined/fit on W_src's train split): novelty reference =
   the train split's firing patterns; noise-aware baseline = train + held-out
@@ -25,6 +28,12 @@ from typing import Sequence
 import numpy as np
 
 from thesis.mining.common.attribute_features import compute_candidate_attribute_features
+from thesis.monitor.feedback import (
+    FEEDBACK_COLUMNS,
+    FeedbackCounts,
+    feedback_counts,
+    feedback_signal,
+)
 from thesis.monitor.noise_aware import (
     REGIONS,
     STATISTICS,
@@ -54,7 +63,12 @@ LOGGED_COLUMNS = (
     + tuple(f"novelty_{k}" for k in NOVELTY_FIELDS)
     + tuple(f"na_{k}{s}" for k in STATISTICS for s in ("", "_thr", "_elevated"))
     + tuple(f"na_share_{r}{s}" for r in REGIONS for s in ("", "_ref"))
+    + FEEDBACK_COLUMNS
 )
+
+
+def _counts(rows: WindowRows) -> FeedbackCounts | None:
+    return feedback_counts(rows.flagged, rows.labeled, rows.is_attack)
 
 
 def rows_for_groups(
@@ -90,6 +104,7 @@ class SignalLog:
             schema, train_groups
         )
         self.monitor: NoiseAwareMonitor | None = None
+        self.feedback_ref: FeedbackCounts | None = None
         self._reference_groups = heldout_groups
         self.baseline_note = "no held-out rows"
         if train_groups and heldout_groups:
@@ -108,13 +123,21 @@ class SignalLog:
                 output_reference=heldout,
                 min_samples=min_samples,
             )
+            self.feedback_ref = _counts(heldout)
             self.baseline_note = self._describe()
 
     def _describe(self) -> str:
         m = self.monitor
+        fb = self.feedback_ref
+        fb_note = (
+            f"; feedback precision ref {fb.precision:.3f} (n={fb.n_escalated})"
+            if fb is not None and fb.n_escalated
+            else ""
+        )
         return (
             f"baseline blocks: input {m.input.n_blocks}, output {m.output.n_blocks}; "
             + ", ".join(f"{k}={v:.4f}" for k, v in m.thresholds.items())
+            + fb_note
         )
 
     def redeploy(
@@ -125,6 +148,7 @@ class SignalLog:
         next logged window."""
         self.novelty_ref = build_novelty_reference(schema, training_groups)
         self.monitor = None
+        self.feedback_ref = None
         self._reference_groups = None
 
     def log_window(
@@ -145,6 +169,7 @@ class SignalLog:
         if self.monitor is None:
             # Warm-up after a redeploy: this window is the new baseline.
             self.monitor = NoiseAwareMonitor(rows, rows, min_samples=self.min_samples)
+            self.feedback_ref = _counts(rows)
             self._reference_groups = groups
             self.baseline_note = self._describe()
             is_reference = True
@@ -152,4 +177,5 @@ class SignalLog:
         novelty = novelty_from_patterns(self.novelty_ref, rows.patterns, groups)
         out.update({f"novelty_{k}": getattr(novelty, k) for k in NOVELTY_FIELDS})
         out.update(self.monitor.evaluate(rows))
+        out.update(feedback_signal(_counts(rows), self.feedback_ref))
         return out
