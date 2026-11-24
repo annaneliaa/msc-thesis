@@ -58,7 +58,7 @@ SCENARIOS=(cscas)
 # screening_mining_settings.yaml's full 10-point grid, so this doesn't
 # invalidate or bypass the mining cache.
 MINING_SETTINGS="$REPO_ROOT/src/thesis/configs/monitor_eda_mining_setting.yaml"
-GRANULARITIES=(0.1 0.05)  # kept in sync with run_temporal_decay.sh: 0.1
+read -r -a GRANULARITIES <<< "${GRANULARITIES:-0.1 0.05}"  # kept in sync with run_temporal_decay.sh: 0.1
                           # matches the CSCAS dataset's own train-window
                           # size, 0.05 zooms in. Unlike Exp2's baseline_split
                           # mode, mining here happens on every window Wi, so
@@ -84,19 +84,19 @@ SOURCE_SPLIT_MODE="baseline_split"  # or "window0"
 # *reference ceiling* -- SCAS and the offline *Similarity scores can't be
 # computed for a fresh alert. SCAS is dropped for one-class models (none in
 # MODELS above, but the flag matters if you add one back). CSCAS only.
-CSCAS_FULL=1  # 0 to skip the cscas_full arm
+CSCAS_FULL="${CSCAS_FULL:-1}"  # 0 to skip the cscas_full arm
 # CSCAS_FULL_SYMBOLIC=1 adds a cscas_full_symbolic arm: the full CSCAS columns
 # PLUS a schema mined on window Wi (shared base columns encoded once). One
 # row per (mining setting, granularity, model) -- as many configs as the
 # symbolic arm.
-CSCAS_FULL_SYMBOLIC=1  # 0 to skip
+CSCAS_FULL_SYMBOLIC="${CSCAS_FULL_SYMBOLIC:-1}"  # 0 to skip
 # SHAP/LIME per step, for both models (xgboost and rf are both classifiers
 # with analytic TreeExplainer SHAP -- no one-class model in MODELS above, so
 # ONECLASS_SHAP is a no-op here; left in place for when one is added back).
 # Background is drawn from Wi (what the model was just fit on), the
 # explained sample from W(i+1) (what the metrics are scored on) -- both
 # redrawn fresh every step.
-COMPUTE_EXPLANATIONS=1  # 0 to skip SHAP/LIME entirely (metrics only)
+COMPUTE_EXPLANATIONS="${COMPUTE_EXPLANATIONS:-1}"  # 0 to skip SHAP/LIME entirely (metrics only)
 ONECLASS_SHAP=0         # 1 to also compute (slow) SHAP for any one-class model in MODELS
 EXPLAIN_SAMPLE_N=50
 LIME_NUM_SAMPLES=1000
