@@ -92,6 +92,10 @@ from thesis.mining.atemporal.contrast_tree.decision_tree_rule_mining import (
     fit_rule_tree,
 )
 from thesis.monitor.monitor import run_monitor_window
+from thesis.mining.common.attribute_features import compute_candidate_attribute_features
+from thesis.monitor.noise_aware import STATISTICS as NOISE_AWARE_STATISTICS
+from thesis.monitor.noise_aware import NoiseAwareMonitor, build_window_rows
+from thesis.monitor.novelty import build_novelty_reference, novelty_from_patterns
 from thesis.monitor.state import MonitorState
 from thesis.paths import ensure_artifact_dirs
 from thesis.pipeline.pipeline import compute_window_train_end
@@ -230,6 +234,9 @@ class MonitorSourceWindowFit:
     y_test: np.ndarray
     dynamic_schema: DynamicSchema | None
     test_groups_raw: list[AlertGroup]
+    # W_src's train split, all rows (labeled or not): the novelty signal's
+    # reference -- the traffic the schema was mined on.
+    train_groups_raw: list[AlertGroup]
 
 
 def fit_source_window_and_dynamic_schema(
@@ -359,7 +366,25 @@ def fit_source_window_and_dynamic_schema(
         y_test=y_test,
         dynamic_schema=dynamic_schema,
         test_groups_raw=window_rows[local_train_end:],
+        train_groups_raw=window_rows[:local_train_end],
     )
+
+
+_NOVELTY_FIELDS = (
+    "pattern_novelty_rate",
+    "no_fire_rate",
+    "reference_no_fire_rate",
+    "n_reference_patterns",
+    "n_novel_patterns",
+    "pattern_novelty_rate_attack",
+    "pattern_novelty_rate_benign",
+)
+_NOVELTY_COLS = tuple(f"novelty_{k}" for k in _NOVELTY_FIELDS)
+_NOISE_AWARE_COLS = tuple(
+    f"na_{k}{suffix}"
+    for k in NOISE_AWARE_STATISTICS
+    for suffix in ("", "_thr", "_elevated")
+)
 
 
 def _window_bounds_ts(raw_groups: list[AlertGroup]) -> tuple[datetime, datetime]:
@@ -487,6 +512,49 @@ def _run_one_monitor_config(
         if fit.dynamic_schema is not None
         else {}
     )
+    # Observe-only novelty signal (thesis.monitor.novelty): logged per
+    # horizon, never fed into classify_action.
+    novelty_ref = (
+        build_novelty_reference(fit.dynamic_schema, fit.train_groups_raw)
+        if fit.dynamic_schema is not None
+        else None
+    )
+
+    def _scores_for(X: pd.DataFrame, raw: list[AlertGroup]) -> np.ndarray | None:
+        # Score drift needs a score for every incoming group. X is the
+        # label-masked encoding; on CSCAS every group is labelled so the two
+        # line up -- otherwise score drift is skipped (logged as NaN).
+        if len(X) == 0 or len(X) != len(raw):
+            return None
+        return fit.model.predict_proba(X)[:, 1]
+
+    def _window_rows(raw: list[AlertGroup], scores: np.ndarray | None):
+        feats = [compute_candidate_attribute_features(g) for g in raw]
+        return build_window_rows(
+            fit.dynamic_schema, raw, feats, novelty_ref.patterns, scores, fit.threshold
+        )
+
+    # Noise-aware signals (thesis.monitor.noise_aware), observe-only, with a
+    # day-by-day baseline from the training week only: input statistics
+    # over all of W_src (24h blocks), output statistics over W_src's
+    # held-out split (12h blocks).
+    noise_monitor = None
+    if fit.dynamic_schema is not None and fit.test_groups_raw and fit.train_groups_raw:
+        heldout_rows = _window_rows(
+            fit.test_groups_raw, _scores_for(fit.X_test, fit.test_groups_raw)
+        )
+        noise_monitor = NoiseAwareMonitor(
+            input_reference=_window_rows(fit.train_groups_raw, None).concat(
+                heldout_rows
+            ),
+            output_reference=heldout_rows,
+            min_samples=config.monitor_min_samples_signal_2,
+        )
+        print(
+            f"    [noise-aware] baseline blocks: input {noise_monitor.input.n_blocks}, "
+            f"output {noise_monitor.output.n_blocks}; thresholds "
+            + ", ".join(f"{k}={v:.4f}" for k, v in noise_monitor.thresholds.items())
+        )
 
     base_row = {
         "scenario": scenario,
@@ -533,6 +601,8 @@ def _run_one_monitor_config(
             "consecutive_signal_2_elevated": None,
             "n_incoming_groups": None,
             "n_labeled_groups": None,
+            **dict.fromkeys(_NOVELTY_COLS),
+            **dict.fromkeys(_NOISE_AWARE_COLS),
         }
 
         if fit.dynamic_schema is not None and raw_groups_h:
@@ -558,6 +628,15 @@ def _run_one_monitor_config(
                 "n_incoming_groups": snapshot.n_incoming_groups,
                 "n_labeled_groups": snapshot.n_labeled_groups,
             }
+            # One feature pass per window feeds both novelty and the
+            # noise-aware signals.
+            rows_h = _window_rows(raw_groups_h, _scores_for(X_h, raw_groups_h))
+            novelty = novelty_from_patterns(novelty_ref, rows_h.patterns, raw_groups_h)
+            monitor_cols.update(
+                {f"novelty_{k}": getattr(novelty, k) for k in _NOVELTY_FIELDS}
+            )
+            if noise_monitor is not None:
+                monitor_cols.update(noise_monitor.evaluate(rows_h))
             signal_rows.extend(
                 _signal_rows_for_horizon(
                     fit.dynamic_schema,
