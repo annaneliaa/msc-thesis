@@ -38,6 +38,9 @@ def _rows(
         flagged=(s >= 0.5).astype(np.float32),
         near_margin=(np.abs(s - 0.5) < 0.2).astype(np.float32),
         novel=np.zeros(n, dtype=np.float32),
+        regions=np.eye(3, dtype=np.float32)[
+            np.where(s < 0.3, 0, np.where(s >= 0.7, 2, 1))
+        ],
     )
 
 
@@ -54,8 +57,21 @@ def test_stable_window_is_not_elevated():
         "score_psi",
         "flag_rate_shift",
         "margin_shift",
+        "decision_psi",
     ):
         assert out[f"na_{k}_elevated"] is False, k
+
+
+def test_shift_into_uncertain_region_raises_decision_psi():
+    mon = _monitor(_rows(20_000, 0.3, hours=72))
+    rng = np.random.default_rng(1)
+    # 10% of the window moves from confident-benign into the uncertain band;
+    # the flag rate barely changes, the decision regions do.
+    s = rng.beta(1, 20, 50_000)
+    s[:5_000] = rng.uniform(0.31, 0.49, 5_000)
+    out = mon.evaluate(_rows(50_000, 0.3, scores=s, hours=120, seed=1))
+    assert out["na_decision_psi_elevated"] is True
+    assert out["na_share_uncertain"] > out["na_share_uncertain_ref"]
 
 
 def test_threshold_reflects_day_to_day_wobble():

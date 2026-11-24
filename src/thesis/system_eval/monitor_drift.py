@@ -93,6 +93,7 @@ from thesis.mining.atemporal.contrast_tree.decision_tree_rule_mining import (
 )
 from thesis.monitor.monitor import run_monitor_window
 from thesis.mining.common.attribute_features import compute_candidate_attribute_features
+from thesis.monitor.noise_aware import REGIONS as NOISE_AWARE_REGIONS
 from thesis.monitor.noise_aware import STATISTICS as NOISE_AWARE_STATISTICS
 from thesis.monitor.noise_aware import NoiseAwareMonitor, build_window_rows
 from thesis.monitor.novelty import build_novelty_reference, novelty_from_patterns
@@ -384,6 +385,8 @@ _NOISE_AWARE_COLS = tuple(
     f"na_{k}{suffix}"
     for k in NOISE_AWARE_STATISTICS
     for suffix in ("", "_thr", "_elevated")
+) + tuple(
+    f"na_share_{r}{suffix}" for r in NOISE_AWARE_REGIONS for suffix in ("", "_ref")
 )
 
 

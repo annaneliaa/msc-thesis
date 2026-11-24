@@ -42,6 +42,15 @@ Statistics (all label-free except s2):
 * margin_shift:    |share of groups with |p - threshold| < MARGIN - ref|.
 * novelty_shift:   share of groups whose predicate-firing pattern is unseen
                    at mining time, minus the reference share (one-sided).
+* decision_psi:    3-bucket PSI over the model's decision regions, set by
+                   its own threshold t: confident benign (p < t - MARGIN),
+                   uncertain (|p - t| < MARGIN), confident attack
+                   (p >= t + MARGIN). Combines the two output signals that
+                   tracked F1 in the 2026-11-24 run (score_psi for RF,
+                   margin_shift for XGBoost) without new tuning: the buckets
+                   come from the model's threshold and the same MARGIN.
+                   DeepCASE counterpart: auto-benign / sent to analyst /
+                   auto-attack shares.
 """
 
 from __future__ import annotations
@@ -69,8 +78,10 @@ OUTPUT_STATISTICS = (
     "flag_rate_shift",
     "margin_shift",
     "novelty_shift",
+    "decision_psi",
 )
 STATISTICS = INPUT_STATISTICS + OUTPUT_STATISTICS
+REGIONS = ("confident_benign", "uncertain", "confident_attack")
 
 
 @dataclass(slots=True)
@@ -87,6 +98,7 @@ class WindowRows:
     near_margin: np.ndarray | None  # (n,) |score - threshold| < MARGIN
     novel: np.ndarray  # (n,) firing pattern unseen at mining time
     patterns: list[frozenset[str]] = field(default_factory=list)
+    regions: np.ndarray | None = None  # (n, 3) one-hot decision region (REGIONS)
 
     def __len__(self) -> int:
         return self.fires.shape[0]
@@ -107,6 +119,7 @@ class WindowRows:
             near_margin=cat(self.near_margin, other.near_margin),
             novel=np.concatenate([self.novel, other.novel]),
             patterns=self.patterns + other.patterns,
+            regions=cat(self.regions, other.regions),
         )
 
 
@@ -144,10 +157,23 @@ def build_window_rows(
         score_bins = np.eye(len(SCORE_BIN_EDGES) - 1, dtype=np.float32)[b]
         flagged = (s >= threshold).astype(np.float32)
         near_margin = (np.abs(s - threshold) < MARGIN).astype(np.float32)
+        region = np.where(
+            s < threshold - MARGIN, 0, np.where(s >= threshold + MARGIN, 2, 1)
+        )
+        regions = np.eye(len(REGIONS), dtype=np.float32)[region]
     else:
-        score_bins = flagged = near_margin = None
+        score_bins = flagged = near_margin = regions = None
     return WindowRows(
-        ts, fires, match, correct, score_bins, flagged, near_margin, novel, patterns
+        ts,
+        fires,
+        match,
+        correct,
+        score_bins,
+        flagged,
+        near_margin,
+        novel,
+        patterns,
+        regions,
     )
 
 
@@ -176,6 +202,8 @@ def _aggregate(rows: WindowRows, w: np.ndarray) -> dict[str, Any]:
         out["hist"] = (w @ rows.score_bins) / tot
         out["flag"] = float(w @ rows.flagged) / tot
         out["margin"] = float(w @ rows.near_margin) / tot
+    if rows.regions is not None:
+        out["regions"] = (w @ rows.regions) / tot
     return out
 
 
@@ -200,6 +228,10 @@ def _statistics(
         out["margin_shift"] = abs(obs["margin"] - ref["margin"])
     else:
         out["score_psi"] = out["flag_rate_shift"] = out["margin_shift"] = np.nan
+    if "regions" in obs and "regions" in ref:
+        out["decision_psi"] = float(_psi_bins(ref["regions"], obs["regions"]))
+    else:
+        out["decision_psi"] = np.nan
     return out
 
 
@@ -290,4 +322,14 @@ class NoiseAwareMonitor:
                 out[f"na_{k}_elevated"] = (
                     bool(v > t) if np.isfinite(v) and np.isfinite(t) else None
                 )
+        # Raw decision-region shares, window vs reference, for inspection.
+        for i, name in enumerate(REGIONS):
+            out[f"na_share_{name}"] = (
+                float(obs["regions"][i]) if "regions" in obs else None
+            )
+            out[f"na_share_{name}_ref"] = (
+                float(self.output.pooled["regions"][i])
+                if "regions" in self.output.pooled
+                else None
+            )
         return out
