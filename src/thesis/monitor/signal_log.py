@@ -6,7 +6,9 @@ system_eval.monitor_drift (one deployment for the whole walk) and
 system_eval.monitor_attached (redeploys on trigger), so both log exactly the
 same columns under the same baseline rules.
 
-Also logs per-feature PSI over every model input (thesis.monitor.feature_psi)
+Also logs pattern validity (thesis.monitor.pattern_validity: are the mined
+patterns still discriminative / precise / covering, under oracle, escalated
+and escalated+audit labels), per-feature PSI over every model input (thesis.monitor.feature_psi)
 when the caller passes the encoded model inputs, and analyst-feedback
 precision (thesis.monitor.feedback): precision
 of the escalated, labelled groups vs the reference rows' precision.
@@ -46,6 +48,10 @@ from thesis.monitor.noise_aware import (
     WindowRows,
     build_window_rows,
 )
+from thesis.monitor.pattern_validity import (
+    PATTERN_VALIDITY_COLUMNS,
+    PatternValidityMonitor,
+)
 from thesis.monitor.novelty import (
     NoveltyReference,
     build_novelty_reference,
@@ -70,6 +76,7 @@ LOGGED_COLUMNS = (
     + tuple(f"na_share_{r}{s}" for r in REGIONS for s in ("", "_ref"))
     + FEEDBACK_COLUMNS
     + FEATURE_PSI_COLUMNS
+    + PATTERN_VALIDITY_COLUMNS
 )
 
 
@@ -130,6 +137,7 @@ class SignalLog:
         )
         self.monitor: NoiseAwareMonitor | None = None
         self.feedback_ref: FeedbackCounts | None = None
+        self.pattern_monitor: PatternValidityMonitor | None = None
         self._reference_groups = heldout_groups
         self.baseline_note = "no held-out rows"
         if train_groups and heldout_groups:
@@ -149,6 +157,9 @@ class SignalLog:
                 min_samples=min_samples,
             )
             self.feedback_ref = _counts(heldout)
+            self.pattern_monitor = PatternValidityMonitor(
+                schema, heldout, heldout_groups, min_samples
+            )
             self.baseline_note = self._describe()
 
     def _describe(self) -> str:
@@ -167,11 +178,19 @@ class SignalLog:
             if fb is not None and fb.n_escalated
             else ""
         )
+        pv = self.pattern_monitor
+        pv_note = (
+            f"; pattern validity: {pv.n_valid_ref('oracle')}/{len(pv.ids)} "
+            "patterns valid on reference (oracle labels)"
+            if pv is not None
+            else ""
+        )
         return (
             f"baseline blocks: input {m.input.n_blocks}, output {m.output.n_blocks}; "
             + ", ".join(f"{k}={v:.4f}" for k, v in m.thresholds.items())
             + fb_note
             + fp_note
+            + pv_note
         )
 
     def redeploy(
@@ -184,6 +203,7 @@ class SignalLog:
         self.monitor = None
         self.feedback_ref = None
         self.feature_monitor = None
+        self.pattern_monitor = None
         self._reference_groups = None
 
     def log_window(
@@ -213,6 +233,9 @@ class SignalLog:
             # Warm-up after a redeploy: this window is the new baseline.
             self.monitor = NoiseAwareMonitor(rows, rows, min_samples=self.min_samples)
             self.feedback_ref = _counts(rows)
+            self.pattern_monitor = PatternValidityMonitor(
+                schema, rows, groups, self.min_samples
+            )
             self._reference_groups = groups
             self.baseline_note = self._describe()
             is_reference = True
@@ -223,4 +246,6 @@ class SignalLog:
         out.update(feedback_signal(_counts(rows), self.feedback_ref))
         if self.feature_monitor is not None and X is not None:
             out.update(self.feature_monitor.evaluate(X))
+        if self.pattern_monitor is not None:
+            out.update(self.pattern_monitor.evaluate(rows, groups))
         return out

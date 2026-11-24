@@ -95,8 +95,9 @@ def test_injection_fraction_and_determinism():
         ),
         (
             "volume_shift",
-            lambda o, n: n.signature_matches_per_day
-            == 10 * o.signature_matches_per_day,
+            lambda o, n: (
+                n.signature_matches_per_day == 10 * o.signature_matches_per_day
+            ),
         ),
     ],
 )
@@ -157,6 +158,12 @@ def test_end_to_end_logs_injection_and_summarises(monkeypatch, tmp_path):
     # Per-feature PSI over the model inputs is logged on every walked window.
     assert ph[ph.horizon_window_index > 0].fpsi_max.notna().all()
     assert "feature_psi_detect" in summ.columns
+    # Pattern validity is logged in all three label modes.
+    walked = ph[ph.horizon_window_index > 0]
+    assert walked.pv_oracle_n_checked.notna().all()
+    assert walked.pv_audit_elevated.notna().all()
+    for m in ("oracle", "escalated", "audit"):
+        assert f"pattern_validity_{m}_detect" in summ.columns
 
 
 def test_detection_summary_rates():

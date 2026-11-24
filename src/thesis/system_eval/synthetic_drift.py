@@ -58,6 +58,7 @@ import pandas as pd
 from thesis.experiments._shared import load_scenario_context
 from thesis.metrics.shortlist import ShortlistedConfig
 from thesis.monitor.noise_aware import STATISTICS
+from thesis.monitor.pattern_validity import LABEL_MODES as PV_LABEL_MODES
 from thesis.paths import ensure_artifact_dirs
 from thesis.pipeline.pipeline import compute_window_train_end
 from thesis.schemas.experiments import MonitorDriftConfig
@@ -96,6 +97,11 @@ SIGNAL_VALUES = (
     "novelty_pattern_novelty_rate",
     "fb_precision",
     "fpsi_max",
+    *(
+        f"pv_{m}_{v}"
+        for m in PV_LABEL_MODES
+        for v in ("n_invalid", "n_prec_drop", "cov_attack", "cov_benign")
+    ),
 )
 
 KINDS = (
@@ -135,6 +141,11 @@ SIGNAL_FLAGS = (
     ("feedback_precision", "fb_precision_elevated"),
     ("feature_psi", "fpsi_elevated"),
     ("feature_psi_fixed", "fpsi_fixed_elevated"),
+    *(
+        (f"pattern_validity_{m}{part}", f"pv_{m}{part}_elevated")
+        for m in PV_LABEL_MODES
+        for part in ("", "_contrast", "_precision", "_coverage")
+    ),
 )
 
 
