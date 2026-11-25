@@ -167,7 +167,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--trigger",
-        choices=["feedback", "thesis"],
+        choices=["feedback", "thesis", "combined"],
         default="feedback",
         help="What acts: analyst-feedback precision (default) or the thesis Signal 1/2 table. The other is still logged.",
     )
@@ -178,6 +178,13 @@ def main() -> None:
         dest="feedback_consecutive_windows",
         metavar="N",
         help="Consecutive windows with feedback precision significantly below reference before acting. Default: 1",
+    )
+    parser.add_argument(
+        "--pattern-label-mode",
+        choices=["audit", "oracle", "escalated"],
+        default="audit",
+        dest="pattern_label_mode",
+        help="Labels pattern validity uses under --trigger combined. Default: audit (escalated + 5%% random audit)",
     )
     parser.add_argument(
         "--feedback-action",
@@ -306,6 +313,7 @@ def main() -> None:
         trigger=args.trigger,
         feedback_consecutive_windows=args.feedback_consecutive_windows,
         feedback_action=args.feedback_action,
+        pattern_label_mode=args.pattern_label_mode,
         latency_sample_n=args.latency_sample_n,
     )
     out_dir = run_monitor_attached_experiment(config)

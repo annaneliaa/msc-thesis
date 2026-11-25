@@ -62,6 +62,12 @@ Design decisions:
   original Signal 1/Signal 2 table (monitor/triggers.py). Either way
   run_monitor_window still runs every window and its decision is logged as
   thesis_action, so both triggers stay comparable from one run.
+  "combined" (2026-11-25) splits the two questions: pattern validity
+  (thesis.monitor.pattern_validity, pv_<config.pattern_label_mode>_elevated:
+  a mined pattern's precision or the patterns' coverage dropped) ->
+  REMINE_AND_RETRAIN; otherwise feedback precision -> RETRAIN_ONLY. Each
+  has its own streak of config.feedback_consecutive_windows windows;
+  trigger_reason records which one acted.
 
 * Signal thresholds: config.psi_threshold/cal_threshold are passed
   straight through to run_monitor_window at every horizon -- deploy the
@@ -245,6 +251,7 @@ def _run_one_config(
     schema_version = dynamic_schema.version
     state = MonitorState(scenario_name=scenario, deployed_schema_version=schema_version)
     feedback_streak = 0
+    pattern_streak = 0
 
     # Every signal ever considered, logged per horizon and never acted on
     # (thesis.monitor.signal_log). Its baselines reset on every executed
@@ -281,6 +288,7 @@ def _run_one_config(
         "trigger": config.trigger,
         "feedback_consecutive_windows": config.feedback_consecutive_windows,
         "feedback_action": config.feedback_action,
+        "pattern_label_mode": config.pattern_label_mode,
     }
     n_per_horizon_latency = (
         max(1, config.latency_sample_n // max(fit.n_windows, 1))
@@ -297,6 +305,7 @@ def _run_one_config(
     ) -> None:
         nonlocal current_schema, current_model, current_threshold
         nonlocal dynamic_schema, schema_version, state, feedback_streak
+        nonlocal pattern_streak
 
         horizon_fraction = (
             horizon_window_index / (fit.n_windows - 1) if fit.n_windows > 1 else 0.0
@@ -429,20 +438,39 @@ def _run_one_config(
         row["signal_1_elevated"] = snapshot.signal_1_elevated
         row["signal_2_elevated"] = snapshot.signal_2_elevated
         row["thesis_action"] = snapshot.action
+        feedback_streak = feedback_streak + 1 if row.get("fb_precision_elevated") else 0
+        pattern_streak = (
+            pattern_streak + 1
+            if row.get(f"pv_{config.pattern_label_mode}_elevated")
+            else 0
+        )
+        n_needed = config.feedback_consecutive_windows
+        reason = None
         if config.trigger == "feedback":
-            feedback_streak = (
-                feedback_streak + 1 if row.get("fb_precision_elevated") else 0
-            )
-            trigger_remine = feedback_streak >= config.feedback_consecutive_windows
+            trigger_remine = feedback_streak >= n_needed
             if trigger_remine:
-                action = config.feedback_action
+                action, reason = config.feedback_action, "feedback"
             elif feedback_streak:
+                action = "SOFT_ALERT"
+            else:
+                action = "NO_ACTION"
+        elif config.trigger == "combined":
+            trigger_remine = pattern_streak >= n_needed or feedback_streak >= n_needed
+            if pattern_streak >= n_needed:
+                action, reason = "REMINE_AND_RETRAIN", "pattern_validity"
+            elif feedback_streak >= n_needed:
+                action, reason = "RETRAIN_ONLY", "feedback"
+            elif feedback_streak or pattern_streak:
                 action = "SOFT_ALERT"
             else:
                 action = "NO_ACTION"
         else:
             action, trigger_remine = snapshot.action, snapshot.trigger_remine
+            reason = "thesis" if trigger_remine else None
         row["action"] = action
+        row["trigger_reason"] = reason
+        row["feedback_streak"] = feedback_streak
+        row["pattern_streak"] = pattern_streak
         row["trigger_remine"] = trigger_remine
 
         if not trigger_remine:
@@ -455,6 +483,7 @@ def _run_one_config(
             **base_row,
             "horizon_window_index": horizon_window_index,
             "action": action,
+            "trigger_reason": reason,
             "n_train_rows": n_train,
             "schema_version_before": schema_version,
         }
@@ -516,6 +545,7 @@ def _run_one_config(
             t_deploy_s = time.perf_counter() - t0_deploy
             signal_log.redeploy(dynamic_schema, raw_groups_h)
             feedback_streak = 0
+            pattern_streak = 0
 
             event_rows.append(
                 {
@@ -610,6 +640,7 @@ def _run_one_config(
             t_deploy_s = time.perf_counter() - t0_deploy
             signal_log.redeploy(dynamic_schema, raw_groups_h)
             feedback_streak = 0
+            pattern_streak = 0
 
             event_rows.append(
                 {
@@ -738,7 +769,13 @@ def run_monitor_attached_experiment(config: MonitorAttachedConfig) -> Path:
             f" (feedback precision, {config.feedback_consecutive_windows} window(s) "
             f"-> {config.feedback_action})"
             if config.trigger == "feedback"
-            else " (Signal 1/2 table)"
+            else (
+                f" (pattern validity [{config.pattern_label_mode}] -> "
+                "REMINE_AND_RETRAIN, else feedback precision -> RETRAIN_ONLY; "
+                f"{config.feedback_consecutive_windows} window(s))"
+                if config.trigger == "combined"
+                else " (Signal 1/2 table)"
+            )
         ),
         f"Rows: {len(per_horizon_df)} (per_horizon), {len(events_df)} (events, "
         f"{n_executed} executed), {len(latency_df)} (latency_sample)",

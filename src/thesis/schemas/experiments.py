@@ -423,7 +423,11 @@ class MonitorAttachedConfig:
     # for feedback_consecutive_windows windows -> feedback_action); "thesis" =
     # the Signal 1/Signal 2 table (monitor/triggers.py). The other is still
     # logged every window (thesis_action / fb_* columns).
-    trigger: Literal["feedback", "thesis"] = "feedback"
+    # "combined": pattern validity (pv_<pattern_label_mode>_elevated) ->
+    # REMINE_AND_RETRAIN, else feedback precision -> RETRAIN_ONLY; both need
+    # feedback_consecutive_windows windows in a row.
+    trigger: Literal["feedback", "thesis", "combined"] = "feedback"
+    pattern_label_mode: Literal["audit", "oracle", "escalated"] = "audit"
     feedback_consecutive_windows: int = 1
     feedback_action: Literal["RETRAIN_ONLY", "REMINE_AND_RETRAIN"] = (
         "REMINE_AND_RETRAIN"

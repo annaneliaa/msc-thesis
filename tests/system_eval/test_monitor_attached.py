@@ -395,3 +395,45 @@ def test_feedback_trigger_acts_on_precision_and_warms_up_after_redeploy(monkeypa
     assert [e["horizon_window_index"] for e in executed] == [3]
     # Window after the redeploy is the new feedback/noise-aware reference.
     assert by_h[4]["signals_reference_window"] is True
+
+
+def test_combined_trigger_remines_on_patterns_and_retrains_on_feedback(monkeypatch):
+    """trigger='combined': pattern validity -> REMINE_AND_RETRAIN, feedback
+    precision alone -> RETRAIN_ONLY; pattern validity wins when both fire."""
+    alert_groups = _build_timeline(n_windows=6, per_window=40)
+    n_total = len(alert_groups)
+    cfg = ShortlistedConfig(
+        feature_set="symbolic",
+        mining_setting="test_setting",
+        granularity=1 / 6,
+        model="logreg",
+    )
+    pattern_by_call = {1: True, 5: True}
+    feedback_by_call = {3: True, 5: True}
+    calls = {"n": 0}
+    real_log_window = ma.SignalLog.log_window
+
+    def fake_log_window(self, *args, **kwargs):
+        out = real_log_window(self, *args, **kwargs)
+        out["pv_audit_elevated"] = pattern_by_call.get(calls["n"], False)
+        out["fb_precision_elevated"] = feedback_by_call.get(calls["n"], False)
+        calls["n"] += 1
+        return out
+
+    monkeypatch.setattr(ma.SignalLog, "log_window", fake_log_window)
+    config = _config(trigger="combined", feedback_consecutive_windows=1)
+    horizon_rows, event_rows, _ = _run(cfg, config, alert_groups, n_total)
+    by_h = {r["horizon_window_index"]: r for r in horizon_rows}
+
+    assert by_h[1]["action"] == "REMINE_AND_RETRAIN"
+    assert by_h[1]["trigger_reason"] == "pattern_validity"
+    assert by_h[3]["action"] == "RETRAIN_ONLY"
+    assert by_h[3]["trigger_reason"] == "feedback"
+    assert by_h[5]["action"] == "REMINE_AND_RETRAIN"
+    assert by_h[2]["action"] == by_h[4]["action"] == "NO_ACTION"
+    executed = [e for e in event_rows if e["executed"]]
+    assert [(e["horizon_window_index"], e["trigger_reason"]) for e in executed] == [
+        (1, "pattern_validity"),
+        (3, "feedback"),
+        (5, "pattern_validity"),
+    ]

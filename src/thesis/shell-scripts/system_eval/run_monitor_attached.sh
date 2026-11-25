@@ -37,7 +37,9 @@
 # TRIGGER (env, default "feedback") picks what acts: analyst-feedback
 # precision (FEEDBACK_CONSECUTIVE_WINDOWS in a row -> FEEDBACK_ACTION) or
 # "thesis" (the Signal 1/2 table, gated by the positional thresholds). The
-# other decision is still logged every window.
+# other decision is still logged every window. "combined": pattern validity
+# (PATTERN_LABEL_MODE labels, default audit) -> REMINE_AND_RETRAIN, else
+# feedback precision -> RETRAIN_ONLY.
 #
 # Edit SCENARIOS/MINING_SETTINGS/MODELS below, or set GRANULARITIES
 # (space-separated) in the environment, to change what else runs.
@@ -64,6 +66,7 @@ read -r -a GRANULARITIES <<< "${GRANULARITIES:-0.1 0.05 0.02}"
 TRIGGER="${TRIGGER:-feedback}"
 FEEDBACK_CONSECUTIVE_WINDOWS="${FEEDBACK_CONSECUTIVE_WINDOWS:-1}"
 FEEDBACK_ACTION="${FEEDBACK_ACTION:-REMINE_AND_RETRAIN}"
+PATTERN_LABEL_MODE="${PATTERN_LABEL_MODE:-audit}"
 MODELS=(xgboost rf)
 SOURCE_SPLIT_MODE="baseline_split"  # anchors W_src to the CSCAS baseline's own train/test boundary
 THRESHOLD_MODE="fixed"  # or "calibrated_recall" -- keep in sync with the other experiment scripts
@@ -105,6 +108,7 @@ for scenario in "${SCENARIOS[@]}"; do
     --trigger "$TRIGGER" \
     --feedback-consecutive-windows "$FEEDBACK_CONSECUTIVE_WINDOWS" \
     --feedback-action "$FEEDBACK_ACTION" \
+    --pattern-label-mode "$PATTERN_LABEL_MODE" \
     --latency-sample-n "$LATENCY_SAMPLE_N")
   if [[ "$THRESHOLD_MODE" == "calibrated_recall" ]]; then
     cmd+=(--calibrated-recall-target "$CALIBRATED_RECALL_TARGET")
