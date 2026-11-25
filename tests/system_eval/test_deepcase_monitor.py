@@ -110,3 +110,46 @@ def test_run_and_summary(tmp_path):
     assert sig.e2e_f1.notna().all()
     text = summarise(sig)
     assert "Firing rate" in text and "pattern validity analogue, audit" in text
+
+
+def _native_window(h, n=5000, extra_code=None, extra_share=0.0, seed=0):
+    """Codes: 80% auto, 5% each of -1/-2/-3 (+ an optional extra share of
+    one reason), spread evenly over 5 days."""
+    rng = np.random.default_rng(seed + h)
+    code = rng.choice([0, 1, -1, -2, -3], size=n, p=[0.7, 0.15, 0.05, 0.05, 0.05])
+    if extra_code is not None:
+        code[rng.random(n) < extra_share] = extra_code
+    return pd.DataFrame(
+        {
+            "group_id": [f"n{h}_{i}" for i in range(n)],
+            "horizon": h,
+            "ts": h * 10 * 86400 + np.sort(rng.integers(0, 5 * 86400, n)),
+            "label": (code == 1).astype(int),
+            "code": code.astype(float),
+        }
+    )
+
+
+def test_native_signals_quiet_on_clean_windows():
+    rows = pd.concat([_native_window(h) for h in (1, 2, 3)], ignore_index=True)
+    sig = monitor_seed(rows, audit_rate=0.2).set_index("horizon")
+    assert not sig.loc[[2, 3], "native_elevated"].any()
+    assert (sig.loc[[2, 3], "native_action"] == "NO_ACTION").all()
+    assert sig.loc[2, "native_unknown_event_thr"] >= 0.01
+
+
+def test_native_unknown_events_remine_too_far_retrains():
+    rows = pd.concat(
+        [
+            _native_window(1),
+            _native_window(2, extra_code=-2, extra_share=0.15),
+            _native_window(3, extra_code=-3, extra_share=0.15),
+        ],
+        ignore_index=True,
+    )
+    sig = monitor_seed(rows, audit_rate=0.2).set_index("horizon")
+    assert sig.loc[2, "native_unknown_event_elevated"]
+    assert sig.loc[2, "native_action"] == "REMINE_AND_RETRAIN"
+    assert sig.loc[3, "native_too_far_elevated"]
+    assert not sig.loc[3, "native_unknown_event_elevated"]
+    assert sig.loc[3, "native_action"] == "RETRAIN_ONLY"

@@ -34,6 +34,14 @@ least 0.05 lower, Kish effective n). Decision (logged): pattern-validity
 analogue = cluster precision OR coverage drop -> REMINE_AND_RETRAIN; else
 feedback precision -> RETRAIN_ONLY; else NO_ACTION.
 
+DeepCASE-native signals (added 2026-11-25, label-free): the share of each
+manual-queue reason -- not confident (-1), unknown event type (-2), too far
+from any cluster (-3) -- compared with the reference window, elevated when it
+rose by more than that window's own day-to-day variation. Low-confidence /
+unknown rises -> REMINE_AND_RETRAIN (retrain the ContextBuilder); too-far
+rises -> RETRAIN_ONLY (add clusters). Logged alongside the mapped signals;
+chosen from DeepCASE's own decision codes, not from the test outcome.
+
 Per-cluster precision needs the matched training cluster per test row
 (`cluster` column, written by deepcase_comparison since 2026-11-25); runs
 without it skip that part.
@@ -56,6 +64,18 @@ from thesis.monitor.pattern_validity import (
 
 MIN_SAMPLES = 30
 LABEL_MODES = ("oracle", "audit")
+
+# DeepCASE-native signals (label-free): the share of events DeepCASE sends to
+# the analyst for each of its own reasons, each mapped to the update action
+# that fixes that reason in DeepCASE's own procedure.
+NATIVE_REASONS = {"low_confidence": -1, "unknown_event": -2, "too_far": -3}
+NATIVE_ACTION = {
+    "low_confidence": "REMINE_AND_RETRAIN",  # ContextBuilder doesn't know the context
+    "unknown_event": "REMINE_AND_RETRAIN",  # new event types: new vocabulary
+    "too_far": "RETRAIN_ONLY",  # known events in new situations: new clusters
+}
+NATIVE_BLOCK_SECONDS = 86_400
+MIN_SHARE_RISE = 0.01
 
 
 def label_weights(
@@ -147,6 +167,56 @@ def compare_windows(win: dict, ref: dict, min_samples: int = MIN_SAMPLES) -> dic
     }
 
 
+def native_reference(
+    code: np.ndarray, ts: np.ndarray, block_seconds: int = NATIVE_BLOCK_SECONDS
+) -> dict[str, tuple[float, float]]:
+    """Per manual-queue reason: (reference share, noise threshold). The
+    threshold is the largest rise of one 24h block's share over the rest of
+    the reference window (leave-one-out, same idea as noise_aware's
+    day-by-day baseline), floored at MIN_SHARE_RISE."""
+    blocks = ((ts - ts.min()) // block_seconds).astype(int)
+    ids = np.unique(blocks)
+    out = {}
+    for name, c in NATIVE_REASONS.items():
+        hit = code == c
+        rises = [
+            hit[blocks == b].mean() - hit[blocks != b].mean()
+            for b in ids
+            if 0 < (blocks == b).sum() < len(hit)
+        ]
+        out[name] = (float(hit.mean()), float(max([MIN_SHARE_RISE, *rises])))
+    return out
+
+
+def native_signals(code: np.ndarray, ref: dict[str, tuple[float, float]]) -> dict:
+    """Window share of each manual-queue reason vs the reference; elevated if
+    it rose by more than the reference's own day-to-day noise. Decision: a
+    rise in low-confidence or unknown events -> REMINE_AND_RETRAIN (retrain
+    the ContextBuilder); else a rise in too-far events -> RETRAIN_ONLY (add
+    clusters)."""
+    row, elevated = {}, []
+    for name, c in NATIVE_REASONS.items():
+        p = float((code == c).mean())
+        p_ref, thr = ref[name]
+        e = p - p_ref > thr
+        row[f"native_{name}_share"] = p
+        row[f"native_{name}_share_ref"] = p_ref
+        row[f"native_{name}_thr"] = thr
+        row[f"native_{name}_elevated"] = bool(e)
+        if e:
+            elevated.append(name)
+    actions = {NATIVE_ACTION[n] for n in elevated}
+    row["native_elevated"] = bool(elevated)
+    row["native_action"] = (
+        "REMINE_AND_RETRAIN"
+        if "REMINE_AND_RETRAIN" in actions
+        else "RETRAIN_ONLY"
+        if actions
+        else "NO_ACTION"
+    )
+    return row
+
+
 def _feedback(label: np.ndarray, flagged: np.ndarray) -> FeedbackCounts:
     return FeedbackCounts(int(flagged.sum()), int((flagged & label.astype(bool)).sum()))
 
@@ -160,7 +230,8 @@ def monitor_seed(
     """Per-window signals for one seed's test_predictions.parquet."""
     has_cluster = "cluster" in rows.columns
     audited_all = audit_mask_ids(rows["group_id"].astype(str), audit_rate) > 0
-    out, ref_stats, ref_fb, ref_fb_auto = [], {}, None, None
+    out, ref_stats, ref_fb, ref_fb_auto, ref_native = [], {}, None, None, None
+    has_ts = "ts" in rows.columns
     for h, idx in sorted(rows.groupby("horizon").indices.items()):
         r = rows.iloc[idx]
         label = r["label"].to_numpy().astype(int)
@@ -199,6 +270,11 @@ def monitor_seed(
         row["combined_action"] = (
             "REMINE_AND_RETRAIN" if pv else "RETRAIN_ONLY" if fbe else "NO_ACTION"
         )
+        if has_ts:
+            if int(h) == ref_horizon:
+                ref_native = native_reference(code, r["ts"].to_numpy())
+            if ref_native is not None:
+                row.update(native_signals(code, ref_native))
         out.append(row)
     return pd.DataFrame(out)
 
@@ -244,6 +320,10 @@ def summarise(signals: pd.DataFrame) -> str:
         "coverage, oracle": "pv_oracle_coverage_elevated",
         "cluster precision, oracle": "pv_oracle_precision_elevated",
         "pattern validity analogue, oracle": "pv_oracle_elevated",
+        "native: low-confidence share rose": "native_low_confidence_elevated",
+        "native: unknown-event share rose": "native_unknown_event_elevated",
+        "native: too-far share rose": "native_too_far_elevated",
+        "native: any": "native_elevated",
     }
     lines = ["Firing rate over windows 2..N (mean over seeds):"]
     for name, col in flags.items():
@@ -257,6 +337,9 @@ def summarise(signals: pd.DataFrame) -> str:
         "pv_audit_cov_attack",
         "pv_audit_n_cluster_prec_drop",
         "pv_oracle_cov_attack",
+        "native_low_confidence_share",
+        "native_unknown_event_share",
+        "native_too_far_share",
     ):
         if col in walk and walk[col].notna().sum() > 2:
             rho = walk[[col, "e2e_f1"]].astype(float).corr(method="spearman").iloc[0, 1]
@@ -264,4 +347,8 @@ def summarise(signals: pd.DataFrame) -> str:
     lines.append("")
     lines.append("Combined decision per window (counts over seeds):")
     lines.append(walk["combined_action"].value_counts().to_string())
+    if "native_action" in walk:
+        lines.append("")
+        lines.append("DeepCASE-native decision per window (counts over seeds):")
+        lines.append(walk["native_action"].value_counts().to_string())
     return "\n".join(lines)
