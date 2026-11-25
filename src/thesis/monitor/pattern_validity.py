@@ -106,12 +106,18 @@ _FIELDS = (
 PATTERN_VALIDITY_COLUMNS = tuple(f"pv_{m}_{f}" for m in LABEL_MODES for f in _FIELDS)
 
 
+def audit_mask_ids(ids: Sequence, rate: float = AUDIT_RATE) -> np.ndarray:
+    """Deterministic random audit draw per id (same id -> same draw, nested
+    across rates). Shared by our system (alert_group_id) and DeepCASE
+    (CSCAS group_id, equal to alert_group_id), so both audit the same rows."""
+    return np.array(
+        [zlib.crc32(str(i).encode()) / 2**32 < rate for i in ids], dtype=np.float32
+    )
+
+
 def audit_mask(groups: Sequence[AlertGroup], rate: float = AUDIT_RATE) -> np.ndarray:
     """Deterministic random audit draw per group (same group -> same draw)."""
-    return np.array(
-        [zlib.crc32(str(g.alert_group_id).encode()) / 2**32 < rate for g in groups],
-        dtype=np.float32,
-    )
+    return audit_mask_ids([g.alert_group_id for g in groups], rate)
 
 
 def pattern_meta(schema: DynamicSchema) -> tuple[list[str], np.ndarray]:

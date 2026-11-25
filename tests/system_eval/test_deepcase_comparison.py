@@ -11,6 +11,7 @@ from thesis.system_eval.deepcase_comparison import (
     build_context,
     cluster_rows,
     decision_metrics,
+    predict_codes_and_clusters,
     fit_interpreter,
     horizon_bounds,
     predict_codes,
@@ -113,6 +114,10 @@ def test_interpreter_roundtrip_codes():
         CODE_NOT_IN_TRAINING,
         CODE_NOT_IN_TRAINING,
     ]
+    # The matched training cluster is kept for the automatic decision only.
+    codes2, cl = predict_codes_and_clusters(fitted, vt, mt, yt, unknown_id=2)
+    assert codes2.tolist() == codes.tolist()
+    assert cl.tolist() == [clusters[0], -1, -1, -1, -1]
 
 
 def test_decision_metrics_manual_counts_as_escalated():

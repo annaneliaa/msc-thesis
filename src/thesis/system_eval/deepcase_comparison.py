@@ -484,7 +484,10 @@ class FittedInterpreter:
     label of each tree point (max over rows sharing that vector) --
     Interpreter.score()."""
 
-    trees: dict[int, tuple[KDTree, np.ndarray]]
+    # event type -> (tree, label per tree point, training cluster id per tree
+    # point -- the cluster with the highest label among rows sharing the
+    # vector, i.e. the one that decided that label)
+    trees: dict[int, tuple[KDTree, np.ndarray, np.ndarray]]
     eps: float
 
 
@@ -499,14 +502,56 @@ def fit_interpreter(
     y_m, c_m = y[mask], clusters[mask]
     keep = c_m != -1
     vec_k, y_k = vec[np.flatnonzero(keep)], y_m[keep]
-    scores = np.array([cluster_label[c] for c in c_m[keep]], dtype=np.float64)
-    trees: dict[int, tuple[KDTree, np.ndarray]] = {}
+    cids = c_m[keep]
+    scores = np.array([cluster_label[c] for c in cids], dtype=np.float64)
+    trees: dict[int, tuple[KDTree, np.ndarray, np.ndarray]] = {}
     for event, idx in _groups(y_k):
         uniq, inverse, _ = sp_unique(vec_k[idx])
+        inverse = np.asarray(inverse).ravel()
         labels = np.full(uniq.shape[0], -np.inf)
-        np.maximum.at(labels, np.asarray(inverse).ravel(), scores[idx])
-        trees[event] = (KDTree(uniq.toarray(), p=1), labels)
+        np.maximum.at(labels, inverse, scores[idx])
+        cluster_of = np.full(uniq.shape[0], -1, dtype=np.int64)
+        order = np.argsort(scores[idx], kind="stable")  # highest label last
+        cluster_of[inverse[order]] = cids[idx][order]
+        trees[event] = (KDTree(uniq.toarray(), p=1), labels, cluster_of)
     return FittedInterpreter(trees, eps)
+
+
+def predict_codes_and_clusters(
+    fitted: FittedInterpreter,
+    vec: sp.csr_matrix,
+    mask: np.ndarray,
+    y: np.ndarray,
+    unknown_id: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """predict_codes plus, per row, the training cluster whose point decided
+    an automatic code (-1 for every non-automatic row). Used by the monitor's
+    per-cluster precision signal (DeepCASE plan B5)."""
+    y_m = y[mask]
+    result = np.full(len(y_m), np.nan)
+    cluster_m = np.full(len(y_m), -1, dtype=np.int64)
+    for event, idx in _groups(y_m):
+        if event not in fitted.trees:
+            result[idx] = CODE_NOT_IN_TRAINING
+            continue
+        tree, labels, cluster_of = fitted.trees[event]
+        uniq, inverse, _ = sp_unique(vec[idx])
+        inverse = np.asarray(inverse).ravel()
+        dist, nb = tree.query(
+            uniq.toarray(), k=1, return_distance=True, dualtree=uniq.shape[0] >= 1e3
+        )
+        near = dist[:, 0] <= fitted.eps
+        res = np.where(near, labels[nb[:, 0]], CODE_TOO_FAR)
+        result[idx] = res[inverse]
+        cluster_m[idx] = np.where(near, cluster_of[nb[:, 0]], -1)[inverse]
+    codes = np.full(len(y), float(CODE_LOW_CONFIDENCE))
+    codes[mask] = result
+    cluster = np.full(len(y), -1, dtype=np.int64)
+    cluster[mask] = cluster_m
+    unknown = y == unknown_id
+    codes[unknown] = CODE_NOT_IN_TRAINING
+    cluster[unknown] = -1
+    return codes, cluster
 
 
 def predict_codes(
@@ -519,23 +564,7 @@ def predict_codes(
     """Interpreter.predict on precomputed vectors: label of the nearest
     training cluster point if within eps, else -3; -2 if the event type has
     no clusters (or is UNKNOWN); -1 if not confident."""
-    y_m = y[mask]
-    result = np.full(len(y_m), np.nan)
-    for event, idx in _groups(y_m):
-        if event not in fitted.trees:
-            result[idx] = CODE_NOT_IN_TRAINING
-            continue
-        tree, labels = fitted.trees[event]
-        uniq, inverse, _ = sp_unique(vec[idx])
-        dist, nb = tree.query(
-            uniq.toarray(), k=1, return_distance=True, dualtree=uniq.shape[0] >= 1e3
-        )
-        res = np.where(dist[:, 0] <= fitted.eps, labels[nb[:, 0]], CODE_TOO_FAR)
-        result[idx] = res[np.asarray(inverse).ravel()]
-    codes = np.full(len(y), float(CODE_LOW_CONFIDENCE))
-    codes[mask] = result
-    codes[y == unknown_id] = CODE_NOT_IN_TRAINING
-    return codes
+    return predict_codes_and_clusters(fitted, vec, mask, y, unknown_id)[0]
 
 
 # --- Metrics -----------------------------------------------------------------
@@ -646,9 +675,11 @@ def _interpret_cell(
     cfg: DeepCaseConfig,
     rng: np.random.Generator,
     cached_vectors: dict | None = None,
-) -> tuple[np.ndarray, AnalystResult, np.ndarray]:
+    return_test_clusters: bool = False,
+):
     """Cluster + simulated analyst on the training rows, predict the test
-    rows. Returns (test codes, analyst result, training clusters)."""
+    rows. Returns (test codes, analyst result, training clusters), plus the
+    matched training cluster per test row if return_test_clusters."""
     if cached_vectors is not None and threshold in cached_vectors:
         (vec_tr, m_tr), (vec_te, m_te) = cached_vectors[threshold]
     else:
@@ -662,7 +693,11 @@ def _interpret_cell(
     fitted = fit_interpreter(
         vec_tr, m_tr, att_tr.y, clusters, analyst.cluster_label, eps
     )
-    codes = predict_codes(fitted, vec_te, m_te, att_te.y, vocab.unknown_id)
+    codes, test_clusters = predict_codes_and_clusters(
+        fitted, vec_te, m_te, att_te.y, vocab.unknown_id
+    )
+    if return_test_clusters:
+        return codes, analyst, clusters, test_clusters
     return codes, analyst, clusters
 
 
@@ -841,8 +876,8 @@ def run_deepcase_comparison(cfg: DeepCaseConfig) -> Path:
     n_test = len(ev) - ev.split_idx
     print(
         f"Loaded {len(ev)} rows in {time.time() - t0:.0f}s: W0 {ev.split_idx} "
-        f"({int(ev.label[:ev.split_idx].sum())} attack), test {n_test} "
-        f"({int(ev.label[ev.split_idx:].sum())} attack); "
+        f"({int(ev.label[: ev.split_idx].sum())} attack), test {n_test} "
+        f"({int(ev.label[ev.split_idx :].sum())} attack); "
         f"{int(pd.isna(ev.machine).sum())} rows without a host"
     )
 
@@ -909,8 +944,16 @@ def run_deepcase_comparison(cfg: DeepCaseConfig) -> Path:
         att_te = attention_query(cb, vocab, ctx[s:], ids[s:], cfg, device, seed)
         t_query = time.time() - ts0
         rng = np.random.default_rng(seed)
-        codes, analyst, clusters = _interpret_cell(
-            att_tr, att_te, label_tr, vocab, tau, eps, cfg, rng
+        codes, analyst, clusters, test_clusters = _interpret_cell(
+            att_tr,
+            att_te,
+            label_tr,
+            vocab,
+            tau,
+            eps,
+            cfg,
+            rng,
+            return_test_clusters=True,
         )
 
         pd.DataFrame(
@@ -924,6 +967,8 @@ def run_deepcase_comparison(cfg: DeepCaseConfig) -> Path:
                 "seen": seen,
                 "confidence": att_te.confidence,
                 "code": codes,
+                # training cluster that decided an automatic code (-1 = none)
+                "cluster": test_clusters,
             }
         ).to_parquet(seed_dir / "test_predictions.parquet", index=False)
         inspected = np.concatenate([analyst.sampled_idx, analyst.outlier_idx])
