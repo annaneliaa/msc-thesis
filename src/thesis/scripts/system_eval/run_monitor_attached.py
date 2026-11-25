@@ -101,7 +101,8 @@ def main() -> None:
         default=0.7,
         dest="train_frac",
         metavar="FRAC",
-        help="W_src (window 0) internal train/test split fraction. Default: 0.7",
+        help="W_src (window 0) internal train/test split fraction; 1.0 = train on all "
+        "of W_src, no held-out window 0 (DeepCASE comparison). Default: 0.7",
     )
     parser.add_argument(
         "--source-split-mode",

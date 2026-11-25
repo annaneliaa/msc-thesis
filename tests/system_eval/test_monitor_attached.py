@@ -525,3 +525,25 @@ def test_cumulative_budget_pools_analyst_labels_and_trains_on_them(monkeypatch):
     n_rows = [r["n_alert_groups"] for r in rows]
     assert all(s <= n for s, n in zip(seen_labels, n_rows))
     assert any(s < n for s, n in zip(seen_labels, n_rows))
+
+
+def test_full_source_window_has_no_heldout_and_warms_up_on_window_one():
+    """train_frac_within_window=1.0 (DeepCASE comparison): mine+fit on all of
+    W_src; window 0 is empty and the first walked window is the monitor's
+    reference, so nothing can fire there."""
+    alert_groups = _build_timeline(n_windows=6, per_window=60, drift_from_window=3)
+    config = _config(
+        trigger="combined",
+        train_frac_within_window=1.0,
+        update_labels="cumulative_budget",
+        initial_budget_mode="stratified",
+        initial_budget_size=30,
+        audit_rate=0.5,
+    )
+    rows, _, _ = _run(_symbolic_cfg(), config, alert_groups, len(alert_groups))
+    by_h = {r["horizon_window_index"]: r for r in rows}
+    assert by_h[0]["n_alert_groups"] == 0
+    assert {r["initial_budget_n"] for r in rows} == {30}  # B0 drawn from all 60
+    assert by_h[1]["signals_reference_window"] is True
+    assert by_h[1]["action"] == "NO_ACTION"
+    assert by_h[2]["signals_reference_window"] is False

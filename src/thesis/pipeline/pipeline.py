@@ -505,7 +505,12 @@ def compute_window_train_end(
     compute_window_bounds): the first `train_frac` of the window's rows are
     train, the rest are test. Clamped so both sides get at least one row
     whenever the window has 2+ rows, matching make_holdout_split's spirit but
-    scoped to one window instead of the whole timeline."""
+    scoped to one window instead of the whole timeline.
+
+    train_frac >= 1.0 means "no held-out split": the whole window is train
+    (the DeepCASE comparison trains on all 6 days, like DeepCASE does)."""
+    if train_frac >= 1.0:
+        return win_end
     win_size = win_end - win_start
     train_end = win_start + round(train_frac * win_size)
     train_end = (
