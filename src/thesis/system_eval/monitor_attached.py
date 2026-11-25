@@ -298,14 +298,18 @@ def _run_one_config(
         if len(fit.X_test) and len(fit.X_test) == len(fit.test_groups_raw)
         else None
     )
+    # The audit is monitoring-only work: only the combined trigger's pattern
+    # validity needs it (decided 2026-11-25), so frozen / fixed-schedule /
+    # feedback runs don't pay for it -- and don't train on it.
+    audit_rate = config.audit_rate if config.trigger == "combined" else 0.0
     ledger: LabelLedger | None = None
     heldout_view = None
     if budget:
-        ledger = LabelLedger(config.audit_rate)
+        ledger = LabelLedger(audit_rate)
         ledger.add_initial(b0_groups)
         if heldout_scores is not None:
             heldout_view = budget_view(
-                fit.test_groups_raw, heldout_scores >= fit.threshold, config.audit_rate
+                fit.test_groups_raw, heldout_scores >= fit.threshold, audit_rate
             )[0]
     signal_log = SignalLog(
         dynamic_schema,
@@ -339,7 +343,7 @@ def _run_one_config(
         "update_labels": config.update_labels,
         "initial_budget_mode": config.initial_budget_mode,
         "initial_budget_n": len(b0_groups) if b0_groups else None,
-        "audit_rate": config.audit_rate if budget else None,
+        "audit_rate": audit_rate if budget else None,
     }
     n_per_horizon_latency = (
         max(1, config.latency_sample_n // max(fit.n_windows, 1))

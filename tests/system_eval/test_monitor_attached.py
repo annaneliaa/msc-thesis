@@ -519,8 +519,11 @@ def test_cumulative_budget_pools_analyst_labels_and_trains_on_them(monkeypatch):
     # Every update trains on the pool as it stood after that window...
     executed = [e for e in events if e["executed"]]
     assert [e["n_train_rows"] for e in executed] == pool
-    # ...with audit rows weighted 1 / 0.5.
-    assert all(w == {1.0, 2.0} for _, w in fits if w is not None)
+    # ...and the fixed schedule pays for no audit (monitor-only work), so
+    # every pooled row is an escalated or B0 label with weight 1.
+    assert all(r["ledger_n_audit_labels"] == 0 for r in rows)
+    assert {r["audit_rate"] for r in rows} == {0.0}
+    assert all(w == {1.0} for _, w in fits if w is not None)
     # The monitor never sees more labels than the analyst produced.
     n_rows = [r["n_alert_groups"] for r in rows]
     assert all(s <= n for s, n in zip(seen_labels, n_rows))
@@ -547,3 +550,35 @@ def test_full_source_window_has_no_heldout_and_warms_up_on_window_one():
     assert by_h[1]["signals_reference_window"] is True
     assert by_h[1]["action"] == "NO_ACTION"
     assert by_h[2]["signals_reference_window"] is False
+
+
+def test_combined_trigger_pays_for_and_weights_the_audit(monkeypatch):
+    alert_groups = _build_timeline(n_windows=6, per_window=60, drift_from_window=3)
+    fits = []
+    real_fit = ma.fit_scored_model
+
+    def spy_fit(model, X, y, seed=None, sample_weight=None):
+        fits.append(None if sample_weight is None else set(sample_weight))
+        return real_fit(model, X, y, seed=seed, sample_weight=sample_weight)
+
+    monkeypatch.setattr(ma, "fit_scored_model", spy_fit)
+    # Force an update every window so the pool gets trained on.
+    real_log = ma.SignalLog.log_window
+
+    def always_elevated(self, *a, **k):
+        out = real_log(self, *a, **k)
+        out["fb_precision_elevated"] = True
+        return out
+
+    monkeypatch.setattr(ma.SignalLog, "log_window", always_elevated)
+    config = _config(
+        trigger="combined",
+        update_labels="cumulative_budget",
+        initial_budget_mode="stratified",
+        initial_budget_size=20,
+        audit_rate=0.5,
+    )
+    rows, _, _ = _run(_symbolic_cfg(), config, alert_groups, len(alert_groups))
+    assert {r["audit_rate"] for r in rows} == {0.5}
+    assert sum(r["ledger_n_audit_labels"] for r in rows) > 0
+    assert any(w == {1.0, 2.0} for w in fits if w is not None)

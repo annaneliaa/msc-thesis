@@ -10,8 +10,9 @@ The rule, identical for our system and DeepCASE:
   sample of the training rows, or exactly the items DeepCASE's simulated
   analyst inspected (`analyst_items.parquet` from deepcase_comparison);
 * every window, the analyst reviews what the system escalates (free: normal
-  SOC work, reported as workload) and a random `audit_rate` sample of what
-  it suppresses (extra, monitoring-only labels -- counted in the budget);
+  SOC work, reported as workload) and -- only when the monitor needs it
+  (audit_rate > 0) -- a random `audit_rate` sample of what it suppresses
+  (extra, monitoring-only labels, counted in the budget);
 * those labels accumulate in a pool (`LabelLedger`); every update trains on
   the whole pool, audit rows weighted 1/audit_rate (inverse-probability
   weights) so the rows the model misses aren't drowned out by the ones it
@@ -119,7 +120,10 @@ def budget_view(
     groups and the escalated / audited masks (labelled rows only)."""
     flagged = np.asarray(flagged, dtype=bool)
     labelled = np.array([is_labelled(g) for g in groups])
-    audited = (audit_mask(groups, audit_rate) > 0) & ~flagged & labelled
+    if audit_rate > 0:
+        audited = (audit_mask(groups, audit_rate) > 0) & ~flagged & labelled
+    else:
+        audited = np.zeros(len(groups), dtype=bool)
     escalated = flagged & labelled
     return mask_labels(groups, escalated | audited), escalated, audited
 
