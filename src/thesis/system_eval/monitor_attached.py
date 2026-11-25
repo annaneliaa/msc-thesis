@@ -122,6 +122,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from thesis.mining.common.attribute_features import default_leaky_attribute_fields
 from thesis.encoders.service import encode_alert_groups_for_schema
 from thesis.experiments._shared import (
     decide_threshold,
@@ -588,6 +589,7 @@ def _run_one_config(
                     f"monitor_attached-h{horizon_window_index}-"
                     f"{datetime.now(timezone.utc):%Y%m%dT%H%M%S}"
                 ),
+                exclude_fields=default_leaky_attribute_fields(scenario),
             )
             t_mining_s = time.perf_counter() - t0
             mining_cpu_s = time.process_time() - tc0

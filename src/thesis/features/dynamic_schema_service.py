@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
+from thesis.mining.common.attribute_features import default_leaky_attribute_fields
 from thesis.features.dynamic_schema_builder import build_dynamic_schema
 from thesis.features.dynamic_schema_registry import DynamicSchemaRegistry
 from thesis.mining.atemporal.contrast_tree.attribute_contrast_mining import (
@@ -35,6 +36,7 @@ def mine_and_deploy_dynamic_schema(
     win_end_idx: int,
     config: AttributeMiningConfig | None = None,
     root_dir: Path = FEATURE_DIR,
+    exclude_fields: set[str] | None = None,
 ) -> Path:
     """
     Mine a window of chronologically-sorted, labeled alert groups
@@ -64,7 +66,13 @@ def mine_and_deploy_dynamic_schema(
     window_end_ts = window[-1].end_ts or window[-1].start_ts
     mining_window_end = datetime.fromtimestamp(window_end_ts, tz=timezone.utc)
 
-    X_cat, X_num, y, column_predicate_map = build_categorical_predicate_matrix(window)
+    # Same default as the cached mining wrapper: drop the scenario's oracle
+    # fields (CSCAS: scas + similarity-derived) unless told otherwise.
+    if exclude_fields is None:
+        exclude_fields = default_leaky_attribute_fields(scenario_name)
+    X_cat, X_num, y, column_predicate_map = build_categorical_predicate_matrix(
+        window, exclude_fields=exclude_fields
+    )
 
     contrast_stats_df = compute_predicate_contrast_stats(X_cat, y, column_predicate_map)
     survivors_df = filter_contrast_survivors(

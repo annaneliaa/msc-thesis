@@ -413,3 +413,38 @@ def test_monitor_state_resets_between_configs():
     )
     by_h = {r["horizon_window_index"]: r for r in horizon_rows_2}
     assert by_h[1]["consecutive_signal_1_elevated"] == 1
+
+
+def test_monitor_mining_drops_cscas_oracle_fields():
+    """scas (the CSCAS grouping's outlier flag) separates the classes
+    perfectly here; with the cscas oracle exclusion it must not reach Vk or
+    the model's mined features."""
+    from thesis.mining.common.attribute_features import default_leaky_attribute_fields
+    from thesis.system_eval.monitor_drift import mine_symbolic_and_dynamic_schema
+
+    rows = [
+        _make_alert_group(
+            f"g{i}",
+            "attack" if i % 2 else "benign",
+            _BASE_TS + i * _STEP,
+            scas=1 if i % 2 else 0,
+            signature_id_similarity=0.9 if i % 2 else 0.1,
+            category="EXPLOIT" if i % 4 == 1 else "POLICY",
+        )
+        for i in range(200)
+    ]
+    spec = _mining_settings()["test_setting"]
+
+    def fields(exclude):
+        mined = mine_symbolic_and_dynamic_schema(
+            rows, spec, _base_schema(), 1, "t", exclude_fields=exclude
+        )
+        ds = mined.dynamic_schema
+        return {p.field for p in ds.single_predicates} | {
+            f for r in ds.compound_rules for f, _, _ in r.conditions
+        }
+
+    assert "scas" in fields(set())  # leaks without the exclusion
+    clean = fields(default_leaky_attribute_fields("cscas"))
+    assert "scas" not in clean
+    assert "signature_id_similarity" not in clean

@@ -62,6 +62,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from thesis.mining.common.attribute_features import default_leaky_attribute_fields
 from thesis.encoders.service import encode_alert_groups_for_schema
 from thesis.experiments._shared import (
     decide_threshold,
@@ -119,6 +120,7 @@ def mine_symbolic_and_dynamic_schema(
     base_schema: FeatureSchema,
     version: int,
     schema_version_tag: str,
+    exclude_fields: set[str],
 ) -> MinedSymbolicAndDynamicSchema:
     """Mine a symbolic FeatureSchema + a deployment-scoped DynamicSchema (Vk)
     from one set of labeled AlertGroup rows, via the direct two-stage
@@ -130,10 +132,18 @@ def mine_symbolic_and_dynamic_schema(
     monitor_attached.py's on-trigger remines (version bumped each time a
     REMINE_AND_RETRAIN actually fires). Caller must ensure
     train_rows_labeled is non-empty and two-class first -- this function
-    does not re-check."""
+    does not re-check.
+
+    exclude_fields: candidate fields dropped from mining -- pass
+    default_leaky_attribute_fields(scenario) (CSCAS oracle fields: scas,
+    similarity, signature_id_similarity, attr_populated/applicable_layer).
+    Required, because this path bypasses the cached mining wrapper that
+    applies that default: until 2026-11-25 it was never passed, so every
+    monitor_drift / monitor_attached / synthetic_drift run mined scas and the
+    similarity-derived fields into both Vk and the model's features."""
     attribute_mining_config = spec.to_attribute_mining_config()
     X_cat, X_num, y, column_predicate_map = build_categorical_predicate_matrix(
-        train_rows_labeled
+        train_rows_labeled, exclude_fields=exclude_fields
     )
     contrast_stats_df = compute_predicate_contrast_stats(X_cat, y, column_predicate_map)
     survivors_df = filter_contrast_survivors(
@@ -319,6 +329,7 @@ def fit_source_window_and_dynamic_schema(
             base_schema=base_schema,
             version=1,
             schema_version_tag=f"monitor_drift-{mined_at_tag:%Y%m%dT%H%M%S}",
+            exclude_fields=default_leaky_attribute_fields(scenario),
         )
         schema = mined.schema
         dynamic_schema = mined.dynamic_schema
