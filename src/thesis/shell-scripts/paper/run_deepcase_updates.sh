@@ -5,7 +5,7 @@
 # step-5.2 run's tuned settings and cached W0 ContextBuilders. Uses the GPU
 # (ContextBuilder retraining + attention queries) -- check the GPU is free.
 #
-# POLICY: never | schedule | combined.  AUDIT: auto | on | off.
+# POLICY: never | schedule | combined | native (DeepCASE-native signals).  AUDIT: auto | on | off.
 # SCHEDULE_ACTION: REMINE_AND_RETRAIN (default; DeepCASE's own update) |
 # RETRAIN_ONLY.  UPDATE_EPOCHS: ContextBuilder epochs per retrain.
 #
@@ -37,6 +37,7 @@ AUDIT_RATE="${AUDIT_RATE:-0.05}"
 SCHEDULE_ACTION="${SCHEDULE_ACTION:-REMINE_AND_RETRAIN}"
 SEEDS="${SEEDS:-}"
 UPDATE_EPOCHS="${UPDATE_EPOCHS:-}"
+NO_REMINE="${NO_REMINE:-0}"  # 1: re-mine actions become retrain-only (add clusters)
 
 LOG_DIR="$REPO_ROOT/artifacts/logs/deepcase_updates"
 mkdir -p "$LOG_DIR"
@@ -48,6 +49,7 @@ cmd=(python -u "$REPO_ROOT/src/thesis/scripts/system_eval/run_deepcase_updates.p
   --audit-rate "$AUDIT_RATE" --schedule-action "$SCHEDULE_ACTION")
 [[ -n "$SEEDS" ]] && cmd+=(--seeds $SEEDS)
 [[ -n "$UPDATE_EPOCHS" ]] && cmd+=(--update-epochs "$UPDATE_EPOCHS")
+[[ "$NO_REMINE" -eq 1 ]] && cmd+=(--no-remine)
 
 echo "Running: ${cmd[*]}"
 echo "Log: $log_file"

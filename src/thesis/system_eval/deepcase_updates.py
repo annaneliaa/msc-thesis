@@ -75,10 +75,14 @@ from thesis.system_eval.deepcase_monitor import (
     _feedback,
     compare_windows,
     label_weights,
+    native_reference,
+    native_signals,
     window_stats,
 )
 
-POLICIES = ("never", "schedule", "combined")
+# "native": act on the DeepCASE-native signals (manual-queue reason shares,
+# label-free) instead of the mapped ones.
+POLICIES = ("never", "schedule", "combined", "native")
 ACTIONS = ("RETRAIN_ONLY", "REMINE_AND_RETRAIN")
 
 
@@ -92,6 +96,12 @@ class UpdateConfig:
     seeds: tuple[int, ...] | None = None  # None = the base run's seeds
     update_epochs: int | None = None  # ContextBuilder epochs per retrain; None = base
     monitor_min_samples: int = MIN_SAMPLES
+    # False: every REMINE_AND_RETRAIN becomes RETRAIN_ONLY (keep the
+    # ContextBuilder, add clusters). A full retrain on W0 + all windows costs
+    # ~2 min/epoch per 265k rows on the DGX, so >100 GPU-h per seed under a
+    # schedule; DeepCASE's own paper found its update gains came from new
+    # clusters, not from the retrained ContextBuilder (decided 2026-11-25).
+    allow_remine: bool = True
     out_dir: str | None = None
 
     def __post_init__(self) -> None:
@@ -245,7 +255,7 @@ def run_seed(
     budget = {"b0": n_b0, "audit": 0, "update": 0, "workload": 0}
 
     rows_out, events, per_row = [], [], []
-    ref_stats, ref_fb = None, None
+    ref_stats, ref_fb, ref_native = None, None, None
     pv_streak = fb_streak = 0
     since = bounds[0][1]  # first test row not yet covered by an update
     for h, a, b in bounds:
@@ -274,6 +284,9 @@ def run_seed(
             ref_stats, ref_fb = stats, fb
         sig = compare_windows(stats, ref_stats, cfg.monitor_min_samples)
         sig.update(feedback_signal(fb, ref_fb))
+        if is_ref:
+            ref_native = native_reference(codes, ev.ts[rows])
+        nat = native_signals(codes, ref_native)
         pv_streak = pv_streak + 1 if (sig["elevated"] and not is_ref) else 0
         fb_streak = (
             fb_streak + 1 if (sig.get("fb_precision_elevated") and not is_ref) else 0
@@ -285,8 +298,13 @@ def run_seed(
             action = "REMINE_AND_RETRAIN"
         elif cfg.policy == "combined" and fb_streak:
             action = "RETRAIN_ONLY"
+        elif cfg.policy == "native" and not is_ref:
+            action = nat["native_action"]
         else:
             action = "NO_ACTION"
+        requested = action
+        if action == "REMINE_AND_RETRAIN" and not cfg.allow_remine:
+            action = "RETRAIN_ONLY"
 
         row = {
             "seed": seed,
@@ -295,6 +313,7 @@ def run_seed(
             "signals_reference_window": is_ref,
             "n_clusters": len(st.knowledge.cluster_label),
             "action": action,
+            "requested_action": requested,
             "n_audit_labels": n_audit,
             "budget_b0": budget["b0"],
             "budget_audit": budget["audit"],
@@ -302,6 +321,7 @@ def run_seed(
             "budget_labels": budget["b0"] + budget["audit"] + budget["update"],
             "workload_labels": budget["workload"],
             **{f"mon_{kk}": v for kk, v in sig.items()},
+            **nat,
             **_subset_metrics(lab, codes, seen, days),
         }
         rows_out.append(row)
@@ -378,7 +398,7 @@ def run_seed(
             budget["b0"] + budget["audit"] + budget["update"]
         )
         since = b
-        ref_stats = ref_fb = None  # next window = new reference (warm-up)
+        ref_stats = ref_fb = ref_native = None  # next window = new reference (warm-up)
         pv_streak = fb_streak = 0
     return rows_out, events, pd.concat(per_row, ignore_index=True)
 

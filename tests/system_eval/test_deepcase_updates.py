@@ -124,3 +124,26 @@ def test_combined_first_window_is_reference_and_logs_signals():
     rows, *_ = _run("combined")
     assert rows[0]["signals_reference_window"] and rows[0]["action"] == "NO_ACTION"
     assert {"mon_elevated", "mon_cov_attack", "mon_fb_precision"} <= set(rows[1])
+
+
+def test_no_remine_downgrades_to_add_clusters():
+    ev, far = _events()
+    provide, calls = _provider(ev, far)
+    cfg = UpdateConfig(base_run="unused", policy="schedule", allow_remine=False)
+    rows, events, _ = run_seed(ev, provide, PARAMS, cfg, 10, 5, 0.25, seed=0)
+    assert calls == [(600, "w0")]  # ContextBuilder never retrained
+    assert {e["action"] for e in events} == {"RETRAIN_ONLY"}
+    assert {r["requested_action"] for r in rows} == {"REMINE_AND_RETRAIN"}
+
+
+def test_native_policy_acts_on_new_event_types():
+    ev, far = _events()
+    provide, _ = _provider(ev, far)
+    cfg = UpdateConfig(base_run="unused", policy="native", allow_remine=False)
+    rows, events, _ = run_seed(ev, provide, PARAMS, cfg, 10, 5, 0.25, seed=0)
+    assert rows[0]["action"] == "NO_ACTION"  # reference window
+    # The new signature appears in window 2: unknown-event share rises.
+    assert rows[1]["native_unknown_event_elevated"]
+    assert rows[1]["requested_action"] == "REMINE_AND_RETRAIN"
+    assert rows[1]["action"] == "RETRAIN_ONLY"
+    assert len(events) >= 1

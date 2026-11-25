@@ -46,6 +46,11 @@ def main() -> None:
         default=None,
         help="ContextBuilder epochs per retrain (default: the base run's)",
     )
+    p.add_argument(
+        "--no-remine",
+        action="store_true",
+        help="Turn every REMINE_AND_RETRAIN into RETRAIN_ONLY (keep the ContextBuilder)",
+    )
     p.add_argument("--output-dir", type=Path, default=None)
     args = p.parse_args()
     run_deepcase_updates(
@@ -57,6 +62,7 @@ def main() -> None:
             audit_rate=args.audit_rate,
             seeds=tuple(args.seeds) if args.seeds else None,
             update_epochs=args.update_epochs,
+            allow_remine=not args.no_remine,
             out_dir=str(args.output_dir) if args.output_dir else None,
         )
     )
