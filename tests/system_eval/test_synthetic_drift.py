@@ -162,7 +162,7 @@ def test_end_to_end_logs_injection_and_summarises(monkeypatch, tmp_path):
     walked = ph[ph.horizon_window_index > 0]
     assert walked.pv_oracle_n_checked.notna().all()
     assert walked.pv_audit_elevated.notna().all()
-    for m in ("oracle", "escalated", "audit"):
+    for m in ("oracle", "escalated", "audit1", "audit2", "audit", "audit10"):
         assert f"pattern_validity_{m}_detect" in summ.columns
 
 

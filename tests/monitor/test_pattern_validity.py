@@ -175,3 +175,36 @@ def test_contrast_alone_does_not_elevate():
     out = compare(broken, ref, ["p"], "oracle")
     assert out["pv_oracle_contrast_elevated"] is True
     assert out["pv_oracle_elevated"] is False
+
+
+def test_audit_draws_are_nested_across_rates():
+    from thesis.monitor.pattern_validity import AUDIT_RATES
+
+    gs = [
+        AlertGroup(
+            alert_group_id=f"g{i}",
+            group_id=f"g{i}",
+            method="x",
+            start_ts=0,
+            end_ts=None,
+            n_alerts=1,
+        )
+        for i in range(5000)
+    ]
+    rates = sorted(AUDIT_RATES.values())
+    masks = [audit_mask(gs, r) for r in rates]
+    for small, big in zip(masks, masks[1:]):
+        assert (small <= big).all()  # every 1% group is also in the 2% draw
+
+
+def test_recall_estimate_from_audit():
+    rows = _rows(n_attack=4000, n_benign=4000, flagged_attack=0.6, seed=5)
+    rng = np.random.default_rng(1)
+    audit = (rng.random(len(rows)) < 0.1).astype(np.float32)
+    o = pattern_stats(rows, TO_ATTACK, "oracle", None, 30)
+    a = pattern_stats(rows, TO_ATTACK, "audit10", audit, 30, 0.1)
+    assert o.recall_est == pytest.approx(0.6, abs=0.03)
+    assert a.recall_est == pytest.approx(o.recall_est, abs=0.05)
+    # Escalated-only labels can't see missed attacks: recall looks perfect.
+    e = pattern_stats(rows, TO_ATTACK, "escalated", None, 30)
+    assert e.recall_est == pytest.approx(1.0)

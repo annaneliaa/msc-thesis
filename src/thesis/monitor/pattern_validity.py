@@ -41,7 +41,8 @@ Needs labels. Three label modes, all logged:
 * escalated: only escalated groups (score >= threshold) -- what analysts
   review anyway. Missed attacks are never labelled, so the benign class is
   only the false positives;
-* audit: escalated groups + a random AUDIT_RATE sample of the suppressed
+* audit (and audit1/audit2/audit10, see AUDIT_RATES): escalated groups + a
+  random AUDIT_RATE sample of the suppressed
   ones, weighted 1/AUDIT_RATE (inverse-probability weights), so class
   supports are unbiased estimates. The draw is a hash of alert_group_id, so
   it is the same across runs and injections. Sample sizes use Kish's
@@ -67,7 +68,13 @@ MIN_GROWTH_RATE = 3.0
 MIN_COVERAGE = 0.05
 PRECISION_DROP = CALIBRATION_DRIFT_THRESHOLD
 AUDIT_RATE = 0.05
-LABEL_MODES = ("oracle", "escalated", "audit")
+# Labelling budget: one audit label mode per rate (share of SUPPRESSED groups
+# an analyst reviews on top of the escalated ones). "audit" (5%) is the one
+# monitor_attached's combined trigger uses; the others give the
+# detection-vs-budget curve. The draws are nested (1% subset of 2% subset of
+# 5% subset of 10%), since they threshold the same per-group hash.
+AUDIT_RATES = {"audit1": 0.01, "audit2": 0.02, "audit": AUDIT_RATE, "audit10": 0.10}
+LABEL_MODES = ("oracle", "escalated", *AUDIT_RATES)
 _EPS = 1e-6
 
 _FIELDS = (
@@ -85,6 +92,9 @@ _FIELDS = (
     "cov_benign_ref",
     "n_eff_attack",
     "n_eff_benign",
+    "recall_est",
+    "recall_est_ref",
+    "recall_elevated",
     "n_invalid_point",
     "invalid_patterns_point",
     "contrast_elevated",
@@ -141,6 +151,7 @@ class PatternStats:
     n_eff_attack: float
     n_eff_benign: float
     min_samples: int
+    recall_est: float = math.nan  # weighted share of attacks escalated
 
     @property
     def valid(self) -> np.ndarray:
@@ -190,7 +201,7 @@ def pattern_stats(
         flg = rows.flagged.astype(float)
         if mode == "escalated":
             w = lab * flg
-        elif mode == "audit":
+        elif mode in AUDIT_RATES:
             if audit is None or len(audit) != len(rows):
                 return None
             w = lab * (flg + (1 - flg) * audit.astype(float) / audit_rate)
@@ -233,6 +244,11 @@ def pattern_stats(
         n_eff_attack=n_a,
         n_eff_benign=n_b,
         min_samples=min_samples,
+        recall_est=(
+            float((wa * rows.flagged).sum() / A)
+            if rows.flagged is not None and A > 0
+            else math.nan
+        ),
     )
 
 
@@ -262,6 +278,17 @@ def compare(
     out[k + "cov_benign_ref"] = ref.cov_benign
     out[k + "n_eff_attack"] = win.n_eff_attack
     out[k + "n_eff_benign"] = win.n_eff_benign
+    out[k + "recall_est"] = win.recall_est
+    out[k + "recall_est_ref"] = ref.recall_est
+    # Logged only: the same audit also estimates missed attacks (recall),
+    # the blind spot of feedback precision.
+    out[k + "recall_elevated"] = _drop_significant(
+        win.recall_est,
+        win.n_eff_attack,
+        ref.recall_est,
+        ref.n_eff_attack,
+        win.min_samples,
+    )
 
     check = ref.valid & win.checkable
     invalid = check & win.invalid_confident
@@ -318,18 +345,22 @@ class PatternValidityMonitor:
         ref_rows: WindowRows,
         ref_groups: Sequence[AlertGroup],
         min_samples: int,
-        audit_rate: float = AUDIT_RATE,
     ) -> None:
         self.ids, self.to_attack = pattern_meta(schema)
         self.min_samples = min_samples
-        self.audit_rate = audit_rate
-        audit = audit_mask(ref_groups, audit_rate)
-        self.ref = {
-            m: pattern_stats(
-                ref_rows, self.to_attack, m, audit, min_samples, audit_rate
+        self.ref = self._all_modes(ref_rows, ref_groups)
+
+    def _all_modes(
+        self, rows: WindowRows, groups: Sequence[AlertGroup]
+    ) -> dict[str, PatternStats | None]:
+        out = {}
+        for m in LABEL_MODES:
+            rate = AUDIT_RATES.get(m, AUDIT_RATE)
+            audit = audit_mask(groups, rate) if m in AUDIT_RATES else None
+            out[m] = pattern_stats(
+                rows, self.to_attack, m, audit, self.min_samples, rate
             )
-            for m in LABEL_MODES
-        }
+        return out
 
     def n_valid_ref(self, mode: str = "oracle") -> int:
         r = self.ref.get(mode)
@@ -339,10 +370,6 @@ class PatternValidityMonitor:
         out: dict = dict.fromkeys(PATTERN_VALIDITY_COLUMNS)
         if rows.fires.shape[1] + rows.rule_match_labeled.shape[1] != len(self.ids):
             return out  # schema changed without a new reference
-        audit = audit_mask(groups, self.audit_rate)
-        for m in LABEL_MODES:
-            win = pattern_stats(
-                rows, self.to_attack, m, audit, self.min_samples, self.audit_rate
-            )
+        for m, win in self._all_modes(rows, groups).items():
             out.update(compare(win, self.ref[m], self.ids, m))
         return out
