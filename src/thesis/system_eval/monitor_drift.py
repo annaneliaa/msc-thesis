@@ -259,6 +259,7 @@ def fit_source_window_and_dynamic_schema(
     threshold_mode: str,
     calibrated_recall_target: float,
     scheme: WindowScheme,
+    model_seed: int | None = None,
 ) -> MonitorSourceWindowFit | None:
     """Mine (if cfg.feature_set == "symbolic") on W_src's train split via
     the direct two-stage mining building blocks (not the cached wrapper
@@ -355,7 +356,9 @@ def fit_source_window_and_dynamic_schema(
         print("    [warn] window 0 train split is single-class -- skipping")
         return None
 
-    model = get_model_factory(cfg.model)()
+    model = get_model_factory(
+        cfg.model, **({} if model_seed is None else {"random_state": model_seed})
+    )()
     model.fit(X_train, y_train)
     proba_train = model.predict_proba(X_train)[:, 1]
     threshold = decide_threshold(

@@ -219,7 +219,10 @@ def _run_one_config(
     mining_settings_by_name: dict,
     mining_settings_path: Path,
     scheme: WindowScheme,
+    predictions_out: list | None = None,
 ) -> tuple[list[dict], list[dict], list[dict]]:
+    """predictions_out, if given, receives one DataFrame of per-group
+    predictions per scored horizon (config.save_predictions)."""
     print(
         f"\n[{cfg.feature_set}/{cfg.mining_setting}/gran={cfg.granularity:g}] "
         "starting (reactive)"
@@ -265,6 +268,7 @@ def _run_one_config(
         threshold_mode=config.threshold_mode,
         calibrated_recall_target=config.calibrated_recall_target,
         scheme=scheme,
+        model_seed=config.model_seed,
     )
     if fit is None:
         return [], [], []
@@ -421,6 +425,21 @@ def _run_one_config(
 
         y_h = labels_h[mask_h].astype(int)
         proba_h = proba_full[mask_h]
+        if predictions_out is not None:
+            predictions_out.append(
+                pd.DataFrame(
+                    {
+                        "model": cfg.model,
+                        "granularity": fit.gran,
+                        "horizon_window_index": horizon_window_index,
+                        "schema_version_active": schema_version_active,
+                        "group_id": [str(tx.group_id) for tx in raw_groups_h],
+                        "label": labels_h,
+                        "score": proba_full,
+                        "escalated": y_pred_full.astype(bool),
+                    }
+                )
+            )
 
         # What the system knows about this window: everything (default), or
         # only the analyst's labels -- escalated + audit -- under the budget.
@@ -591,7 +610,11 @@ def _run_one_config(
             t0 = time.perf_counter()
             tc0 = time.process_time()
             new_model = fit_scored_model(
-                cfg.model, X_train, y_train, sample_weight=train_weights
+                cfg.model,
+                X_train,
+                y_train,
+                seed=config.model_seed,
+                sample_weight=train_weights,
             )
             t_retrain_s = time.perf_counter() - t0
             retrain_cpu_s = time.process_time() - tc0
@@ -685,7 +708,11 @@ def _run_one_config(
             t0 = time.perf_counter()
             tc0 = time.process_time()
             new_model = fit_scored_model(
-                cfg.model, encoded_new, y_train, sample_weight=train_weights
+                cfg.model,
+                encoded_new,
+                y_train,
+                seed=config.model_seed,
+                sample_weight=train_weights,
             )
             t_retrain_s = time.perf_counter() - t0
             retrain_cpu_s = time.process_time() - tc0
@@ -782,6 +809,7 @@ def run_monitor_attached_experiment(config: MonitorAttachedConfig) -> Path:
     horizon_rows: list[dict] = []
     event_rows: list[dict] = []
     latency_rows: list[dict] = []
+    predictions: list[pd.DataFrame] | None = [] if config.save_predictions else None
 
     print(
         f"  Running {len(shortlist)} shortlisted configs with n_jobs={config.n_jobs}..."
@@ -799,6 +827,7 @@ def run_monitor_attached_experiment(config: MonitorAttachedConfig) -> Path:
                 mining_settings_by_name=mining_settings_by_name,
                 mining_settings_path=mining_settings_path,
                 scheme=scheme,
+                predictions_out=predictions,
             ): cfg
             for cfg in shortlist
         }
@@ -836,6 +865,13 @@ def run_monitor_attached_experiment(config: MonitorAttachedConfig) -> Path:
     latency_path = out_dir / "latency_sample.csv"
     latency_df.to_csv(latency_path, index=False)
     print(f"  Saved → {latency_path}")
+
+    if predictions:
+        predictions_path = out_dir / "predictions.parquet"
+        pd.concat(predictions, ignore_index=True).to_parquet(
+            predictions_path, index=False
+        )
+        print(f"  Saved → {predictions_path}")
 
     n_executed = (
         int(events_df["executed"].sum()) if "executed" in events_df.columns else 0

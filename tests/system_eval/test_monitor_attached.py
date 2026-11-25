@@ -604,3 +604,26 @@ def test_audit_switch_forces_audit_on_or_off_for_any_policy():
     )
     assert audit_labels(trigger="never", audit="on") > 0
     assert audit_labels(trigger="combined", audit="off") == 0
+
+
+def test_predictions_out_and_model_seed():
+    alert_groups = _build_timeline(n_windows=6, per_window=40)
+    preds = []
+    config = _config(trigger="never", model_seed=7)
+    rows, _, _ = ma._run_one_config(
+        cfg=_symbolic_cfg(),
+        config=config,
+        scenario="test_scenario",
+        alert_groups=alert_groups,
+        n_total=len(alert_groups),
+        base_schema=_base_schema(),
+        mining_settings_by_name=_mining_settings(),
+        mining_settings_path=Path("unused.yaml"),
+        scheme=WindowScheme("window0", len(alert_groups)),
+        predictions_out=preds,
+    )
+    df = pd.concat(preds, ignore_index=True)
+    assert len(df) == sum(r["n_alert_groups"] for r in rows)
+    assert set(df.columns) >= {"group_id", "label", "score", "escalated", "model"}
+    assert df.group_id.is_unique
+    assert ((df.score >= 0) & (df.score <= 1)).all()

@@ -467,6 +467,14 @@ class MonitorAttachedConfig:
     # fixed-schedule runs with and without the audit labels, to separate the
     # value of the extra labels from the value of the monitor.
     audit: Literal["auto", "on", "off"] = "auto"
+    # random_state for every model fit (initial and updates); None keeps the
+    # model factory's fixed default (42). The DeepCASE comparison sets it to
+    # the run's seed so seeds vary the model too, not only the B0 draw.
+    model_seed: int | None = None
+    # Write predictions.parquet: one row per scored group per horizon
+    # (group_id, true label, score, escalated) -- for per-signature analyses
+    # such as the DeepCASE comparison's seen/unseen-signature recall.
+    save_predictions: bool = False
 
     def __post_init__(self) -> None:
         if self.source_split_mode == "baseline_split" and not self.source_split_time:

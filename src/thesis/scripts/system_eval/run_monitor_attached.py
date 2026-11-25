@@ -289,6 +289,25 @@ def main() -> None:
         help="Shortlisted configs to run concurrently (thread pool). Default: 4",
     )
     parser.add_argument("--output-dir", type=Path, default=None, dest="output_dir")
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="random_seed: B0 stratified draw and latency sampling. Default: 42",
+    )
+    parser.add_argument(
+        "--model-seed",
+        type=int,
+        default=None,
+        dest="model_seed",
+        help="random_state for every model fit. Default: the model factory's own (42)",
+    )
+    parser.add_argument(
+        "--save-predictions",
+        action="store_true",
+        dest="save_predictions",
+        help="Write predictions.parquet (per group, per horizon)",
+    )
     args = parser.parse_args()
 
     if args.shortlist is not None:
@@ -372,6 +391,9 @@ def main() -> None:
         deepcase_items_path=args.deepcase_items_path,
         audit_rate=args.audit_rate,
         audit=args.audit,
+        random_seed=args.seed,
+        model_seed=args.model_seed,
+        save_predictions=args.save_predictions,
         latency_sample_n=args.latency_sample_n,
     )
     out_dir = run_monitor_attached_experiment(config)
