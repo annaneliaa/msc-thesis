@@ -582,3 +582,25 @@ def test_combined_trigger_pays_for_and_weights_the_audit(monkeypatch):
     assert {r["audit_rate"] for r in rows} == {0.5}
     assert sum(r["ledger_n_audit_labels"] for r in rows) > 0
     assert any(w == {1.0, 2.0} for w in fits if w is not None)
+
+
+def test_audit_switch_forces_audit_on_or_off_for_any_policy():
+    alert_groups = _build_timeline(n_windows=6, per_window=60, drift_from_window=3)
+
+    def audit_labels(**kw):
+        config = _config(
+            update_labels="cumulative_budget",
+            initial_budget_mode="stratified",
+            initial_budget_size=20,
+            audit_rate=0.5,
+            **kw,
+        )
+        rows, _, _ = _run(_symbolic_cfg(), config, alert_groups, len(alert_groups))
+        return sum(r["ledger_n_audit_labels"] for r in rows)
+
+    assert audit_labels(trigger="schedule", schedule_action="RETRAIN_ONLY") == 0
+    assert (
+        audit_labels(trigger="schedule", schedule_action="RETRAIN_ONLY", audit="on") > 0
+    )
+    assert audit_labels(trigger="never", audit="on") > 0
+    assert audit_labels(trigger="combined", audit="off") == 0

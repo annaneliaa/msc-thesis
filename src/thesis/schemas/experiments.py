@@ -461,6 +461,12 @@ class MonitorAttachedConfig:
     initial_budget_size: int | None = None
     deepcase_items_path: Path | None = None
     audit_rate: float = 0.05
+    # Whether the analyst audits audit_rate of the suppressed groups each
+    # window (budget mode only): "auto" = only under the combined trigger,
+    # whose pattern validity needs it; "on"/"off" force it, e.g. frozen /
+    # fixed-schedule runs with and without the audit labels, to separate the
+    # value of the extra labels from the value of the monitor.
+    audit: Literal["auto", "on", "off"] = "auto"
 
     def __post_init__(self) -> None:
         if self.source_split_mode == "baseline_split" and not self.source_split_time:

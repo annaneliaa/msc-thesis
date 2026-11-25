@@ -74,6 +74,7 @@ SCHEDULE_ACTION="${SCHEDULE_ACTION:-REMINE_AND_RETRAIN}"
 UPDATE_LABELS="${UPDATE_LABELS:-window_full}"
 INITIAL_BUDGET_MODE="${INITIAL_BUDGET_MODE:-full}"
 AUDIT_RATE="${AUDIT_RATE:-0.05}"
+AUDIT="${AUDIT:-auto}"  # auto = only under TRIGGER=combined; on/off force it
 # TRAIN_FRAC=1.0: train on all of W_src (no held-out window 0) -- DeepCASE comparison.
 TRAIN_FRAC="${TRAIN_FRAC:-0.7}"
 MODELS=(xgboost rf)
@@ -122,6 +123,7 @@ for scenario in "${SCENARIOS[@]}"; do
     --update-labels "$UPDATE_LABELS" \
     --initial-budget-mode "$INITIAL_BUDGET_MODE" \
     --audit-rate "$AUDIT_RATE" \
+    --audit "$AUDIT" \
     --train-frac "$TRAIN_FRAC" \
     --latency-sample-n "$LATENCY_SAMPLE_N")
   if [[ -n "${INITIAL_BUDGET_SIZE:-}" ]]; then

@@ -224,6 +224,13 @@ def main() -> None:
         help="Share of suppressed groups the analyst audits under cumulative_budget. Default: 0.05",
     )
     parser.add_argument(
+        "--audit",
+        choices=["auto", "on", "off"],
+        default="auto",
+        help="Budget mode: audit --audit-rate of suppressed groups. auto (default) = "
+        "only under --trigger combined; on/off force it",
+    )
+    parser.add_argument(
         "--pattern-label-mode",
         choices=["audit", "oracle", "escalated"],
         default="audit",
@@ -364,6 +371,7 @@ def main() -> None:
         initial_budget_size=args.initial_budget_size,
         deepcase_items_path=args.deepcase_items_path,
         audit_rate=args.audit_rate,
+        audit=args.audit,
         latency_sample_n=args.latency_sample_n,
     )
     out_dir = run_monitor_attached_experiment(config)

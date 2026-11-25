@@ -298,10 +298,14 @@ def _run_one_config(
         if len(fit.X_test) and len(fit.X_test) == len(fit.test_groups_raw)
         else None
     )
-    # The audit is monitoring-only work: only the combined trigger's pattern
-    # validity needs it (decided 2026-11-25), so frozen / fixed-schedule /
-    # feedback runs don't pay for it -- and don't train on it.
-    audit_rate = config.audit_rate if config.trigger == "combined" else 0.0
+    # The audit is monitoring work: by default ("auto") only the combined
+    # trigger's pattern validity uses it, so frozen / fixed-schedule /
+    # feedback runs neither pay for it nor train on it. config.audit "on" /
+    # "off" force it either way (e.g. a fixed schedule with the audit labels).
+    audit_on = config.audit == "on" or (
+        config.audit == "auto" and config.trigger == "combined"
+    )
+    audit_rate = config.audit_rate if audit_on else 0.0
     ledger: LabelLedger | None = None
     heldout_view = None
     if budget:
@@ -873,7 +877,7 @@ def run_monitor_attached_experiment(config: MonitorAttachedConfig) -> Path:
             else ""
         )
         + (
-            f", audit_rate={config.audit_rate}"
+            f", audit={config.audit} (rate {config.audit_rate})"
             if config.update_labels == "cumulative_budget"
             else ""
         ),
