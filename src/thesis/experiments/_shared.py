@@ -258,6 +258,7 @@ def fit_scored_model(
     X_train: pd.DataFrame,
     y_train: np.ndarray,
     seed: int | None = None,
+    sample_weight: np.ndarray | None = None,
 ):
     """Fit `model_name` on W_src's train split; return an object exposing
     `predict_proba(X)[:, 1]` as attack likelihood.
@@ -280,6 +281,10 @@ def fit_scored_model(
 
     `seed`, if given, is passed to the factory as `random_state` (supported
     by "rf" and "xgboost"; other factories ignore it). None keeps the factory default.
+
+    `sample_weight`, if given, is passed to a supervised model's fit (on top
+    of its class weighting) -- e.g. the label-budget mode's inverse-
+    probability weights for audited rows. Ignored for one-class models.
     """
     y_train = np.asarray(y_train)
 
@@ -290,7 +295,14 @@ def fit_scored_model(
         if seed is not None:
             extra["random_state"] = seed
         est = get_model_factory(model_name, **extra)()
-        est.fit(X_train, y_train)
+        if sample_weight is None:
+            est.fit(X_train, y_train)
+        else:
+            # A sklearn Pipeline (e.g. scaler + logreg) only routes weights
+            # addressed to a step: send them to the final estimator.
+            steps = getattr(est, "steps", None)
+            key = f"{steps[-1][0]}__sample_weight" if steps else "sample_weight"
+            est.fit(X_train, y_train, **{key: np.asarray(sample_weight)})
         return est
 
     est = get_model_factory(model_name)()

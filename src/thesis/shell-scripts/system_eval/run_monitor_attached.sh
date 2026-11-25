@@ -67,6 +67,13 @@ TRIGGER="${TRIGGER:-feedback}"
 FEEDBACK_CONSECUTIVE_WINDOWS="${FEEDBACK_CONSECUTIVE_WINDOWS:-1}"
 FEEDBACK_ACTION="${FEEDBACK_ACTION:-REMINE_AND_RETRAIN}"
 PATTERN_LABEL_MODE="${PATTERN_LABEL_MODE:-audit}"
+SCHEDULE_ACTION="${SCHEDULE_ACTION:-REMINE_AND_RETRAIN}"
+# Label budget (DeepCASE comparison only): UPDATE_LABELS=cumulative_budget,
+# INITIAL_BUDGET_MODE=full|stratified|deepcase_items|deepcase_cluster_samples,
+# INITIAL_BUDGET_SIZE (stratified), DEEPCASE_ITEMS (parquet), AUDIT_RATE.
+UPDATE_LABELS="${UPDATE_LABELS:-window_full}"
+INITIAL_BUDGET_MODE="${INITIAL_BUDGET_MODE:-full}"
+AUDIT_RATE="${AUDIT_RATE:-0.05}"
 MODELS=(xgboost rf)
 SOURCE_SPLIT_MODE="baseline_split"  # anchors W_src to the CSCAS baseline's own train/test boundary
 THRESHOLD_MODE="fixed"  # or "calibrated_recall" -- keep in sync with the other experiment scripts
@@ -109,7 +116,17 @@ for scenario in "${SCENARIOS[@]}"; do
     --feedback-consecutive-windows "$FEEDBACK_CONSECUTIVE_WINDOWS" \
     --feedback-action "$FEEDBACK_ACTION" \
     --pattern-label-mode "$PATTERN_LABEL_MODE" \
+    --schedule-action "$SCHEDULE_ACTION" \
+    --update-labels "$UPDATE_LABELS" \
+    --initial-budget-mode "$INITIAL_BUDGET_MODE" \
+    --audit-rate "$AUDIT_RATE" \
     --latency-sample-n "$LATENCY_SAMPLE_N")
+  if [[ -n "${INITIAL_BUDGET_SIZE:-}" ]]; then
+    cmd+=(--initial-budget-size "$INITIAL_BUDGET_SIZE")
+  fi
+  if [[ -n "${DEEPCASE_ITEMS:-}" ]]; then
+    cmd+=(--deepcase-items "$DEEPCASE_ITEMS")
+  fi
   if [[ "$THRESHOLD_MODE" == "calibrated_recall" ]]; then
     cmd+=(--calibrated-recall-target "$CALIBRATED_RECALL_TARGET")
   fi

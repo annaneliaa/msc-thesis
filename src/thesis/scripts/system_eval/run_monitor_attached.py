@@ -167,7 +167,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--trigger",
-        choices=["feedback", "thesis", "combined"],
+        choices=["feedback", "thesis", "combined", "schedule", "never"],
         default="feedback",
         help="What acts: analyst-feedback precision (default) or the thesis Signal 1/2 table. The other is still logged.",
     )
@@ -178,6 +178,49 @@ def main() -> None:
         dest="feedback_consecutive_windows",
         metavar="N",
         help="Consecutive windows with feedback precision significantly below reference before acting. Default: 1",
+    )
+    parser.add_argument(
+        "--schedule-action",
+        choices=["RETRAIN_ONLY", "REMINE_AND_RETRAIN"],
+        default="REMINE_AND_RETRAIN",
+        dest="schedule_action",
+        help="Update applied every window under --trigger schedule. Default: REMINE_AND_RETRAIN",
+    )
+    parser.add_argument(
+        "--update-labels",
+        choices=["window_full", "cumulative_budget"],
+        default="window_full",
+        dest="update_labels",
+        help="window_full (default): updates use the current window's full labels. "
+        "cumulative_budget (DeepCASE comparison): B0 + escalated + audit labels, pooled",
+    )
+    parser.add_argument(
+        "--initial-budget-mode",
+        choices=["full", "stratified", "deepcase_items", "deepcase_cluster_samples"],
+        default="full",
+        dest="initial_budget_mode",
+        help="Which W_src training rows the initial fit may label (B0). Default: full",
+    )
+    parser.add_argument(
+        "--initial-budget-size",
+        type=int,
+        default=None,
+        dest="initial_budget_size",
+        help="B0 size for --initial-budget-mode stratified",
+    )
+    parser.add_argument(
+        "--deepcase-items",
+        type=Path,
+        default=None,
+        dest="deepcase_items_path",
+        help="deepcase_comparison seed<k>/analyst_items.parquet for the deepcase_* budget modes",
+    )
+    parser.add_argument(
+        "--audit-rate",
+        type=float,
+        default=0.05,
+        dest="audit_rate",
+        help="Share of suppressed groups the analyst audits under cumulative_budget. Default: 0.05",
     )
     parser.add_argument(
         "--pattern-label-mode",
@@ -314,6 +357,12 @@ def main() -> None:
         feedback_consecutive_windows=args.feedback_consecutive_windows,
         feedback_action=args.feedback_action,
         pattern_label_mode=args.pattern_label_mode,
+        schedule_action=args.schedule_action,
+        update_labels=args.update_labels,
+        initial_budget_mode=args.initial_budget_mode,
+        initial_budget_size=args.initial_budget_size,
+        deepcase_items_path=args.deepcase_items_path,
+        audit_rate=args.audit_rate,
         latency_sample_n=args.latency_sample_n,
     )
     out_dir = run_monitor_attached_experiment(config)

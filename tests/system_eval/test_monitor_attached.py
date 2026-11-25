@@ -437,3 +437,91 @@ def test_combined_trigger_remines_on_patterns_and_retrains_on_feedback(monkeypat
         (3, "feedback"),
         (5, "pattern_validity"),
     ]
+
+
+def _symbolic_cfg():
+    return ShortlistedConfig(
+        feature_set="symbolic",
+        mining_setting="test_setting",
+        granularity=1 / 6,
+        model="logreg",
+    )
+
+
+def test_never_trigger_is_frozen_and_schedule_updates_every_window():
+    alert_groups = _build_timeline(n_windows=6, per_window=40, drift_from_window=2)
+    n_total = len(alert_groups)
+    rows, events, _ = _run(
+        _symbolic_cfg(), _config(trigger="never"), alert_groups, n_total
+    )
+    assert {r["action"] for r in rows} == {"NO_ACTION"}
+    assert events == []
+
+    rows, events, _ = _run(
+        _symbolic_cfg(),
+        _config(trigger="schedule", schedule_action="RETRAIN_ONLY"),
+        alert_groups,
+        n_total,
+    )
+    executed = [e for e in events if e["executed"]]
+    assert [e["horizon_window_index"] for e in executed] == list(range(6))
+    assert {e["trigger_reason"] for e in executed} == {"schedule"}
+
+
+def test_default_mode_has_no_ledger_columns():
+    alert_groups = _build_timeline(n_windows=6, per_window=40)
+    rows, _, _ = _run(
+        _symbolic_cfg(), _config(trigger="never"), alert_groups, len(alert_groups)
+    )
+    assert all("ledger_pool_size" not in r for r in rows)
+    assert {r["update_labels"] for r in rows} == {"window_full"}
+
+
+def test_cumulative_budget_pools_analyst_labels_and_trains_on_them(monkeypatch):
+    """B0 limits the initial fit; each window adds escalated + audit labels;
+    every scheduled update trains on the whole (growing) pool with audit
+    weights; the monitor only sees the analyst's labels."""
+    alert_groups = _build_timeline(n_windows=6, per_window=60, drift_from_window=3)
+    n_total = len(alert_groups)
+
+    fits = []
+    real_fit = ma.fit_scored_model
+
+    def spy_fit(model, X, y, seed=None, sample_weight=None):
+        fits.append((len(y), None if sample_weight is None else set(sample_weight)))
+        return real_fit(model, X, y, seed=seed, sample_weight=sample_weight)
+
+    monkeypatch.setattr(ma, "fit_scored_model", spy_fit)
+    seen_labels = []
+    real_log = ma.SignalLog.log_window
+
+    def spy_log(self, schema, groups, *a, **k):
+        seen_labels.append(sum(g.group_label is not None for g in groups))
+        return real_log(self, schema, groups, *a, **k)
+
+    monkeypatch.setattr(ma.SignalLog, "log_window", spy_log)
+
+    config = _config(
+        trigger="schedule",
+        schedule_action="RETRAIN_ONLY",
+        update_labels="cumulative_budget",
+        initial_budget_mode="stratified",
+        initial_budget_size=20,
+        audit_rate=0.5,
+    )
+    rows, events, _ = _run(_symbolic_cfg(), config, alert_groups, n_total)
+    by_h = {r["horizon_window_index"]: r for r in rows}
+
+    assert {r["initial_budget_n"] for r in rows} == {20}
+    pool = [by_h[h]["ledger_pool_size"] for h in sorted(by_h)]
+    assert pool == sorted(pool) and pool[0] > 20  # grows every window
+    assert all(r["ledger_budget_labels"] >= 20 for r in rows)
+    # Every update trains on the pool as it stood after that window...
+    executed = [e for e in events if e["executed"]]
+    assert [e["n_train_rows"] for e in executed] == pool
+    # ...with audit rows weighted 1 / 0.5.
+    assert all(w == {1.0, 2.0} for _, w in fits if w is not None)
+    # The monitor never sees more labels than the analyst produced.
+    n_rows = [r["n_alert_groups"] for r in rows]
+    assert all(s <= n for s, n in zip(seen_labels, n_rows))
+    assert any(s < n for s, n in zip(seen_labels, n_rows))

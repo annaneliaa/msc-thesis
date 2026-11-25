@@ -132,6 +132,13 @@ from thesis.experiments._shared import (
     metrics_at_threshold,
     nan_metrics,
 )
+from thesis.pipeline.pipeline import compute_window_train_end
+from thesis.system_eval.label_budget import (
+    LabelLedger,
+    budget_view,
+    draw_budget,
+    mask_labels,
+)
 from thesis.system_eval.monitor_drift import (
     _window_bounds_ts,
     fit_source_window_and_dynamic_schema,
@@ -218,10 +225,38 @@ def _run_one_config(
         "starting (reactive)"
     )
 
+    # Label budget (DeepCASE comparison only): the initial fit sees only the
+    # B0 rows of W_src's train split; later horizons are still scored and
+    # evaluated on the true alert_groups.
+    budget = config.update_labels == "cumulative_budget"
+    fit_groups = alert_groups
+    b0_groups: list[AlertGroup] = []
+    if budget or config.initial_budget_mode != "full":
+        src_start, src_end = scheme.source_bounds(cfg.granularity)
+        src_train_end = compute_window_train_end(
+            src_start, src_end, config.train_frac_within_window
+        )
+        train_rows = alert_groups[src_start:src_train_end]
+        keep = draw_budget(
+            train_rows,
+            config.initial_budget_mode,
+            size=config.initial_budget_size,
+            seed=config.random_seed,
+            items_path=config.deepcase_items_path,
+        )
+        b0_groups = [g for g, k in zip(train_rows, keep) if k]
+        fit_groups = list(alert_groups)
+        fit_groups[src_start:src_train_end] = mask_labels(train_rows, keep)
+        print(
+            f"  [budget] B0 = {len(b0_groups)} labelled rows "
+            f"({config.initial_budget_mode}) of {len(train_rows)} training rows; "
+            f"updates: {config.update_labels}"
+        )
+
     fit = fit_source_window_and_dynamic_schema(
         cfg=cfg,
         scenario=scenario,
-        alert_groups=alert_groups,
+        alert_groups=fit_groups,
         n_total=n_total,
         base_schema=base_schema,
         mining_settings_by_name=mining_settings_by_name,
@@ -263,10 +298,21 @@ def _run_one_config(
         if len(fit.X_test) and len(fit.X_test) == len(fit.test_groups_raw)
         else None
     )
+    ledger: LabelLedger | None = None
+    heldout_view = None
+    if budget:
+        ledger = LabelLedger(config.audit_rate)
+        ledger.add_initial(b0_groups)
+        if heldout_scores is not None:
+            heldout_view = budget_view(
+                fit.test_groups_raw, heldout_scores >= fit.threshold, config.audit_rate
+            )[0]
     signal_log = SignalLog(
         dynamic_schema,
         train_groups=fit.train_groups_raw,
-        heldout_groups=fit.test_groups_raw,
+        heldout_groups=heldout_view
+        if heldout_view is not None
+        else fit.test_groups_raw,
         heldout_scores=heldout_scores,
         threshold=fit.threshold,
         min_samples=config.monitor_min_samples_signal_2,
@@ -290,6 +336,10 @@ def _run_one_config(
         "feedback_consecutive_windows": config.feedback_consecutive_windows,
         "feedback_action": config.feedback_action,
         "pattern_label_mode": config.pattern_label_mode,
+        "update_labels": config.update_labels,
+        "initial_budget_mode": config.initial_budget_mode,
+        "initial_budget_n": len(b0_groups) if b0_groups else None,
+        "audit_rate": config.audit_rate if budget else None,
     }
     n_per_horizon_latency = (
         max(1, config.latency_sample_n // max(fit.n_windows, 1))
@@ -364,6 +414,15 @@ def _run_one_config(
         y_h = labels_h[mask_h].astype(int)
         proba_h = proba_full[mask_h]
 
+        # What the system knows about this window: everything (default), or
+        # only the analyst's labels -- escalated + audit -- under the budget.
+        if ledger is not None:
+            view_h, ledger_cols = ledger.add_window(raw_groups_h, y_pred_full == 1)
+            if horizon_window_index == 0 and heldout_view is not None:
+                view_h = heldout_view  # same labels; keeps the reference identity
+        else:
+            view_h, ledger_cols = raw_groups_h, {}
+
         if len(y_h) == 0:
             target_single_class = True
             metrics_block = nan_metrics()
@@ -399,11 +458,12 @@ def _run_one_config(
                 "thesis_action": None,
                 "action": None,
                 "trigger_remine": None,
+                **ledger_cols,
                 # Logged against the deployment active in this window,
                 # before any redeploy this window may trigger.
                 **signal_log.log_window(
                     dynamic_schema,
-                    raw_groups_h,
+                    view_h,
                     proba_full,
                     current_threshold,
                     X=encoded_full,
@@ -427,7 +487,7 @@ def _run_one_config(
         snapshot = run_monitor_window(
             schema=dynamic_schema,
             state=state,
-            incoming_groups=raw_groups_h,
+            incoming_groups=view_h,
             window_start=window_start,
             window_end=window_end,
             consecutive_windows=config.monitor_consecutive_windows,
@@ -465,6 +525,11 @@ def _run_one_config(
                 action = "SOFT_ALERT"
             else:
                 action = "NO_ACTION"
+        elif config.trigger == "schedule":
+            trigger_remine = True
+            action, reason = config.schedule_action, "schedule"
+        elif config.trigger == "never":
+            trigger_remine, action = False, "NO_ACTION"
         else:
             action, trigger_remine = snapshot.action, snapshot.trigger_remine
             reason = "thesis" if trigger_remine else None
@@ -477,7 +542,13 @@ def _run_one_config(
         if not trigger_remine:
             return
 
-        train_rows_labeled = [tx for tx, keep in zip(raw_groups_h, mask_h) if keep]
+        if ledger is not None:
+            # Cumulative pool: B0 + every window's analyst labels so far.
+            train_rows_labeled, train_weights = ledger.training_set()
+        else:
+            train_rows_labeled = [tx for tx, keep in zip(raw_groups_h, mask_h) if keep]
+            train_weights = None
+        y_train = labels_and_mask(train_rows_labeled)[0].astype(int)
         n_train = len(train_rows_labeled)
         n_classes = len({tx.group_label for tx in train_rows_labeled})
         event_base = {
@@ -503,11 +574,17 @@ def _run_one_config(
             return
 
         if action == "RETRAIN_ONLY":
-            X_train = encoded_full.loc[mask_h].reset_index(drop=True)
-            y_train = y_h
+            if ledger is None:
+                X_train = encoded_full.loc[mask_h].reset_index(drop=True)
+            else:
+                X_train = encode_alert_groups_for_schema(
+                    train_rows_labeled, current_schema
+                ).reset_index(drop=True)
             t0 = time.perf_counter()
             tc0 = time.process_time()
-            new_model = fit_scored_model(cfg.model, X_train, y_train)
+            new_model = fit_scored_model(
+                cfg.model, X_train, y_train, sample_weight=train_weights
+            )
             t_retrain_s = time.perf_counter() - t0
             retrain_cpu_s = time.process_time() - tc0
 
@@ -544,7 +621,7 @@ def _run_one_config(
             state.consecutive_signal_1_elevated = 0
             state.consecutive_signal_2_elevated = 0
             t_deploy_s = time.perf_counter() - t0_deploy
-            signal_log.redeploy(dynamic_schema, raw_groups_h)
+            signal_log.redeploy(dynamic_schema, view_h)
             feedback_streak = 0
             pattern_streak = 0
 
@@ -599,7 +676,9 @@ def _run_one_config(
             ).reset_index(drop=True)
             t0 = time.perf_counter()
             tc0 = time.process_time()
-            new_model = fit_scored_model(cfg.model, encoded_new, y_h)
+            new_model = fit_scored_model(
+                cfg.model, encoded_new, y_train, sample_weight=train_weights
+            )
             t_retrain_s = time.perf_counter() - t0
             retrain_cpu_s = time.process_time() - tc0
 
@@ -622,7 +701,7 @@ def _run_one_config(
 
             proba_train = new_model.predict_proba(encoded_new)[:, 1]
             new_threshold = decide_threshold(
-                y_h,
+                y_train,
                 proba_train,
                 config.threshold_mode,
                 config.calibrated_recall_target,
@@ -640,7 +719,7 @@ def _run_one_config(
                 scenario_name=scenario, deployed_schema_version=schema_version
             )
             t_deploy_s = time.perf_counter() - t0_deploy
-            signal_log.redeploy(dynamic_schema, raw_groups_h)
+            signal_log.redeploy(dynamic_schema, view_h)
             feedback_streak = 0
             pattern_streak = 0
 
@@ -771,6 +850,10 @@ def run_monitor_attached_experiment(config: MonitorAttachedConfig) -> Path:
             f" (feedback precision, {config.feedback_consecutive_windows} window(s) "
             f"-> {config.feedback_action})"
             if config.trigger == "feedback"
+            else f" (every window -> {config.schedule_action})"
+            if config.trigger == "schedule"
+            else " (frozen)"
+            if config.trigger == "never"
             else (
                 f" (pattern validity [{config.pattern_label_mode}] -> "
                 "REMINE_AND_RETRAIN, else feedback precision -> RETRAIN_ONLY; "
@@ -778,6 +861,17 @@ def run_monitor_attached_experiment(config: MonitorAttachedConfig) -> Path:
                 if config.trigger == "combined"
                 else " (Signal 1/2 table)"
             )
+        ),
+        f"Labels: updates={config.update_labels}, B0={config.initial_budget_mode}"
+        + (
+            f" (size {config.initial_budget_size})"
+            if config.initial_budget_mode == "stratified"
+            else ""
+        )
+        + (
+            f", audit_rate={config.audit_rate}"
+            if config.update_labels == "cumulative_budget"
+            else ""
         ),
         f"Rows: {len(per_horizon_df)} (per_horizon), {len(events_df)} (events, "
         f"{n_executed} executed), {len(latency_df)} (latency_sample)",

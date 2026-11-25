@@ -426,7 +426,12 @@ class MonitorAttachedConfig:
     # "combined": pattern validity (pv_<pattern_label_mode>_elevated) ->
     # REMINE_AND_RETRAIN, else feedback precision -> RETRAIN_ONLY; both need
     # feedback_consecutive_windows windows in a row.
-    trigger: Literal["feedback", "thesis", "combined"] = "feedback"
+    # "schedule": update every window (schedule_action) -- the fixed-schedule
+    # policy (DeepCASE's own); "never": frozen. Both still log every signal.
+    trigger: Literal["feedback", "thesis", "combined", "schedule", "never"] = "feedback"
+    schedule_action: Literal["RETRAIN_ONLY", "REMINE_AND_RETRAIN"] = (
+        "REMINE_AND_RETRAIN"
+    )
     pattern_label_mode: Literal["audit", "oracle", "escalated"] = "audit"
     feedback_consecutive_windows: int = 1
     feedback_action: Literal["RETRAIN_ONLY", "REMINE_AND_RETRAIN"] = (
@@ -441,6 +446,21 @@ class MonitorAttachedConfig:
     # single-row encode+predict calls is additionally timed once per
     # config, written to latency_sample.csv. 0 disables it.
     latency_sample_n: int = 200
+    # Label budget -- the DeepCASE comparison only (system_eval/label_budget.py).
+    # "window_full" (default, thesis behaviour): updates train on the current
+    # window's full true labels. "cumulative_budget": the initial fit sees
+    # only the B0 rows (initial_budget_mode), each window adds the analyst's
+    # labels (escalated + an audit_rate sample of the suppressed) to a pool,
+    # every update trains on the whole pool (audit rows weighted
+    # 1/audit_rate), and the monitor only sees those labels. Evaluation
+    # metrics always use the true labels.
+    update_labels: Literal["window_full", "cumulative_budget"] = "window_full"
+    initial_budget_mode: Literal[
+        "full", "stratified", "deepcase_items", "deepcase_cluster_samples"
+    ] = "full"
+    initial_budget_size: int | None = None
+    deepcase_items_path: Path | None = None
+    audit_rate: float = 0.05
 
     def __post_init__(self) -> None:
         if self.source_split_mode == "baseline_split" and not self.source_split_time:
@@ -448,6 +468,20 @@ class MonitorAttachedConfig:
                 "source_split_mode='baseline_split' requires source_split_time "
                 "(ISO8601, e.g. the CSCAS baseline's '2022-01-26 06:23:21+02:00')"
             )
+        if self.initial_budget_mode == "stratified" and not self.initial_budget_size:
+            raise ValueError(
+                "initial_budget_mode='stratified' needs initial_budget_size"
+            )
+        if (
+            self.initial_budget_mode.startswith("deepcase")
+            and self.deepcase_items_path is None
+        ):
+            raise ValueError(
+                f"initial_budget_mode={self.initial_budget_mode!r} needs "
+                "deepcase_items_path (a deepcase_comparison analyst_items.parquet)"
+            )
+        if not 0 < self.audit_rate <= 1:
+            raise ValueError("audit_rate must be in (0, 1]")
 
 
 @dataclass
