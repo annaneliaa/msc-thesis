@@ -58,7 +58,7 @@ conda activate thesis
 SCENARIOS=(cscas)
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 MINING_SETTINGS="$REPO_ROOT/src/thesis/configs/monitor_eda_mining_setting.yaml"
-GRANULARITIES=(0.1 0.05)
+read -r -a GRANULARITIES <<< "${GRANULARITIES:-0.1 0.05}"
 MODELS=(xgboost rf)
 SOURCE_SPLIT_MODE="baseline_split"  # anchors W_src to the CSCAS baseline's own train/test boundary
 THRESHOLD_MODE="fixed"  # or "calibrated_recall" -- keep in sync with the other experiment scripts
