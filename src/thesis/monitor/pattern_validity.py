@@ -26,6 +26,12 @@ pattern in Vk (single predicates AND compound rules), in its mined direction:
   fires (and the same for benign), lower than on the reference by the same
   test. Catches traffic the patterns no longer describe.
 
+pv_<mode>_elevated = precision OR coverage. Contrast is logged (and names the
+broken patterns) but is explanation only: on CSCAS small attack-side
+patterns (WEB_SERVER, ADWARE_PUP, multi_target) really do fail the keep rule
+on some days as campaigns come and go, even with the 99% bound, without any
+F1 effect -- 22-33% of clean windows (run 20261125_093649).
+
 Reference = the deployment's reference rows (W_src's held-out split, or the
 warm-up window after a redeploy), evaluated in the same label mode, so a
 label mode's own bias cancels.
@@ -299,7 +305,7 @@ def compare(
     out[k + "contrast_point_elevated"] = bool(invalid_point.any())
     out[k + "precision_elevated"] = bool(drop.any())
     out[k + "coverage_elevated"] = bool(cov)
-    out[k + "elevated"] = bool(invalid.any() or drop.any() or cov)
+    out[k + "elevated"] = bool(drop.any() or cov)  # contrast: explanation only
     return out
 
 

@@ -167,3 +167,11 @@ def test_borderline_pattern_needs_confidence_to_fail():
     # Coverage clearly under 5%.
     gone = _stats(0.01, 0.001, 2000)
     assert compare(gone, ref, ["p"], "oracle")["pv_oracle_n_invalid"] == 1
+
+
+def test_contrast_alone_does_not_elevate():
+    ref = _stats(0.30, 0.05, 2000)
+    broken = _stats(0.30, 0.25, 2000)  # fails the keep rule, precision as ref
+    out = compare(broken, ref, ["p"], "oracle")
+    assert out["pv_oracle_contrast_elevated"] is True
+    assert out["pv_oracle_elevated"] is False
