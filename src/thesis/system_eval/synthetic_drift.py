@@ -144,7 +144,7 @@ SIGNAL_FLAGS = (
     *(
         (f"pattern_validity_{m}{part}", f"pv_{m}{part}_elevated")
         for m in PV_LABEL_MODES
-        for part in ("", "_contrast", "_precision", "_coverage")
+        for part in ("", "_contrast", "_contrast_point", "_precision", "_coverage")
     ),
 )
 

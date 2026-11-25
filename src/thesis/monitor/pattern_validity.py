@@ -13,7 +13,9 @@ pattern in Vk (single predicates AND compound rules), in its mined direction:
   pattern's direction (support in its class / support in the other class)
   >= MIN_GROWTH_RATE and coverage of its class >= MIN_COVERAGE -- the
   contrast miner's own keep rule (filter_contrast_survivors, mining setting
-  gr3_md1_mda4: min_growth_rate 3, coverage 0.05). Only patterns that pass
+  gr3_md1_mda4: min_growth_rate 3, coverage 0.05), failed only when broken
+  with 99% confidence (PatternStats.invalid_confident; the point-estimate
+  version is still logged as *_point). Only patterns that pass
   on the reference rows are checked, so a pattern that never met the rule
   outside its training rows can't fire the signal;
 * precision drift: share of the pattern's firings that are its class,
@@ -77,7 +79,10 @@ _FIELDS = (
     "cov_benign_ref",
     "n_eff_attack",
     "n_eff_benign",
+    "n_invalid_point",
+    "invalid_patterns_point",
     "contrast_elevated",
+    "contrast_point_elevated",
     "precision_elevated",
     "coverage_elevated",
     "elevated",
@@ -119,6 +124,9 @@ class PatternStats:
 
     gr: np.ndarray  # (P,) growth rate in the pattern's direction
     supp_dir: np.ndarray  # (P,) support in the pattern's own class
+    supp_oth: np.ndarray  # (P,) support in the other class
+    n_dir: np.ndarray  # (P,) effective n of the pattern's own class
+    n_oth: np.ndarray  # (P,) effective n of the other class
     checkable: bool  # both classes have >= min_samples effective rows
     prec: np.ndarray  # (P,) share of the pattern's firings in its class
     n_fire: np.ndarray  # (P,) effective n of the pattern's firings
@@ -135,6 +143,26 @@ class PatternStats:
             & (self.gr >= MIN_GROWTH_RATE)
             & (self.supp_dir >= MIN_COVERAGE)
         )
+
+    @property
+    def invalid_confident(self) -> np.ndarray:
+        """The keep rule is broken with 99% confidence (one-sided): the
+        upper bound of the growth rate is < MIN_GROWTH_RATE (delta method on
+        log GR, proportions smoothed by half a count), or the upper bound of
+        the coverage is < MIN_COVERAGE (normal approximation under p =
+        MIN_COVERAGE). Point estimates alone let borderline patterns cross
+        the rule by sampling noise."""
+        z = Z_ONE_SIDED_99
+        nd, no = self.n_dir, self.n_oth
+        pd_ = (self.supp_dir * nd + 0.5) / (nd + 1)
+        po = (self.supp_oth * no + 0.5) / (no + 1)
+        se_log = np.sqrt((1 - pd_) / (pd_ * (nd + 1)) + (1 - po) / (po * (no + 1)))
+        gr_bad = np.log(pd_ / po) + z * se_log < math.log(MIN_GROWTH_RATE)
+        se_cov = math.sqrt(MIN_COVERAGE * (1 - MIN_COVERAGE)) / np.sqrt(
+            np.maximum(nd, 1e-12)
+        )
+        cov_bad = self.supp_dir + z * se_cov < MIN_COVERAGE
+        return self.checkable & (gr_bad | cov_bad)
 
 
 def pattern_stats(
@@ -188,6 +216,9 @@ def pattern_stats(
     return PatternStats(
         gr=supp_dir / np.maximum(supp_oth, _EPS),
         supp_dir=supp_dir,
+        supp_oth=supp_oth,
+        n_dir=np.where(to_attack, n_a, n_b),
+        n_oth=np.where(to_attack, n_b, n_a),
         checkable=bool(n_a >= min_samples and n_b >= min_samples),
         prec=prec,
         n_fire=n_fire,
@@ -227,10 +258,15 @@ def compare(
     out[k + "n_eff_benign"] = win.n_eff_benign
 
     check = ref.valid & win.checkable
-    invalid = check & ~win.valid
+    invalid = check & win.invalid_confident
+    invalid_point = check & ~win.valid
     out[k + "n_checked"] = int(check.sum())
     out[k + "n_invalid"] = int(invalid.sum())
     out[k + "invalid_patterns"] = ";".join(i for i, b in zip(ids, invalid) if b)
+    out[k + "n_invalid_point"] = int(invalid_point.sum())
+    out[k + "invalid_patterns_point"] = ";".join(
+        i for i, b in zip(ids, invalid_point) if b
+    )
     if check.any():
         ratio = np.where(
             check,
@@ -260,6 +296,7 @@ def compare(
         win.cov_benign, win.n_eff_benign, ref.cov_benign, ref.n_eff_benign, n
     )
     out[k + "contrast_elevated"] = bool(invalid.any())
+    out[k + "contrast_point_elevated"] = bool(invalid_point.any())
     out[k + "precision_elevated"] = bool(drop.any())
     out[k + "coverage_elevated"] = bool(cov)
     out[k + "elevated"] = bool(invalid.any() or drop.any() or cov)

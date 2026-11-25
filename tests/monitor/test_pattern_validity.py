@@ -129,3 +129,41 @@ def test_no_scores_leaves_label_modes_empty():
     rows.flagged = None
     assert pattern_stats(rows, TO_ATTACK, "escalated", None, 30) is None
     assert pattern_stats(rows, TO_ATTACK, "oracle", None, 30) is not None
+
+
+def _stats(supp_dir, supp_oth, n):
+    from thesis.monitor.pattern_validity import PatternStats
+
+    a = np.array
+    return PatternStats(
+        gr=a([supp_dir / supp_oth]),
+        supp_dir=a([supp_dir]),
+        supp_oth=a([supp_oth]),
+        n_dir=a([float(n)]),
+        n_oth=a([float(n)]),
+        checkable=True,
+        prec=a([0.9]),
+        n_fire=a([float(n)]),
+        cov_attack=1.0,
+        cov_benign=1.0,
+        n_eff_attack=float(n),
+        n_eff_benign=float(n),
+        min_samples=30,
+    )
+
+
+def test_borderline_pattern_needs_confidence_to_fail():
+    ref = _stats(0.30, 0.05, 2000)  # GR 6: valid
+    # Point estimate GR 2.5 on a small sample: below 3, but not confidently.
+    noisy = _stats(0.10, 0.04, 300)
+    out = compare(noisy, ref, ["p"], "oracle")
+    assert out["pv_oracle_n_invalid_point"] == 1
+    assert out["pv_oracle_n_invalid"] == 0
+    assert out["pv_oracle_contrast_elevated"] is False
+    # Clearly broken (GR 1.2) on a decent sample: fails both ways.
+    broken = _stats(0.30, 0.25, 2000)
+    out = compare(broken, ref, ["p"], "oracle")
+    assert out["pv_oracle_n_invalid"] == 1 and out["pv_oracle_contrast_elevated"]
+    # Coverage clearly under 5%.
+    gone = _stats(0.01, 0.001, 2000)
+    assert compare(gone, ref, ["p"], "oracle")["pv_oracle_n_invalid"] == 1
