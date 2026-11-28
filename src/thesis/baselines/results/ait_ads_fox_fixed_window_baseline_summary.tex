@@ -26,14 +26,14 @@ Internal system & Random Forest & Base (5) & random & $0.404_{\pm 0.005}$ & $0.7
 Internal system & XGBoost & Base (5) & random & $0.408_{\pm 0.008}$ & $0.745_{\pm 0.020}$ & $0.527_{\pm 0.011}$ \\
  &  &  & class-weighted & $0.385_{\pm 0.000}$ & $0.695_{\pm 0.000}$ & $0.495_{\pm 0.000}$ \\
 \midrule
-Internal + mining & Random Forest & Base (5) + mined & random & $0.400_{\pm 0.012}$ & $0.717_{\pm 0.013}$ & $0.513_{\pm 0.011}$ \\
- &  &  & class-weighted & $0.427_{\pm 0.009}$ & $0.689_{\pm 0.002}$ & $0.527_{\pm 0.007}$ \\
+Internal + mining & Random Forest & Base (5) + mined & random & $0.394_{\pm 0.016}$ & $0.719_{\pm 0.010}$ & $0.509_{\pm 0.015}$ \\
+ &  &  & class-weighted & $0.426_{\pm 0.009}$ & $0.688_{\pm 0.002}$ & $0.526_{\pm 0.008}$ \\
 \addlinespace
-Internal + mining & Logistic Regression & Base (5) + mined & random & $0.879_{\pm 0.020}$ & $0.668_{\pm 0.000}$ & $0.759_{\pm 0.007}$ \\
- &  &  & class-weighted & $0.899_{\pm 0.000}$ & $0.668_{\pm 0.000}$ & $0.766_{\pm 0.000}$ \\
+Internal + mining & Logistic Regression & Base (5) + mined & random & $0.795_{\pm 0.080}$ & $0.668_{\pm 0.000}$ & $0.725_{\pm 0.036}$ \\
+ &  &  & class-weighted & $0.782_{\pm 0.000}$ & $0.668_{\pm 0.000}$ & $0.721_{\pm 0.000}$ \\
 \addlinespace
-Internal + mining & XGBoost & Base (5) + mined & random & $0.408_{\pm 0.016}$ & $0.743_{\pm 0.019}$ & $0.527_{\pm 0.014}$ \\
- &  &  & class-weighted & $0.409_{\pm 0.000}$ & $0.712_{\pm 0.000}$ & $0.519_{\pm 0.000}$ \\
+Internal + mining & XGBoost & Base (5) + mined & random & $0.410_{\pm 0.017}$ & $0.747_{\pm 0.015}$ & $0.529_{\pm 0.015}$ \\
+ &  &  & class-weighted & $0.410_{\pm 0.000}$ & $0.699_{\pm 0.000}$ & $0.517_{\pm 0.000}$ \\
 \midrule
 LLM (zero-shot) & Llama-3.1-8B & tokens as text & none & 0.316 & 0.677 & 0.431 \\
 \addlinespace
@@ -53,9 +53,9 @@ Anomaly & OneClassSVM & Base (5) & benign-only & $0.470_{\pm 0.000}$ & $0.704_{\
 \addlinespace
 Anomaly & IsolationForest & Base (5) & benign-only & $0.542_{\pm 0.014}$ & $0.696_{\pm 0.004}$ & $0.609_{\pm 0.009}$ \\
 \addlinespace
-Anomaly + mining & OneClassSVM & Base (5) + mined & benign-only & $0.393_{\pm 0.000}$ & $0.677_{\pm 0.000}$ & $0.498_{\pm 0.000}$ \\
+Anomaly + mining & OneClassSVM & Base (5) + mined & benign-only & $0.556_{\pm 0.000}$ & $0.726_{\pm 0.000}$ & $0.630_{\pm 0.000}$ \\
 \addlinespace
-Anomaly + mining & IsolationForest & Base (5) + mined & benign-only & $0.384_{\pm 0.048}$ & $0.412_{\pm 0.085}$ & $0.397_{\pm 0.065}$ \\
+Anomaly + mining & IsolationForest & Base (5) + mined & benign-only & $0.330_{\pm 0.010}$ & $0.352_{\pm 0.010}$ & $0.340_{\pm 0.010}$ \\
 \bottomrule
 \end{tabular}%
 }
